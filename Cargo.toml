@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/lib/kiri-common"]
+
+resolver = "2"
