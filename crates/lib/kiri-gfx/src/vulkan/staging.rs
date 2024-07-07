@@ -482,7 +482,7 @@ impl Staging {
         })
     }
 
-    pub(crate) fn destroy(&mut self, context: &RenderContext) {
+    pub(crate) fn free(&mut self, context: &RenderContext) {
         self.upload_impl(context, false).unwrap();
         unsafe {
             context.device.device_wait_idle().unwrap();

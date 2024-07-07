@@ -18,7 +18,7 @@ use std::io;
 use ash::vk;
 use thiserror::Error;
 
-use crate::{BufferHandle, ImageHandle};
+use crate::{BufferHandle, ImageHandle, ProgramHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -44,14 +44,16 @@ pub enum Error {
     MemoryMapFailed,
     #[error("IO error: {0}")]
     Io(io::Error),
-    // #[error("Shader reflection failed: {0}")]
-    // ShaderReflectionFailed(rspirv_reflect::ReflectError),
+    #[error("Shader reflection failed: {0}")]
+    ShaderReflectionFailed(rspirv_reflect::ReflectError),
     #[error("Array bindings aren't supported")]
     ArrayBindingsArentSupported,
     #[error("Image handle {0} isn't valid")]
     InvalidImageHandle(ImageHandle),
     #[error("Buffer handle {0} isn't valid")]
     InvalidBufferHandle(BufferHandle),
+    #[error("Program handle {0:?} isn't valid")]
+    InvalidProgramHandle(ProgramHandle),
     #[error("Image too big")]
     ImageTooBig,
 }
@@ -121,8 +123,8 @@ impl From<gpu_descriptor::AllocationError> for Error {
     }
 }
 
-// impl From<rspirv_reflect::ReflectError> for Error {
-//     fn from(value: rspirv_reflect::ReflectError) -> Self {
-//         Self::ShaderReflectionFailed(value)
-//     }
-// }
+impl From<rspirv_reflect::ReflectError> for Error {
+    fn from(value: rspirv_reflect::ReflectError) -> Self {
+        Self::ShaderReflectionFailed(value)
+    }
+}

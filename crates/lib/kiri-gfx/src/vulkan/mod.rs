@@ -21,6 +21,8 @@ mod frame;
 mod image;
 mod instance;
 mod physical_device;
+mod pipeline;
+mod program;
 mod staging;
 mod swapchain;
 
@@ -31,6 +33,9 @@ use drop_list::*;
 pub use error::*;
 pub use image::*;
 pub use instance::*;
+pub use physical_device::*;
+pub use pipeline::*;
+use program::*;
 pub use swapchain::*;
 
 type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;

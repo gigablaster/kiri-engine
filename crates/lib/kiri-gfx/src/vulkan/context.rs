@@ -21,30 +21,29 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::{
-    khr::maintenance3,
-    vk::{self, Bool32},
-};
+use ash::vk;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy};
-use log::info;
 use parking_lot::{Mutex, RwLock};
-use raw_window_handle::RawDisplayHandle;
 use std::fmt::Debug;
 
 use crate::{AcquiredSurface, BufferDesc, Error, Instance, Swapchain, SwapchainImage};
 
 use super::{
     drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
-    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory,
+    staging::Staging, GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory, Program,
 };
 
-pub(crate) type ImageHandle = Handle<vk::ImageView>;
-pub(crate) type BufferHandle = Handle<vk::Buffer>;
+pub type ImageHandle = Handle<vk::ImageView>;
+pub type BufferHandle = Handle<vk::Buffer>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProgramHandle(pub(crate) u32);
 
 pub(crate) type ImagePool = HotColdPool<vk::ImageView, Image, SentinelPoolStrategy<vk::ImageView>>;
 pub(crate) type BufferPool =
     HotColdPool<vk::Buffer, (GpuMemory, BufferDesc), SentinelPoolStrategy<vk::Buffer>>;
+pub(crate) type ProgramPool = Vec<Program>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -69,8 +68,9 @@ pub struct RenderContext {
     current_drop_list: Mutex<DropList>,
     pub(crate) images: RwLock<ImagePool>,
     pub(crate) buffers: RwLock<BufferPool>,
+    pub(crate) programs: RwLock<ProgramPool>,
     frames: [Mutex<Arc<Frame>>; 2],
-    samplers: HashMap<SamplerDesc, vk::Sampler>,
+    pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
     transfer_queue: Arc<Mutex<vk::Queue>>,
     pub(crate) universal_queue_index: u32,
@@ -179,7 +179,7 @@ impl RenderContext {
         let allocator_props =
             unsafe { device_properties(instance.get(), Instance::vulkan_version(), pdevice.raw) }?;
         let memory_allocator = Mutex::new(GpuAllocator::new(allocator_config, allocator_props));
-        let descriptor_allocator = Mutex::new(GpuDescriptorAllocator::new(0));
+        let descriptor_allocator = Mutex::new(GpuDescriptorAllocator::new(1));
 
         let frames = [
             Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
@@ -216,6 +216,7 @@ impl RenderContext {
             debug,
             images: Default::default(),
             buffers: Default::default(),
+            programs: Default::default(),
         })
     }
 
@@ -429,9 +430,7 @@ impl RenderContext {
         }?;
         staging.execute_pending_barriers(&self, frame.cb);
         // TODO:: passes
-        unsafe {
-            self.device.end_command_buffer(frame.cb);
-        };
+        unsafe { self.device.end_command_buffer(frame.cb) }?;
         let wait = [
             upload,
             (
@@ -477,13 +476,13 @@ pub struct FrameRecordContext<'a> {
 impl Drop for RenderContext {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
-        self.staging.lock().destroy(&self);
+        self.staging.lock().free(&self);
         let mut memory_allocator = self.memory_allocator.lock();
         let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
         self.images.write().drain().for_each(|(view, image)| {
             drop_list.drop_view(view);
-            image.destroy(&mut drop_list);
+            image.free(&mut drop_list);
         });
         self.buffers
             .write()
@@ -507,5 +506,25 @@ impl Drop for RenderContext {
                 )
                 .unwrap();
         });
+        self.programs
+            .write()
+            .drain(..)
+            .for_each(|x| x.free(&self.device));
+    }
+}
+
+pub(crate) struct RenderingContext<'a> {
+    pub images: &'a ImagePool,
+    pub buffers: &'a BufferPool,
+}
+
+pub(crate) struct PipelineCompilationContext<'a> {
+    pub device: &'a ash::Device,
+    programs: &'a ProgramPool,
+}
+
+impl<'a> PipelineCompilationContext<'a> {
+    pub fn resolve_program(&self, handle: ProgramHandle) -> Option<&Program> {
+        self.programs.get(handle.0 as usize)
     }
 }

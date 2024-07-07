@@ -346,7 +346,7 @@ impl Image {
         })
     }
 
-    pub(crate) fn destroy(mut self, drop_list: &mut DropList) {
+    pub(crate) fn free(mut self, drop_list: &mut DropList) {
         if let Some(memory) = self.memory.take() {
             drop_list.drop_memory(memory);
             drop_list.drop_image(self.raw);
@@ -394,7 +394,7 @@ impl RenderContext {
         if let Some((view, image)) = self.images.write().remove(handle) {
             self.with_drop_list(|drop_list| {
                 drop_list.drop_view(view);
-                image.destroy(drop_list);
+                image.free(drop_list);
             })
         }
     }
