@@ -255,7 +255,7 @@ impl Staging {
     pub fn upload(
         &mut self,
         context: &RenderContext,
-    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
+    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags2), Error> {
         self.upload_impl(context, true)
     }
 
@@ -263,7 +263,7 @@ impl Staging {
         &mut self,
         context: &RenderContext,
         client_will_wait: bool,
-    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
+    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags2), Error> {
         puffin::profile_function!();
         let cb = &self.command_buffers[self.current];
 
@@ -305,7 +305,7 @@ impl Staging {
         self.upload_buffers.clear();
         self.upload_images.clear();
 
-        Ok((render_semaphore, vk::PipelineStageFlags::TRANSFER))
+        Ok((render_semaphore, vk::PipelineStageFlags2::TRANSFER))
     }
 
     pub fn execute_pending_barriers(&self, context: &RenderContext, cb: vk::CommandBuffer) {

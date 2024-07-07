@@ -16,6 +16,7 @@
 use std::{
     collections::HashMap,
     ffi::{c_void, CStr, CString},
+    mem, slice,
     sync::Arc,
 };
 
@@ -31,7 +32,7 @@ use parking_lot::{Mutex, RwLock};
 use raw_window_handle::RawDisplayHandle;
 use std::fmt::Debug;
 
-use crate::{BufferDesc, Error, Instance};
+use crate::{AcquiredSurface, BufferDesc, Error, Instance, Swapchain, SwapchainImage};
 
 use super::{
     drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
@@ -51,6 +52,11 @@ pub struct SamplerDesc {
     pub mipmap_mode: vk::SamplerMipmapMode,
     pub address_mode: vk::SamplerAddressMode,
     pub anisotropy_level: u32,
+}
+
+pub enum FrameState {
+    Rendered,
+    NeedRecreateSwapchain,
 }
 
 pub struct RenderContext {
@@ -364,9 +370,108 @@ impl RenderContext {
             .command_buffer_infos(&command_bufers)
             .wait_semaphore_infos(&wait)
             .signal_semaphore_infos(&signal);
-        unsafe { self.device.queue_submit2(queue, &[info], fence) };
+        unsafe { self.device.queue_submit2(queue, &[info], fence) }?;
         Ok(())
     }
+
+    fn begin_frame(&self) -> Result<Arc<Frame>, Error> {
+        puffin::profile_function!();
+        let mut frame = self.frames[0].lock();
+        {
+            let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
+            unsafe {
+                self.device
+                    .wait_for_fences(slice::from_ref(&frame.fence), true, u64::MAX)?
+            };
+            frame.reset(
+                &self.device,
+                &mut self.memory_allocator.lock(),
+                &mut self.descriptor_allocator.lock(),
+            )?;
+        }
+        Ok(frame.clone())
+    }
+
+    pub(crate) fn end_frame(&self, frame: Arc<Frame>) {
+        drop(frame);
+
+        let mut frame = self.frames[0].lock();
+        let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
+        let mut next_frame = self.frames[1].lock();
+        let next_frame = Arc::get_mut(&mut next_frame).unwrap();
+        frame.assign_drop_list(mem::take(&mut self.current_drop_list.lock()));
+        mem::swap(frame, next_frame);
+    }
+
+    pub fn frame<F: FnOnce(&mut FrameRecordContext) -> Result<(), Error>>(
+        &self,
+        target: &Swapchain,
+        f: F,
+    ) -> Result<FrameState, Error> {
+        puffin::profile_function!();
+        let target = match target.acquire_next_image()? {
+            AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
+            AcquiredSurface::Image(image) => image,
+        };
+        let frame = self.begin_frame()?;
+        let mut context = FrameRecordContext { context: &self };
+        {
+            puffin::profile_scope!("Generate frame");
+            f(&mut context)?;
+        }
+        let mut staging = self.staging.lock();
+        let upload = staging.upload(&self)?;
+        let images = self.images.read();
+        let buffers = self.buffers.read();
+        unsafe {
+            self.device
+                .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
+        }?;
+        staging.execute_pending_barriers(&self, frame.cb);
+        // TODO:: passes
+        unsafe {
+            self.device.end_command_buffer(frame.cb);
+        };
+        let wait = [
+            upload,
+            (
+                target.acquire_semaphore,
+                vk::PipelineStageFlags2::TOP_OF_PIPE,
+            ),
+        ];
+        let trigger = [(
+            target.rendering_finished,
+            vk::PipelineStageFlags2::ALL_GRAPHICS,
+        )];
+        self.submit_graphics((frame.cb, frame.fence), &wait, &trigger)?;
+        self.end_frame(frame);
+        self.present(target);
+        Ok(FrameState::Rendered)
+    }
+
+    fn present(&self, image: SwapchainImage) {
+        puffin::profile_function!();
+        let binding = image.swapchain.raw;
+        let present_info = vk::PresentInfoKHR::default()
+            .wait_semaphores(slice::from_ref(&image.rendering_finished))
+            .swapchains(slice::from_ref(&binding))
+            .image_indices(slice::from_ref(&image.image_index));
+
+        match unsafe {
+            image
+                .swapchain
+                .loader()
+                .queue_present(*self.universal_queue.lock(), &present_info)
+        } {
+            Ok(_) => (),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
+            Err(err) => panic!("Can't present image: {}", err),
+        }
+    }
+}
+
+pub struct FrameRecordContext<'a> {
+    context: &'a RenderContext,
 }
 
 impl Drop for RenderContext {
