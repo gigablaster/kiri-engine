@@ -318,7 +318,7 @@ impl Image {
             context.set_object_name(image, name);
         }
         let mut requirements = unsafe { context.device.get_image_memory_requirements(image) };
-        // Workaround - gpu_alloc returns wrong offset is wrong when size < aligment.
+        // Workaround - gpu_alloc returns wrong offset when size < aligment.
         requirements.size = requirements.size.max(requirements.alignment);
         let memory = context.allocate(
             requirements,
@@ -362,6 +362,9 @@ impl RenderContext {
         data: Option<&[ImageSubresourceData]>,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self, desc)?;
+        if let Some(data) = data {
+            self.staging.lock().upload_image(&self, &image, data)?;
+        }
         self.insert_image(image, aspect)
     }
 

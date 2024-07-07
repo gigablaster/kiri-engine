@@ -21,6 +21,7 @@ mod frame;
 mod image;
 mod instance;
 mod physical_device;
+mod staging;
 mod swapchain;
 
 use ash::vk;

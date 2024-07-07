@@ -125,6 +125,9 @@ impl RenderContext {
         if let Some(name) = desc.name {
             self.set_object_name(buffer, name);
         }
+        if let Some(data) = data {
+            self.staging.lock().upload_buffer(&self, buffer, 0, data)?;
+        }
         Ok(self.buffers.write().push(
             buffer,
             (

@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
 };
 
+use arrayvec::ArrayVec;
 use ash::{
     khr::maintenance3,
     vk::{self, Bool32},
@@ -33,8 +34,8 @@ use std::fmt::Debug;
 use crate::{BufferDesc, Error, Instance};
 
 use super::{
-    drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice, GpuAllocator,
-    GpuDescriptorAllocator, GpuMemory,
+    drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
+    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory,
 };
 
 pub(crate) type ImageHandle = Handle<vk::ImageView>;
@@ -66,8 +67,9 @@ pub struct RenderContext {
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
     transfer_queue: Arc<Mutex<vk::Queue>>,
-    universal_queue_index: u32,
-    transfer_queue_index: u32,
+    pub(crate) universal_queue_index: u32,
+    pub(crate) transfer_queue_index: u32,
+    pub(crate) staging: Mutex<Staging>,
 }
 
 impl Debug for RenderContext {
@@ -184,7 +186,15 @@ impl RenderContext {
             .map(|_| ash::ext::debug_utils::Device::new(instance.get(), &device))
             .next();
 
+        let staging = Mutex::new(Staging::new(
+            &device,
+            transfer_queue_index,
+            universal_queue_index,
+            &mut memory_allocator.lock(),
+        )?);
+
         Ok(Self {
+            staging,
             instance,
             samplers: Self::generate_samplers(&device),
             pdevice,
@@ -304,11 +314,67 @@ impl RenderContext {
             unsafe { debug_utils.set_debug_utils_object_name(&name_info) }.unwrap();
         }
     }
+
+    pub fn submit_graphics(
+        &self,
+        cb: (vk::CommandBuffer, vk::Fence),
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+    ) -> Result<(), Error> {
+        self.submit(*self.universal_queue.lock(), cb.0, cb.1, wait, triggers)
+    }
+
+    pub fn submit_transfer(
+        &self,
+        cb: (vk::CommandBuffer, vk::Fence),
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+    ) -> Result<(), Error> {
+        self.submit(*self.transfer_queue.lock(), cb.0, cb.1, wait, triggers)
+    }
+
+    fn submit(
+        &self,
+        queue: vk::Queue,
+        cb: vk::CommandBuffer,
+        fence: vk::Fence,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+    ) -> Result<(), Error> {
+        puffin::profile_function!();
+        // let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
+        let wait = wait
+            .iter()
+            .map(|x| {
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(x.0)
+                    .stage_mask(x.1)
+            })
+            .collect::<ArrayVec<_, 8>>();
+        let signal = triggers
+            .iter()
+            .map(|x| {
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(x.0)
+                    .stage_mask(x.1)
+            })
+            .collect::<ArrayVec<_, 9>>();
+        let command_bufers = [vk::CommandBufferSubmitInfo::default().command_buffer(cb)];
+        let info = vk::SubmitInfo2::default()
+            .command_buffer_infos(&command_bufers)
+            .wait_semaphore_infos(&wait)
+            .signal_semaphore_infos(&signal);
+        unsafe { self.device.queue_submit2(queue, &[info], fence) };
+        Ok(())
+    }
 }
 
 impl Drop for RenderContext {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
+        self.staging.lock().destroy(&self);
+        let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
         self.images.write().drain().for_each(|(view, image)| {
             drop_list.drop_view(view);
@@ -320,6 +386,21 @@ impl Drop for RenderContext {
             .for_each(|(buffer, (memory, _))| {
                 drop_list.drop_buffer(buffer);
                 drop_list.drop_memory(memory);
-            })
+            });
+        drop_list.purge(
+            &self.device,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+        );
+        self.frames.iter().for_each(|frame| {
+            Arc::get_mut(&mut frame.lock())
+                .expect("Nothing should hold a frame at point when we destroy rendering context")
+                .reset(
+                    &self.device,
+                    &mut memory_allocator,
+                    &mut descriptor_allocator,
+                )
+                .unwrap();
+        });
     }
 }
