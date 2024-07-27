@@ -27,11 +27,15 @@ use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
-use crate::{AcquiredSurface, BufferDesc, Error, Instance, Swapchain, SwapchainImage};
+use crate::{
+    AcquiredSurface, BufferDesc, Error, Instance, RasterPipelineCreateDesc, RenderPass, Swapchain,
+    SwapchainImage,
+};
 
 use super::{
     drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
     staging::Staging, GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory, Program,
+    RenderPassLayout,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
@@ -40,10 +44,14 @@ pub type BufferHandle = Handle<vk::Buffer>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PipelineHandle(pub(crate) u32);
+
 pub(crate) type ImagePool = HotColdPool<vk::ImageView, Image, SentinelPoolStrategy<vk::ImageView>>;
 pub(crate) type BufferPool =
     HotColdPool<vk::Buffer, (GpuMemory, BufferDesc), SentinelPoolStrategy<vk::Buffer>>;
 pub(crate) type ProgramPool = Vec<Program>;
+pub(crate) type PipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -69,6 +77,17 @@ pub struct RenderContext {
     pub(crate) images: RwLock<ImagePool>,
     pub(crate) buffers: RwLock<BufferPool>,
     pub(crate) programs: RwLock<ProgramPool>,
+    pub(crate) pipelines: RwLock<PipelinePool>,
+    pub(crate) pipelines_to_compile: Mutex<
+        HashMap<
+            PipelineHandle,
+            (
+                ProgramHandle,
+                RenderPassLayout<'static>,
+                RasterPipelineCreateDesc,
+            ),
+        >,
+    >,
     frames: [Mutex<Arc<Frame>>; 2],
     pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
@@ -217,6 +236,8 @@ impl RenderContext {
             images: Default::default(),
             buffers: Default::default(),
             programs: Default::default(),
+            pipelines: Default::default(),
+            pipelines_to_compile: Default::default(),
         })
     }
 
@@ -410,6 +431,7 @@ impl RenderContext {
         f: F,
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
+        let compile_pipelines = Self::compile_all_pipelines(&self);
         let target = match target.acquire_next_image()? {
             AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
             AcquiredSurface::Image(image) => image,
@@ -424,6 +446,7 @@ impl RenderContext {
         let upload = staging.upload(&self)?;
         let images = self.images.read();
         let buffers = self.buffers.read();
+        bevy_tasks::block_on(compile_pipelines)?;
         unsafe {
             self.device
                 .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
@@ -520,7 +543,7 @@ pub(crate) struct RenderingContext<'a> {
 
 pub(crate) struct PipelineCompilationContext<'a> {
     pub device: &'a ash::Device,
-    programs: &'a ProgramPool,
+    pub programs: &'a ProgramPool,
 }
 
 impl<'a> PipelineCompilationContext<'a> {

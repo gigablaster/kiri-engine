@@ -18,16 +18,16 @@ use std::{
     io::{self},
     path::Path,
     slice,
-    sync::Arc,
 };
 
 use ash::vk::{self};
+use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use uuid::Uuid;
 
 use crate::{
-    Error, ImageHandle, PhysicalDevice, PipelineCompilationContext, ProgramHandle, RenderContext,
-    RenderingContext,
+    Error, ImageHandle, PhysicalDevice, PipelineCompilationContext, PipelineHandle, ProgramHandle,
+    RenderContext, RenderingContext,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -220,7 +220,7 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-pub(crate) fn compile_raster_pipeline(
+fn compile_raster_pipeline(
     context: &PipelineCompilationContext,
     program: ProgramHandle,
     render_pass_layout: &RenderPassLayout,
@@ -319,6 +319,70 @@ pub(crate) fn compile_raster_pipeline(
     }?[0];
 
     Ok((pipeline, program.pipeline_layout()))
+}
+
+impl RenderContext {
+    /// Create pipeline
+    ///
+    /// Pipeline will be compiled right before next frame
+    pub fn create_pipeline(
+        &self,
+        program: ProgramHandle,
+        pass_layout: &RenderPassLayout<'static>,
+        desc: RasterPipelineCreateDesc,
+    ) -> PipelineHandle {
+        let handle = {
+            let mut pipelines = self.pipelines.write();
+            let index = pipelines.len() as u32;
+            pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()));
+            PipelineHandle(index)
+        };
+        self.pipelines_to_compile
+            .lock()
+            .insert(handle, (program, pass_layout.clone(), desc));
+        handle
+    }
+
+    pub(crate) async fn compile_pipeline<'a>(
+        context: &PipelineCompilationContext<'a>,
+        handle: PipelineHandle,
+        program: ProgramHandle,
+        pass: &RenderPassLayout<'static>,
+        desc: RasterPipelineCreateDesc,
+    ) -> Result<(PipelineHandle, vk::Pipeline, vk::PipelineLayout), Error> {
+        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, &desc)?;
+        Ok((handle, pipeline, layout))
+    }
+
+    pub(crate) async fn compile_all_pipelines(&self) -> Result<(), Error> {
+        puffin::profile_function!();
+        let programs = self.programs.read();
+        let context = PipelineCompilationContext {
+            device: &self.device,
+            programs: &programs,
+        };
+        let to_compile = self.pipelines_to_compile.lock().drain().collect::<Vec<_>>();
+
+        let compiled = ComputeTaskPool::get().scope(|s| {
+            to_compile
+                .iter()
+                .for_each(|(handle, (program, pass, desc))| {
+                    s.spawn(Self::compile_pipeline(
+                        &context,
+                        *handle,
+                        *program,
+                        pass,
+                        desc.clone(),
+                    ))
+                })
+        });
+        let mut pipelines = self.pipelines.write();
+        for result in compiled {
+            let (handle, pipeline, layout) = result?;
+            pipelines[handle.0 as usize] = (pipeline, layout);
+        }
+        Ok(())
+    }
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";

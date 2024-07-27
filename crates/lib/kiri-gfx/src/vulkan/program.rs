@@ -17,7 +17,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     ffi::{CStr, CString},
     slice,
-    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
@@ -35,19 +34,12 @@ pub(crate) const BINDLESS_BINDING_SLOT: usize = 0;
 pub(crate) const DYNAMIC_BINDING_SLOT: usize = 3;
 pub(crate) const MAX_DESCRIPTOR_SETS: usize = 4;
 
-#[derive(Debug)]
-pub(crate) struct DescriptorSetLayout {
-    pub raw: vk::DescriptorSetLayout,
-    pub types: HashMap<usize, vk::DescriptorType>,
-    pub names: HashMap<String, usize>,
-    pub count: DescriptorTotalCount,
-}
-
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorBindingDesc<'a> {
     pub name: &'a str,
     pub slot: usize,
     pub ty: vk::DescriptorType,
+    pub count: u32,
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
@@ -56,103 +48,92 @@ pub struct DescriptorSetLayoutDesc<'a> {
     pub set: &'a [DescriptorBindingDesc<'a>],
 }
 
-type ReflectedDescriptorSet = HashMap<usize, (String, vk::DescriptorType)>;
+type ReflectedDescriptorSet = HashMap<usize, (String, vk::DescriptorType, u32)>;
 type RelfectedDescriptorSetLayout = HashMap<usize, ReflectedDescriptorSet>;
 
-impl DescriptorSetLayout {
-    pub fn new(context: &RenderContext, set: &DescriptorSetLayoutDesc) -> Result<Self, Error> {
-        let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
-        let mut bindings = HashMap::with_capacity(set.set.len());
-        let mut count = DescriptorTotalCount::default();
-        for binding in set.set.iter() {
-            match binding.ty {
-                vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += 1,
-                vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += 1,
-                vk::DescriptorType::STORAGE_IMAGE => count.storage_image += 1,
-                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => count.uniform_buffer_dynamic += 1,
-                vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => count.storage_buffer_dynamic += 1,
-                vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += 1,
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER => count.combined_image_sampler += 1,
-                _ => panic!("Not yet implemented {:?}", binding.ty),
+pub(crate) fn create_descriptor_set_layout(
+    device: &ash::Device,
+    immutable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
+    set: &DescriptorSetLayoutDesc,
+) -> Result<vk::DescriptorSetLayout, Error> {
+    let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
+    let mut bindings = HashMap::with_capacity(set.set.len());
+    let mut count = DescriptorTotalCount::default();
+    for binding in set.set.iter() {
+        match binding.ty {
+            vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += binding.count,
+            vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += binding.count,
+            vk::DescriptorType::STORAGE_IMAGE => count.storage_image += binding.count,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+                count.uniform_buffer_dynamic += binding.count
             }
-        }
-        for binding in set.set.iter() {
-            match binding.ty {
-                vk::DescriptorType::UNIFORM_BUFFER
-                | vk::DescriptorType::STORAGE_BUFFER
-                | vk::DescriptorType::STORAGE_IMAGE
-                | vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                | vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                | vk::DescriptorType::SAMPLED_IMAGE => {
-                    bindings.insert(binding.slot, Self::create_binding(set.stage, binding));
-                }
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
-                    let sampler = context
-                        .samplers
-                        .get(&Self::get_suitable_sampler_desc())
-                        .unwrap();
-                    samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
-                }
-                _ => panic!("Not yet implemented {:?}", binding.ty),
-            };
-        }
-        for (sampler, slot, count, ty, stage) in &samplers {
-            let layout_biding = vk::DescriptorSetLayoutBinding::default()
-                .binding(*slot as _)
-                .descriptor_count(*count as _)
-                .descriptor_type(*ty)
-                .stage_flags(*stage)
-                .immutable_samplers(slice::from_ref(sampler));
-            bindings.insert(*slot, layout_biding);
-        }
-
-        let layoyt = bindings.values().copied().collect::<Vec<_>>();
-        let mut types = HashMap::with_capacity(set.set.len());
-        bindings.into_iter().for_each(|(index, binding)| {
-            types.insert(index, binding.descriptor_type);
-        });
-        let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layoyt);
-        let layout = unsafe {
-            context
-                .device
-                .create_descriptor_set_layout(&layout_create_info, None)
-        }?;
-        let names = set
-            .set
-            .iter()
-            .map(|x| (x.name.into(), x.slot))
-            .collect::<HashMap<_, _>>();
-
-        Ok(Self {
-            names,
-            types,
-            raw: layout,
-            count,
-        })
-    }
-
-    fn create_binding<'a>(
-        stage: vk::ShaderStageFlags,
-        binding: &'a DescriptorBindingDesc,
-    ) -> vk::DescriptorSetLayoutBinding<'a> {
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(binding.slot as _)
-            .descriptor_type(binding.ty)
-            .descriptor_count(1)
-            .stage_flags(stage)
-    }
-
-    fn get_suitable_sampler_desc() -> SamplerDesc {
-        SamplerDesc {
-            texel_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode: vk::SamplerAddressMode::REPEAT,
-            anisotropy_level: 16, // TODO:: control anisotropy level
+            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+                count.storage_buffer_dynamic += binding.count
+            }
+            vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += binding.count,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                count.combined_image_sampler += binding.count
+            }
+            _ => panic!("Not yet implemented {:?}", binding.ty),
         }
     }
+    for binding in set.set.iter() {
+        match binding.ty {
+            vk::DescriptorType::UNIFORM_BUFFER
+            | vk::DescriptorType::STORAGE_BUFFER
+            | vk::DescriptorType::STORAGE_IMAGE
+            | vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+            | vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+            | vk::DescriptorType::SAMPLED_IMAGE => {
+                bindings.insert(binding.slot, create_binding(set.stage, binding));
+            }
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
+                let sampler = immutable_samplers
+                    .get(&get_suitable_sampler_desc())
+                    .unwrap();
+                samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
+            }
+            _ => panic!("Not yet implemented {:?}", binding.ty),
+        };
+    }
+    for (sampler, slot, count, ty, stage) in &samplers {
+        let layout_biding = vk::DescriptorSetLayoutBinding::default()
+            .binding(*slot as _)
+            .descriptor_count(*count as _)
+            .descriptor_type(*ty)
+            .stage_flags(*stage)
+            .immutable_samplers(slice::from_ref(sampler));
+        bindings.insert(*slot, layout_biding);
+    }
 
-    pub fn free(self, device: &ash::Device) {
-        unsafe { device.destroy_descriptor_set_layout(self.raw, None) };
+    let layoyt = bindings.values().copied().collect::<Vec<_>>();
+    let mut types = HashMap::with_capacity(set.set.len());
+    bindings.into_iter().for_each(|(index, binding)| {
+        types.insert(index, binding.descriptor_type);
+    });
+    let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layoyt);
+    let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
+
+    Ok(layout)
+}
+
+fn create_binding<'a>(
+    stage: vk::ShaderStageFlags,
+    binding: &'a DescriptorBindingDesc,
+) -> vk::DescriptorSetLayoutBinding<'a> {
+    vk::DescriptorSetLayoutBinding::default()
+        .binding(binding.slot as _)
+        .descriptor_type(binding.ty)
+        .descriptor_count(binding.count.into())
+        .stage_flags(stage)
+}
+
+fn get_suitable_sampler_desc() -> SamplerDesc {
+    SamplerDesc {
+        texel_filter: vk::Filter::LINEAR,
+        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+        address_mode: vk::SamplerAddressMode::REPEAT,
+        anisotropy_level: 16, // TODO:: control anisotropy level
     }
 }
 
@@ -286,7 +267,13 @@ impl Shader {
                 rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
                 _ => panic!("Not supported {}", info.ty.0),
             };
-            result.insert(index as usize, (info.name, ty));
+            let count = match info.binding_count {
+                rspirv_reflect::BindingCount::One => 1,
+                rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
+                _ => unimplemented!("{:?}", info.binding_count),
+            };
+
+            result.insert(index as usize, (info.name, ty, count));
         }
         Ok(result)
     }
@@ -298,7 +285,7 @@ impl Shader {
 #[derive(Debug)]
 pub(crate) struct Program {
     pub(crate) shaders: Vec<Shader>,
-    layouts: Vec<DescriptorSetLayout>,
+    layouts: Vec<vk::DescriptorSetLayout>,
     pub(crate) pipeline_layout: vk::PipelineLayout,
 }
 
@@ -325,17 +312,17 @@ impl Program {
                         name: &desc.0,
                         slot: *index,
                         ty: desc.1,
+                        count: desc.2,
                     })
                     .collect::<Vec<_>>();
                 let desc = DescriptorSetLayoutDesc {
                     stage: stages,
                     set: &descs,
                 };
-                DescriptorSetLayout::new(context, &desc).unwrap()
+                create_descriptor_set_layout(&context.device, &context.samplers, &desc).unwrap()
             })
             .collect::<Vec<_>>();
-        let set_layouts = layouts.iter().map(|x| x.raw).collect::<Vec<_>>();
-        let layout_desc = vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts);
+        let layout_desc = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { context.device.create_pipeline_layout(&layout_desc, None) }?;
 
         Ok(Self {
@@ -378,10 +365,6 @@ impl Program {
         });
     }
 
-    pub(crate) fn layout(&self, set: usize) -> &DescriptorSetLayout {
-        &self.layouts[set]
-    }
-
     pub fn pipeline_layout(&self) -> vk::PipelineLayout {
         self.pipeline_layout
     }
@@ -389,11 +372,14 @@ impl Program {
     pub fn free(self, device: &ash::Device) {
         self.shaders.iter().for_each(|shader| shader.free(device));
         unsafe { device.destroy_pipeline_layout(self.pipeline_layout, None) };
+        self.layouts
+            .iter()
+            .for_each(|x| unsafe { device.destroy_descriptor_set_layout(*x, None) });
     }
 }
 
 impl RenderContext {
-    pub(crate) fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
+    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
         let program = Program::new(&self, shaders)?;
         let mut programs = self.programs.write();
         let index = programs.len();
@@ -413,21 +399,21 @@ mod test {
     #[test]
     fn merge_refected_layouts() {
         let mut set1 = ReflectedDescriptorSet::new();
-        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE));
-        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER));
+        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE, 1));
+        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER, 1));
         let mut set2 = ReflectedDescriptorSet::new();
-        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER));
+        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
         let mut set3 = ReflectedDescriptorSet::new();
         set3.insert(
             1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER),
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
         );
 
         let mut combined = ReflectedDescriptorSet::new();
-        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER));
+        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
         combined.insert(
             1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER),
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
         );
 
         let mut a = RelfectedDescriptorSetLayout::new();
