@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    ffi::{c_void, CStr, CString},
+    ffi::{CString},
     mem, slice,
     sync::Arc,
     u64,
@@ -29,13 +29,13 @@ use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
 use crate::{
-    AcquiredSurface, BufferDesc, Error, Instance, RasterPipelineCreateDesc, RenderPass, Swapchain,
+    AcquiredSurface, BufferDesc, Error, Instance, RasterPipelineCreateDesc, Swapchain,
     SwapchainImage,
 };
 
 use super::{
     drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
-    staging::Staging, GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory, Program,
+    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory, Program,
     RenderPassLayout,
 };
 

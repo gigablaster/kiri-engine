@@ -13,13 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem, slice, sync::Arc, thread};
+use std::{collections::HashMap, thread};
 
-use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{Error, RenderContext};
+use crate::{Error};
 
 use super::{DropList, GpuAllocator, GpuDescriptorAllocator};
 

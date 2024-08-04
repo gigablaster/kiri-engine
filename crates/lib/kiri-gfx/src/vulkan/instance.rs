@@ -17,7 +17,7 @@ use std::ffi::{c_void, CStr, CString};
 
 use ash::vk::{self, Bool32, DebugUtilsMessengerEXT};
 use log::{info, log, Level};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+use raw_window_handle::{RawDisplayHandle};
 
 use crate::{Error, FindSuitableDevice, PhysicalDeviceType, Surface};
 

@@ -13,13 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{error::Error, marker::PhantomData};
+use std::{error::Error};
 
-use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool, TaskPoolBuilder};
-use kiri_common::{GameTime, TimeFilter};
-use kiri_gfx::{InstanceBuilder, PhysicalDeviceType, RenderContext, Surface, Swapchain};
+use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPoolBuilder};
+use kiri_common::{TimeFilter};
+use kiri_gfx::{InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
-use sdl2::{event::Event, surface, video::WindowBuildError};
+use sdl2::{event::Event, video::WindowBuildError};
 
 use crate::{GameClient, GameTickState};
 

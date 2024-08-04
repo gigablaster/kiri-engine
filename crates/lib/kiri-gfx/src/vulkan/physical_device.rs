@@ -17,7 +17,7 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::{Error, RenderContext, Surface};
+use crate::{Error, Surface};
 
 use super::Instance;
 
