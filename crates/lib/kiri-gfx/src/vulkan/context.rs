@@ -18,6 +18,7 @@ use std::{
     ffi::{c_void, CStr, CString},
     mem, slice,
     sync::Arc,
+    u64,
 };
 
 use arrayvec::ArrayVec;
@@ -104,7 +105,7 @@ impl Debug for RenderContext {
 }
 
 impl RenderContext {
-    fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
+    pub(crate) fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(Error::NoSuitableDevice);
         };
@@ -149,8 +150,10 @@ impl RenderContext {
             )
         }
 
-        let mut dynamic_rendering = vk::PhysicalDeviceDynamicRenderingFeatures::default();
-        let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
+        let mut dynamic_rendering =
+            vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
+        let mut synchronization2 =
+            vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
         let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
             .runtime_descriptor_array(true)
             .descriptor_binding_partially_bound(true)
@@ -160,8 +163,9 @@ impl RenderContext {
             .descriptor_binding_storage_buffer_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
             .descriptor_binding_sampled_image_update_after_bind(true);
-        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
-        let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
+        let mut buffer_device_address =
+            vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
         let mut features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut dynamic_rendering)
             .push_next(&mut synchronization2)
@@ -252,7 +256,7 @@ impl RenderContext {
             vk::SamplerAddressMode::CLAMP_TO_EDGE,
             vk::SamplerAddressMode::MIRRORED_REPEAT,
         ];
-        let aniso_levels = [0, 1, 2, 3, 4];
+        let aniso_levels = [0];
         let mut result = HashMap::new();
         texel_filters.into_iter().for_each(|texel_filter| {
             mipmap_modes.into_iter().for_each(|mipmap_mode| {
@@ -378,7 +382,7 @@ impl RenderContext {
                     .semaphore(x.0)
                     .stage_mask(x.1)
             })
-            .collect::<ArrayVec<_, 8>>();
+            .collect::<ArrayVec<_, 16>>();
         let signal = triggers
             .iter()
             .map(|x| {
@@ -386,7 +390,7 @@ impl RenderContext {
                     .semaphore(x.0)
                     .stage_mask(x.1)
             })
-            .collect::<ArrayVec<_, 9>>();
+            .collect::<ArrayVec<_, 16>>();
         let command_bufers = [vk::CommandBufferSubmitInfo::default().command_buffer(cb)];
         let info = vk::SubmitInfo2::default()
             .command_buffer_infos(&command_bufers)

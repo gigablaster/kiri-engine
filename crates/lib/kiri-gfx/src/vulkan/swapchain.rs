@@ -32,16 +32,12 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(
-        instance: &Instance,
-        display_handle: RawDisplayHandle,
-        window_handle: RawWindowHandle,
-    ) -> Result<Self, Error> {
+    pub fn new(instance: &Instance, window_handle: RawWindowHandle) -> Result<Self, Error> {
         let surface = unsafe {
             ash_window::create_surface(
                 &instance.entry,
                 &instance.raw,
-                display_handle,
+                instance.display_handle,
                 window_handle,
                 None,
             )
@@ -179,7 +175,7 @@ impl<'a> Swapchain<'a> {
                         ImageDesc {
                             ty: vk::ImageType::TYPE_2D,
                             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                            format: vk::Format::B8G8R8A8_UNORM,
+                            format: format.format,
                             dims: [surface_resolution.width, surface_resolution.height],
                             tiling: vk::ImageTiling::OPTIMAL,
                             mip_levels: 1,

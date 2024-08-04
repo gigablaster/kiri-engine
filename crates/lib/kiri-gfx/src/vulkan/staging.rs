@@ -24,6 +24,7 @@ use ash::vk::{self, ImageSubresourceRange};
 use gpu_alloc::Request;
 use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
+use log::{debug, log};
 use parking_lot::Mutex;
 
 use crate::{Error, Image, ImageSubresourceData, RenderContext};
@@ -66,7 +67,20 @@ fn create_transfer_command_buffer(
     device: &ash::Device,
     pool: vk::CommandPool,
 ) -> Result<(vk::CommandBuffer, vk::Fence), Error> {
-    todo!()
+    let cb = unsafe {
+        device.allocate_command_buffers(
+            &vk::CommandBufferAllocateInfo::default()
+                .command_buffer_count(1)
+                .command_pool(pool),
+        )
+    }?[0];
+    let fence = unsafe {
+        device.create_fence(
+            &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+            None,
+        )
+    }?;
+    Ok((cb, fence))
 }
 
 impl Staging {
@@ -269,15 +283,22 @@ impl Staging {
 
         unsafe {
             context.device.wait_for_fences(&[cb.1], true, u64::MAX)?;
+            context.device.reset_fences(&[cb.1])?;
             context
                 .device
                 .reset_command_buffer(cb.0, vk::CommandBufferResetFlags::empty())?;
         }
         {
+            unsafe {
+                context
+                    .device
+                    .begin_command_buffer(cb.0, &vk::CommandBufferBeginInfo::default())
+            }?;
             self.barrier_before(&context.device, cb.0);
             self.copy_buffers(&context.device, cb.0);
             self.copy_images(&context.device, cb.0);
             self.barrier_after(context, cb.0);
+            unsafe { context.device.end_command_buffer(cb.0) }?;
         }
 
         let semaphore = self.semaphores[self.current];
@@ -285,7 +306,8 @@ impl Staging {
         let mut triggers = ArrayVec::<_, 2>::new();
         triggers.push((semaphore, vk::PipelineStageFlags2::TRANSFER));
         if client_will_wait {
-            triggers.push((render_semaphore, vk::PipelineStageFlags2::VERTEX_INPUT));
+            // fixme?
+            triggers.push((render_semaphore, vk::PipelineStageFlags2::TRANSFER));
         }
 
         if let Some(last) = self.last {

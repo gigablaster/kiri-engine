@@ -1,0 +1,24 @@
+[package]
+name = "kiri"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sdl2 = { version = "0.37.0", default-features = false, features = [
+    "raw-window-handle",
+    "bundled",
+    "static-link",
+] }
+kiri-common = { path = "../kiri-common" }
+kiri-gfx = { path = "../kiri-gfx" }
+thiserror = "1.0.61"
+directories = "5.0.1"
+raw-window-handle = "0.6.2"
+log = "0.4.22"
+bevy_tasks = { version = "0.14.0", features = ["multi_threaded"] }
+
+[dev-dependencies]
+simple_logger = "5.0.0"
+
+[[example]]
+name = "loop"

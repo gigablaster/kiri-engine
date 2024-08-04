@@ -17,14 +17,17 @@ use std::ffi::{c_void, CStr, CString};
 
 use ash::vk::{self, Bool32, DebugUtilsMessengerEXT};
 use log::{info, log, Level};
-use raw_window_handle::RawDisplayHandle;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::Error;
+use crate::{Error, FindSuitableDevice, PhysicalDeviceType, Surface};
+
+use super::RenderContext;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
     pub(crate) raw: ash::Instance,
     pub(crate) debug_utils: Option<ash::ext::debug_utils::Instance>,
+    pub(crate) display_handle: RawDisplayHandle,
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
 
@@ -154,7 +157,20 @@ impl Instance {
             raw: instance,
             debug_utils,
             debug_messenger,
+            display_handle: builder.display_handle,
         })
+    }
+
+    pub fn create_context(
+        self,
+        surface: &Surface,
+        preferences: &[PhysicalDeviceType],
+    ) -> Result<RenderContext, Error> {
+        let physical_devices = self.enumerate_physical_devices()?;
+        let optimal = physical_devices
+            .find_suitable_device(surface, preferences)
+            .ok_or(Error::NoSuitableDevice)?;
+        RenderContext::new(self, optimal)
     }
 
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {

@@ -19,6 +19,8 @@ use ash::vk;
 
 use crate::{Error, RenderContext, Surface};
 
+use super::Instance;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct QueueFamily {
     pub index: u32,
@@ -65,17 +67,17 @@ impl Debug for PhysicalDevice {
     }
 }
 
-impl RenderContext {
-    pub(crate) fn enumerate_physical_devices(
-        instance: &ash::Instance,
-    ) -> Result<Vec<PhysicalDevice>, Error> {
+impl Instance {
+    pub(crate) fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, Error> {
         unsafe {
-            Ok(instance
+            Ok(self
+                .raw
                 .enumerate_physical_devices()?
                 .into_iter()
                 .map(|pdevice| {
-                    let properties = instance.get_physical_device_properties(pdevice);
-                    let queue_families = instance
+                    let properties = self.raw.get_physical_device_properties(pdevice);
+                    let queue_families = self
+                        .raw
                         .get_physical_device_queue_family_properties(pdevice)
                         .into_iter()
                         .enumerate()
@@ -85,7 +87,8 @@ impl RenderContext {
                         })
                         .collect();
 
-                    let extension_properties = instance
+                    let extension_properties = self
+                        .raw
                         .enumerate_device_extension_properties(pdevice)
                         .unwrap();
                     let supported_extensions = extension_properties
@@ -110,15 +113,17 @@ impl RenderContext {
     }
 
     pub fn find_optimal_format(
-        instance: &ash::Instance,
+        &self,
         pdevice: &PhysicalDevice,
         formats: &[vk::Format],
         tiling: vk::ImageTiling,
         features: vk::FormatFeatureFlags,
     ) -> Option<vk::Format> {
         formats.iter().find_map(|format| {
-            let props =
-                unsafe { instance.get_physical_device_format_properties(pdevice.raw, *format) };
+            let props = unsafe {
+                self.raw
+                    .get_physical_device_format_properties(pdevice.raw, *format)
+            };
             if (tiling == vk::ImageTiling::LINEAR
                 && props.linear_tiling_features.contains(features))
                 || (tiling == vk::ImageTiling::OPTIMAL

@@ -149,6 +149,7 @@ impl Frame {
             .for_each(|(_, x)| x.reset(device));
         unsafe {
             device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
+            device.reset_fences(&[self.fence])?;
         }
 
         Ok(())
