@@ -56,6 +56,8 @@ pub enum Error {
     InvalidProgramHandle(ProgramHandle),
     #[error("Image too big")]
     ImageTooBig,
+    #[error("Memory isn't allocated")]
+    MemoryNotAllocated,
 }
 
 impl From<vk::Result> for Error {

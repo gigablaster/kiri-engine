@@ -13,13 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    ffi::{CString},
-    mem, slice,
-    sync::Arc,
-    u64,
-};
+use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc, u64};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -29,18 +23,16 @@ use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
 use crate::{
-    AcquiredSurface, BufferDesc, Error, Instance, RasterPipelineCreateDesc, Swapchain,
-    SwapchainImage,
+    AcquiredSurface, Buffer, Error, Instance, RasterPipelineCreateDesc, Swapchain, SwapchainImage,
 };
 
 use super::{
     drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
-    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory, Program,
-    RenderPassLayout,
+    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory, Program, RenderPassLayout,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
-pub type BufferHandle = Handle<vk::Buffer>;
+pub type BufferHandle = Handle<vk::DeviceAddress>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
@@ -50,7 +42,7 @@ pub struct PipelineHandle(pub(crate) u32);
 
 pub(crate) type ImagePool = HotColdPool<vk::ImageView, Image, SentinelPoolStrategy<vk::ImageView>>;
 pub(crate) type BufferPool =
-    HotColdPool<vk::Buffer, (GpuMemory, BufferDesc), SentinelPoolStrategy<vk::Buffer>>;
+    HotColdPool<vk::DeviceAddress, Buffer, SentinelPoolStrategy<vk::DeviceAddress>>;
 pub(crate) type ProgramPool = Vec<Program>;
 pub(crate) type PipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
 
@@ -514,10 +506,7 @@ impl Drop for RenderContext {
         self.buffers
             .write()
             .drain()
-            .for_each(|(buffer, (memory, _))| {
-                drop_list.drop_buffer(buffer);
-                drop_list.drop_memory(memory);
-            });
+            .for_each(|(_, buffer)| buffer.free(&mut drop_list));
         drop_list.purge(
             &self.device,
             &mut memory_allocator,

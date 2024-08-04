@@ -20,10 +20,23 @@ use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{BufferHandle, Error, RenderContext};
 
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub(crate) struct BufferDesc {
+use super::{DropList, GpuMemory};
+
+#[derive(Debug)]
+pub(crate) struct Buffer {
+    pub raw: vk::Buffer,
     pub size: u32,
     pub usage: vk::BufferUsageFlags,
+    memory: Option<GpuMemory>,
+}
+
+impl Buffer {
+    pub(crate) fn free(mut self, drop_list: &mut DropList) {
+        if let Some(memory) = self.memory.take() {
+            drop_list.drop_buffer(self.raw);
+            drop_list.drop_memory(memory);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -122,6 +135,10 @@ impl RenderContext {
             self.device
                 .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
         }?;
+        let address = unsafe {
+            self.device
+                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
+        };
         if let Some(name) = desc.name {
             self.set_object_name(buffer, name);
         }
@@ -129,39 +146,43 @@ impl RenderContext {
             self.staging.lock().upload_buffer(&self, buffer, 0, data)?;
         }
         Ok(self.buffers.write().push(
-            buffer,
-            (
-                memory,
-                BufferDesc {
-                    size: desc.size,
-                    usage: desc.usage,
-                },
-            ),
+            address,
+            Buffer {
+                raw: buffer,
+                size: desc.size,
+                usage: desc.usage,
+                memory: Some(memory),
+            },
         ))
     }
 
     pub fn destroy_buffer(&self, handle: BufferHandle) {
-        if let Some((buffer, (memory, _))) = self.buffers.write().remove(handle) {
+        if let Some((_, buffer)) = self.buffers.write().remove(handle) {
             self.with_drop_list(|drop_list| {
-                drop_list.drop_buffer(buffer);
-                drop_list.drop_memory(memory);
+                buffer.free(drop_list);
             })
         }
     }
 
     pub fn map_buffer(&self, handle: BufferHandle) -> Result<NonNull<u8>, Error> {
         let mut buffers = self.buffers.write();
-        let (memory, desc) = buffers
+        let buffer = buffers
             .get_cold_mut(handle)
             .ok_or(Error::InvalidBufferHandle(handle))?;
-        Ok(unsafe { memory.map(AshMemoryDevice::wrap(&self.device), 0, desc.size as _) }?)
+        if let Some(memory) = &mut buffer.memory {
+            Ok(unsafe { memory.map(AshMemoryDevice::wrap(&self.device), 0, buffer.size as _) }?)
+        } else {
+            Err(Error::MemoryNotAllocated)
+        }
     }
 
     pub fn unmap_buffer(&self, handle: BufferHandle) {
         let mut buffers = self.buffers.write();
-        if let Some((memory, _)) = buffers.get_cold_mut(handle) {
-            unsafe {
-                memory.unmap(AshMemoryDevice::wrap(&self.device));
+        if let Some(buffer) = buffers.get_cold_mut(handle) {
+            if let Some(memory) = &mut buffer.memory {
+                unsafe {
+                    memory.unmap(AshMemoryDevice::wrap(&self.device));
+                }
             }
         }
     }
