@@ -58,7 +58,7 @@ impl Drop for Surface {
 }
 
 pub struct Swapchain<'a> {
-    context: &'a RenderContext,
+    context: &'a RenderContext<'a>,
     pub raw: vk::SwapchainKHR,
     images: ArrayVec<ImageHandle, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,

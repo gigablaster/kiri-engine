@@ -321,7 +321,7 @@ fn compile_raster_pipeline(
     Ok((pipeline, program.pipeline_layout()))
 }
 
-impl RenderContext {
+impl<'game> RenderContext<'game> {
     /// Create pipeline
     ///
     /// Pipeline will be compiled right before next frame

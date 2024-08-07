@@ -60,8 +60,8 @@ pub enum FrameState {
     NeedRecreateSwapchain,
 }
 
-pub struct RenderContext {
-    pub(crate) instance: Instance,
+pub struct RenderContext<'game> {
+    pub(crate) instance: &'game Instance,
     pub(crate) pdevice: PhysicalDevice,
     pub(crate) device: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
@@ -91,14 +91,14 @@ pub struct RenderContext {
     pub(crate) staging: Mutex<Staging>,
 }
 
-impl Debug for RenderContext {
+impl<'game> Debug for RenderContext<'game> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
     }
 }
 
-impl RenderContext {
-    pub(crate) fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
+impl<'game> RenderContext<'game> {
+    pub(crate) fn new(instance: &'game Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(Error::NoSuitableDevice);
         };
@@ -501,10 +501,10 @@ impl RenderContext {
 }
 
 pub struct FrameRecordContext<'a> {
-    context: &'a RenderContext,
+    context: &'a RenderContext<'a>,
 }
 
-impl Drop for RenderContext {
+impl<'game> Drop for RenderContext<'game> {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         self.staging.lock().free(&self);
@@ -538,6 +538,19 @@ impl Drop for RenderContext {
             .write()
             .drain(..)
             .for_each(|x| x.free(&self.device));
+        self.frames.iter_mut().for_each(|x| {
+            Arc::get_mut(&mut x.lock())
+                .expect("Nothing should hold frame at this point")
+                .free(
+                    &self.device,
+                    &mut memory_allocator,
+                    &mut descriptor_allocator,
+                )
+        });
+        self.samplers
+            .drain()
+            .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
+        unsafe { self.device.destroy_device(None) };
     }
 }
 

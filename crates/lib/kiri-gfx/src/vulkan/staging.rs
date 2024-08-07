@@ -21,10 +21,12 @@ use std::{
 
 use arrayvec::ArrayVec;
 use ash::vk::{self, ImageSubresourceRange};
-use gpu_alloc::Request;
+use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
+use log::info;
 use parking_lot::Mutex;
+use rspirv_reflect::rspirv::dr;
 
 use crate::{Error, Image, ImageSubresourceData, RenderContext};
 
@@ -117,7 +119,13 @@ impl Staging {
             memory_types: requirements.memory_type_bits,
         };
 
-        let mut memory = unsafe { allocator.alloc(AshMemoryDevice::wrap(device), request) }?;
+        let mut memory = unsafe {
+            allocator.alloc_with_dedicated(
+                AshMemoryDevice::wrap(device),
+                request,
+                Dedicated::Required,
+            )
+        }?;
         unsafe { device.bind_buffer_memory(buffer, *memory.memory(), memory.offset()) }?;
         let mapping = unsafe {
             memory.map(
@@ -508,6 +516,17 @@ impl Staging {
         unsafe {
             context.device.device_wait_idle().unwrap();
             context.device.destroy_command_pool(self.command_pool, None);
+        }
+
+        self.command_buffers
+            .iter()
+            .for_each(|(_, fence)| unsafe { context.device.destroy_fence(*fence, None) });
+
+        if let Some(memory) = self.memory.take() {
+            context.with_drop_list(|drop_list| {
+                drop_list.drop_buffer(self.buffer);
+                drop_list.drop_memory(memory);
+            })
         }
 
         for index in 0..PAGE_COUNT {

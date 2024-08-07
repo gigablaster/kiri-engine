@@ -387,7 +387,7 @@ impl Image {
     }
 }
 
-impl RenderContext {
+impl<'game> RenderContext<'game> {
     pub fn create_image(
         &self,
         desc: ImageCreateDesc,

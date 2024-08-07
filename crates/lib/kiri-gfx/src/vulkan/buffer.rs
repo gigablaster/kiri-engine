@@ -17,6 +17,7 @@ use std::ptr::NonNull;
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
+use log::info;
 
 use crate::{BufferHandle, Error, RenderContext};
 
@@ -122,7 +123,7 @@ impl<'a> BufferCreateDesc<'a> {
     }
 }
 
-impl RenderContext {
+impl<'game> RenderContext<'game> {
     pub fn create_buffer(
         &self,
         desc: BufferCreateDesc,

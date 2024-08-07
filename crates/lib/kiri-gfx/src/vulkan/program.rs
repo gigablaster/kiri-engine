@@ -378,7 +378,7 @@ impl Program {
     }
 }
 
-impl RenderContext {
+impl<'game> RenderContext<'game> {
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
         let program = Program::new(&self, shaders)?;
         let mut programs = self.programs.write();

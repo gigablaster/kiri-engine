@@ -17,7 +17,7 @@ use std::ffi::{c_void, CStr, CString};
 
 use ash::vk::{self, Bool32, DebugUtilsMessengerEXT};
 use log::{info, log, Level};
-use raw_window_handle::{RawDisplayHandle};
+use raw_window_handle::RawDisplayHandle;
 
 use crate::{Error, FindSuitableDevice, PhysicalDeviceType, Surface};
 
@@ -162,7 +162,7 @@ impl Instance {
     }
 
     pub fn create_context(
-        self,
+        &self,
         surface: &Surface,
         preferences: &[PhysicalDeviceType],
     ) -> Result<RenderContext, Error> {
@@ -170,7 +170,7 @@ impl Instance {
         let optimal = physical_devices
             .find_suitable_device(surface, preferences)
             .ok_or(Error::NoSuitableDevice)?;
-        RenderContext::new(self, optimal)
+        RenderContext::new(&self, optimal)
     }
 
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {

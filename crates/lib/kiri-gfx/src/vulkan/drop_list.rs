@@ -58,6 +58,9 @@ impl DropList {
         self.memory
             .drain(..)
             .for_each(|x| unsafe { memory_allocator.dealloc(AshMemoryDevice::wrap(device), x) });
+        self.buffers
+            .drain(..)
+            .for_each(|x| unsafe { device.destroy_buffer(x, None) });
         self.views
             .drain(..)
             .for_each(|x| unsafe { device.destroy_image_view(x, None) });
