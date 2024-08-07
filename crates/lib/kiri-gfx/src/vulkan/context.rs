@@ -164,7 +164,8 @@ impl<'game> RenderContext<'game> {
             .push_next(&mut synchronization2)
             .push_next(&mut descriptor_indexing)
             .push_next(&mut maintenance4)
-            .push_next(&mut buffer_device_address);
+            .push_next(&mut buffer_device_address)
+            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
             .enabled_extension_names(&device_extension_names)
@@ -249,7 +250,7 @@ impl<'game> RenderContext<'game> {
             vk::SamplerAddressMode::CLAMP_TO_EDGE,
             vk::SamplerAddressMode::MIRRORED_REPEAT,
         ];
-        let aniso_levels = [0];
+        let aniso_levels = [0, 1, 2, 3];
         let mut result = HashMap::new();
         texel_filters.into_iter().for_each(|texel_filter| {
             mipmap_modes.into_iter().for_each(|mipmap_mode| {
