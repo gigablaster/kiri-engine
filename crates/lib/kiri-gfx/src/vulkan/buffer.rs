@@ -146,7 +146,7 @@ impl<'game> RenderContext<'game> {
         if let Some(data) = data {
             self.staging.lock().upload_buffer(&self, buffer, 0, data)?;
         }
-        Ok(self.buffers.write().push(
+        let handle = self.buffers.write().push(
             address,
             Buffer {
                 raw: buffer,
@@ -154,7 +154,11 @@ impl<'game> RenderContext<'game> {
                 usage: desc.usage,
                 memory: Some(memory),
             },
-        ))
+        );
+        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            self.storage_buffers_to_update.lock().insert(handle);
+        }
+        Ok(handle)
     }
 
     pub fn destroy_buffer(&self, handle: BufferHandle) {

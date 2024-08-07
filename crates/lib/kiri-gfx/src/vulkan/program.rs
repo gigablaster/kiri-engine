@@ -36,7 +36,7 @@ pub(crate) const MAX_DESCRIPTOR_SETS: usize = 4;
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorBindingDesc<'a> {
     pub name: &'a str,
-    pub slot: usize,
+    pub slot: u32,
     pub ty: vk::DescriptorType,
     pub count: u32,
 }
@@ -92,7 +92,7 @@ pub(crate) fn create_descriptor_set_layout(
         };
     }
     for (sampler, slot, count, ty, stage) in &samplers {
-        let mut layout_biding = vk::DescriptorSetLayoutBinding::default()
+        let layout_biding = vk::DescriptorSetLayoutBinding::default()
             .binding(*slot as _)
             .descriptor_count(*count as _)
             .descriptor_type(*ty)
@@ -319,7 +319,7 @@ impl Program {
                     .iter()
                     .map(|(index, desc)| DescriptorBindingDesc {
                         name: &desc.0,
-                        slot: *index,
+                        slot: *index as u32,
                         ty: desc.1,
                         count: desc.2,
                     })

@@ -19,7 +19,7 @@ use crate::{ImageHandle, RenderContext};
 
 use super::{error::Error, DropList, GpuMemory};
 
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub dims: [u32; 2],
     pub ty: vk::ImageType,
@@ -420,7 +420,15 @@ impl<'game> RenderContext<'game> {
             self.device
                 .create_image_view(&ImageViewDesc::new(aspect).build(&image), None)
         }?;
-        Ok(self.images.write().push(view, image))
+        let desc = image.desc;
+        let handle = self.images.write().push(view, image);
+        if desc.usage.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.sampled_images_to_update.lock().insert(handle);
+        }
+        if desc.usage.contains(vk::ImageUsageFlags::STORAGE) {
+            self.storage_images_to_update.lock().insert(handle);
+        }
+        Ok(handle)
     }
 
     pub fn destroy_image(&self, handle: ImageHandle) {

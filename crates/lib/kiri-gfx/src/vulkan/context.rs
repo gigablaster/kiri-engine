@@ -13,13 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc, u64};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::CString,
+    mem, slice,
+    sync::Arc,
+    u64,
+};
 
 use arrayvec::ArrayVec;
-use ash::vk;
+use ash::vk::{self, DescriptorBufferInfo, DescriptorImageInfo, WriteDescriptorSet};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, MAX_POOL_INDEX};
+use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, TempList, MAX_POOL_INDEX};
 use parking_lot::{Mutex, RwLock};
+use rspirv_reflect::rspirv::dr;
 use std::fmt::Debug;
 
 use crate::{
@@ -92,6 +99,9 @@ pub struct RenderContext<'game> {
     bindless_layout: vk::DescriptorSetLayout,
     bindless_pool: vk::DescriptorPool,
     bindless_ds: vk::DescriptorSet,
+    pub(crate) sampled_images_to_update: Mutex<HashSet<ImageHandle>>,
+    pub(crate) storage_images_to_update: Mutex<HashSet<ImageHandle>>,
+    pub(crate) storage_buffers_to_update: Mutex<HashSet<BufferHandle>>,
 }
 
 impl<'game> Debug for RenderContext<'game> {
@@ -99,6 +109,35 @@ impl<'game> Debug for RenderContext<'game> {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
     }
 }
+
+const SAMPLED_IMAGES_SLOT: u32 = 0;
+const STORAGE_IMAGES_SLOT: u32 = 1;
+const STORAGE_BUFFERS_SLOT: u32 = 2;
+
+const BINDLESS_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    bindless: true,
+    stage: vk::ShaderStageFlags::ALL,
+    set: &[
+        DescriptorBindingDesc {
+            name: "sampled_images",
+            slot: SAMPLED_IMAGES_SLOT,
+            ty: vk::DescriptorType::SAMPLED_IMAGE,
+            count: MAX_POOL_INDEX,
+        },
+        DescriptorBindingDesc {
+            name: "storage_images",
+            slot: STORAGE_IMAGES_SLOT,
+            ty: vk::DescriptorType::STORAGE_IMAGE,
+            count: MAX_POOL_INDEX,
+        },
+        DescriptorBindingDesc {
+            name: "storage_buffers",
+            slot: STORAGE_BUFFERS_SLOT,
+            ty: vk::DescriptorType::STORAGE_BUFFER,
+            count: MAX_POOL_INDEX,
+        },
+    ],
+};
 
 impl<'game> RenderContext<'game> {
     pub(crate) fn new(instance: &'game Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
@@ -218,33 +257,9 @@ impl<'game> RenderContext<'game> {
             &mut memory_allocator.lock(),
         )?);
         let samplers = Self::generate_samplers(&device);
-        let bindless_set = DescriptorSetLayoutDesc {
-            bindless: true,
-            stage: vk::ShaderStageFlags::ALL,
-            set: &[
-                DescriptorBindingDesc {
-                    name: "sampled_images",
-                    slot: 0,
-                    ty: vk::DescriptorType::SAMPLED_IMAGE,
-                    count: MAX_POOL_INDEX,
-                },
-                DescriptorBindingDesc {
-                    name: "storage_images",
-                    slot: 0,
-                    ty: vk::DescriptorType::STORAGE_IMAGE,
-                    count: MAX_POOL_INDEX,
-                },
-                DescriptorBindingDesc {
-                    name: "storage_buffers",
-                    slot: 0,
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    count: MAX_POOL_INDEX,
-                },
-            ],
-        };
-        let bindless_layout = create_descriptor_set_layout(&device, &samplers, &bindless_set)?;
+        let bindless_layout = create_descriptor_set_layout(&device, &samplers, &BINDLESS_SET)?;
 
-        let sizes = bindless_set.to_pool_size(1);
+        let sizes = BINDLESS_SET.to_pool_size(1);
         let pool_create_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .max_sets(1)
@@ -279,6 +294,9 @@ impl<'game> RenderContext<'game> {
             bindless_layout,
             bindless_pool,
             bindless_ds,
+            sampled_images_to_update: Default::default(),
+            storage_images_to_update: Default::default(),
+            storage_buffers_to_update: Default::default(),
         })
     }
 
@@ -479,6 +497,7 @@ impl<'game> RenderContext<'game> {
             puffin::profile_scope!("Generate frame");
             f(&mut context)?;
         }
+        self.update_descriptors();
         {
             let mut staging = self.staging.lock();
             let upload = staging.upload(&self)?;
@@ -537,6 +556,85 @@ impl<'game> RenderContext<'game> {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
             Err(err) => panic!("Can't present image: {}", err),
         }
+    }
+
+    fn update_descriptors(&self) {
+        puffin::profile_function!();
+        let images = self.images.read();
+        let buffers = self.buffers.read();
+        let sampled_images = self
+            .sampled_images_to_update
+            .lock()
+            .drain()
+            .map(|x| (x.index(), *images.get(x).unwrap()))
+            .collect::<Vec<_>>();
+        let storage_images = self
+            .storage_images_to_update
+            .lock()
+            .drain()
+            .map(|x| (x.index(), *images.get(x).unwrap()))
+            .collect::<Vec<_>>();
+        let storage_buffers = self
+            .storage_buffers_to_update
+            .lock()
+            .drain()
+            .map(|x| (x.index(), buffers.get_cold(x).unwrap().raw))
+            .collect::<Vec<_>>();
+        drop(images);
+        drop(buffers);
+        let mut writes =
+            Vec::with_capacity(sampled_images.len() + storage_buffers.len() + storage_images.len());
+        let image_info = TempList::new();
+        let buffer_info = TempList::new();
+        sampled_images.into_iter().for_each(|(index, view)| {
+            writes.push(
+                WriteDescriptorSet::default()
+                    .descriptor_count(1)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .dst_array_element(index)
+                    .dst_set(self.bindless_ds)
+                    .dst_binding(SAMPLED_IMAGES_SLOT)
+                    .image_info(slice::from_ref(
+                        image_info.add(
+                            DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
+                                .image_view(view),
+                        ),
+                    )),
+            )
+        });
+        storage_images.into_iter().for_each(|(index, view)| {
+            writes.push(
+                WriteDescriptorSet::default()
+                    .descriptor_count(1)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .dst_array_element(index)
+                    .dst_set(self.bindless_ds)
+                    .dst_binding(STORAGE_IMAGES_SLOT)
+                    .image_info(slice::from_ref(
+                        image_info.add(
+                            DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
+                                .image_view(view),
+                        ),
+                    )),
+            )
+        });
+        storage_buffers.into_iter().for_each(|(index, buffer)| {
+            writes.push(
+                WriteDescriptorSet::default()
+                    .descriptor_count(1)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .dst_array_element(index)
+                    .dst_set(self.bindless_ds)
+                    .dst_binding(STORAGE_BUFFERS_SLOT)
+                    .buffer_info(slice::from_ref(
+                        buffer_info.add(DescriptorBufferInfo::default().buffer(buffer)),
+                    )),
+            )
+        });
+
+        unsafe { self.device.update_descriptor_sets(&writes, &[]) };
     }
 }
 
