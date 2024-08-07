@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use log::info;
-use raw_window_handle::{RawWindowHandle};
+use raw_window_handle::RawWindowHandle;
 
 use crate::{Error, ImageDesc, ImageHandle, Instance, RenderContext};
 

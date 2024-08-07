@@ -23,6 +23,7 @@ use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
 use crate::{
+    vulkan::barrier::{image_barrier, Barrier},
     AcquiredSurface, Buffer, Error, Instance, RasterPipelineCreateDesc, Swapchain, SwapchainImage,
 };
 
@@ -438,31 +439,42 @@ impl RenderContext {
             puffin::profile_scope!("Generate frame");
             f(&mut context)?;
         }
-        let mut staging = self.staging.lock();
-        let upload = staging.upload(&self)?;
-        let images = self.images.read();
-        let buffers = self.buffers.read();
-        bevy_tasks::block_on(compile_pipelines)?;
-        unsafe {
-            self.device
-                .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
-        }?;
-        staging.execute_pending_barriers(&self, frame.cb);
-        // TODO:: passes
-        unsafe { self.device.end_command_buffer(frame.cb) }?;
-        let wait = [
-            upload,
-            (
-                target.acquire_semaphore,
-                vk::PipelineStageFlags2::TOP_OF_PIPE,
-            ),
-        ];
-        let trigger = [(
-            target.rendering_finished,
-            vk::PipelineStageFlags2::ALL_GRAPHICS,
-        )];
-        self.submit_graphics((frame.cb, frame.fence), &wait, &trigger)?;
-        self.end_frame(frame);
+        {
+            let mut staging = self.staging.lock();
+            let upload = staging.upload(&self)?;
+            let images = self.images.read();
+            let buffers = self.buffers.read();
+            bevy_tasks::block_on(compile_pipelines)?;
+            unsafe {
+                self.device
+                    .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
+            }?;
+            staging.execute_pending_barriers(&self, frame.cb);
+            let backbuffer = images
+                .get_cold(target.image)
+                .expect("Back buffer MUST exist");
+            image_barrier(
+                &self.device,
+                frame.cb,
+                &[Barrier::DiscardRenderTarget(backbuffer)],
+            );
+            // TODO:: passes
+            image_barrier(&self.device, frame.cb, &[Barrier::ToPresent(backbuffer)]);
+            unsafe { self.device.end_command_buffer(frame.cb) }?;
+            let wait = [
+                upload,
+                (
+                    target.acquire_semaphore,
+                    vk::PipelineStageFlags2::TOP_OF_PIPE,
+                ),
+            ];
+            let trigger = [(
+                target.rendering_finished,
+                vk::PipelineStageFlags2::ALL_GRAPHICS,
+            )];
+            self.submit_graphics((frame.cb, frame.fence), &wait, &trigger)?;
+            self.end_frame(frame);
+        }
         self.present(target);
         Ok(FrameState::Rendered)
     }

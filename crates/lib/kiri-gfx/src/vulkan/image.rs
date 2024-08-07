@@ -303,6 +303,12 @@ pub(crate) struct Image {
     memory: Option<GpuMemory>,
 }
 
+pub(crate) enum ImageSubresourceRange {
+    All,
+    Level(u32),
+    LevelAndMip(u32, u32),
+}
+
 impl Image {
     pub(crate) fn internal(image: vk::Image, desc: ImageDesc) -> Self {
         Self {
@@ -350,6 +356,33 @@ impl Image {
         if let Some(memory) = self.memory.take() {
             drop_list.drop_memory(memory);
             drop_list.drop_image(self.raw);
+        }
+    }
+
+    pub(crate) fn subresource(
+        &self,
+        range: ImageSubresourceRange,
+        aspect: vk::ImageAspectFlags,
+    ) -> vk::ImageSubresourceRange {
+        match range {
+            ImageSubresourceRange::All => vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect)
+                .base_array_layer(0)
+                .base_mip_level(0)
+                .layer_count(self.desc.array_elements)
+                .level_count(self.desc.mip_levels),
+            ImageSubresourceRange::Level(level) => vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect)
+                .base_array_layer(level)
+                .base_mip_level(0)
+                .layer_count(1)
+                .level_count(self.desc.mip_levels),
+            ImageSubresourceRange::LevelAndMip(level, mip) => vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect)
+                .base_array_layer(level)
+                .base_mip_level(mip)
+                .layer_count(1)
+                .level_count(1),
         }
     }
 }

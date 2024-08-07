@@ -18,6 +18,7 @@ use std::error::Error;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPoolBuilder};
 use kiri_common::TimeFilter;
 use kiri_gfx::{InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
+use log::info;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use sdl2::{event::Event, video::WindowBuildError};
 
@@ -96,11 +97,13 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
         }
         let size = window.vulkan_drawable_size();
         if size.0 > 0 && size.1 > 0 {
-            let swapchain_frame =
-                swapchain.get_or_insert(Swapchain::new(&context, &surface, [size.0, size.1])?);
-            match context.frame(&swapchain_frame, |context| Ok(game.draw(dt, context)?))? {
-                kiri_gfx::FrameState::NeedRecreateSwapchain => swapchain = None,
-                _ => {}
+            if let Some(swapchain_frame) = &swapchain {
+                match context.frame(&swapchain_frame, |context| Ok(game.draw(dt, context)?))? {
+                    kiri_gfx::FrameState::NeedRecreateSwapchain => swapchain = None,
+                    _ => {}
+                }
+            } else {
+                swapchain = Some(Swapchain::new(&context, &surface, [size.0, size.1])?);
             }
         }
     }
