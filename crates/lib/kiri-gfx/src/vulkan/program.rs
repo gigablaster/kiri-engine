@@ -43,8 +43,22 @@ pub struct DescriptorBindingDesc<'a> {
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorSetLayoutDesc<'a> {
+    pub bindless: bool,
     pub stage: vk::ShaderStageFlags,
     pub set: &'a [DescriptorBindingDesc<'a>],
+}
+
+impl<'a> DescriptorSetLayoutDesc<'a> {
+    pub fn to_pool_size(&self, count: u32) -> Vec<vk::DescriptorPoolSize> {
+        self.set
+            .iter()
+            .map(|x| {
+                vk::DescriptorPoolSize::default()
+                    .ty(x.ty)
+                    .descriptor_count(x.count * count)
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 type ReflectedDescriptorSet = HashMap<usize, (String, vk::DescriptorType, u32)>;
@@ -57,6 +71,7 @@ pub(crate) fn create_descriptor_set_layout(
 ) -> Result<vk::DescriptorSetLayout, Error> {
     let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
     let mut bindings = HashMap::with_capacity(set.set.len());
+    let mut flags = Vec::with_capacity(set.set.len());
     for binding in set.set.iter() {
         match binding.ty {
             vk::DescriptorType::UNIFORM_BUFFER
@@ -77,21 +92,34 @@ pub(crate) fn create_descriptor_set_layout(
         };
     }
     for (sampler, slot, count, ty, stage) in &samplers {
-        let layout_biding = vk::DescriptorSetLayoutBinding::default()
+        let mut layout_biding = vk::DescriptorSetLayoutBinding::default()
             .binding(*slot as _)
             .descriptor_count(*count as _)
             .descriptor_type(*ty)
             .stage_flags(*stage)
             .immutable_samplers(slice::from_ref(sampler));
+        flags.push(
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+        );
         bindings.insert(*slot, layout_biding);
     }
 
-    let layoyt = bindings.values().copied().collect::<Vec<_>>();
+    let layout = bindings.values().copied().collect::<Vec<_>>();
     let mut types = HashMap::with_capacity(set.set.len());
     bindings.into_iter().for_each(|(index, binding)| {
         types.insert(index, binding.descriptor_type);
     });
-    let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layoyt);
+    let mut layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout);
+    let mut binding_flags =
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
+    binding_flags.binding_count = flags.len() as u32;
+    if set.bindless {
+        layout_create_info = layout_create_info
+            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+            .push_next(&mut binding_flags);
+    }
+
     let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
 
     Ok(layout)
@@ -285,7 +313,8 @@ impl Program {
         layout.sort_by_key(|(index, _)| *index);
         let layouts = layout
             .iter()
-            .map(|(_, set)| {
+            .enumerate()
+            .map(|(index, (_, set))| {
                 let descs = set
                     .iter()
                     .map(|(index, desc)| DescriptorBindingDesc {
@@ -296,6 +325,7 @@ impl Program {
                     })
                     .collect::<Vec<_>>();
                 let desc = DescriptorSetLayoutDesc {
+                    bindless: index == BINDLESS_BINDING_SLOT,
                     stage: stages,
                     set: &descs,
                 };

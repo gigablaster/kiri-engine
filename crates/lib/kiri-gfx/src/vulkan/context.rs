@@ -90,6 +90,8 @@ pub struct RenderContext<'game> {
     pub(crate) transfer_queue_index: u32,
     pub(crate) staging: Mutex<Staging>,
     bindless_layout: vk::DescriptorSetLayout,
+    bindless_pool: vk::DescriptorPool,
+    bindless_ds: vk::DescriptorSet,
 }
 
 impl<'game> Debug for RenderContext<'game> {
@@ -216,33 +218,44 @@ impl<'game> RenderContext<'game> {
             &mut memory_allocator.lock(),
         )?);
         let samplers = Self::generate_samplers(&device);
-        let bindless_layout = create_descriptor_set_layout(
-            &device,
-            &samplers,
-            &DescriptorSetLayoutDesc {
-                stage: vk::ShaderStageFlags::ALL,
-                set: &[
-                    DescriptorBindingDesc {
-                        name: "sampled_images",
-                        slot: 0,
-                        ty: vk::DescriptorType::SAMPLED_IMAGE,
-                        count: MAX_POOL_INDEX,
-                    },
-                    DescriptorBindingDesc {
-                        name: "storage_images",
-                        slot: 0,
-                        ty: vk::DescriptorType::STORAGE_IMAGE,
-                        count: MAX_POOL_INDEX,
-                    },
-                    DescriptorBindingDesc {
-                        name: "storage_buffers",
-                        slot: 0,
-                        ty: vk::DescriptorType::STORAGE_BUFFER,
-                        count: MAX_POOL_INDEX,
-                    },
-                ],
-            },
-        )?;
+        let bindless_set = DescriptorSetLayoutDesc {
+            bindless: true,
+            stage: vk::ShaderStageFlags::ALL,
+            set: &[
+                DescriptorBindingDesc {
+                    name: "sampled_images",
+                    slot: 0,
+                    ty: vk::DescriptorType::SAMPLED_IMAGE,
+                    count: MAX_POOL_INDEX,
+                },
+                DescriptorBindingDesc {
+                    name: "storage_images",
+                    slot: 0,
+                    ty: vk::DescriptorType::STORAGE_IMAGE,
+                    count: MAX_POOL_INDEX,
+                },
+                DescriptorBindingDesc {
+                    name: "storage_buffers",
+                    slot: 0,
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    count: MAX_POOL_INDEX,
+                },
+            ],
+        };
+        let bindless_layout = create_descriptor_set_layout(&device, &samplers, &bindless_set)?;
+
+        let sizes = bindless_set.to_pool_size(1);
+        let pool_create_info = vk::DescriptorPoolCreateInfo::default()
+            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+            .max_sets(1)
+            .pool_sizes(&sizes);
+        let bindless_pool = unsafe { device.create_descriptor_pool(&pool_create_info, None) }?;
+        let layouts = [bindless_layout];
+        let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(bindless_pool)
+            .set_layouts(&layouts);
+        allocate_info.descriptor_set_count = 1;
+        let bindless_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
 
         Ok(Self {
             staging,
@@ -264,6 +277,8 @@ impl<'game> RenderContext<'game> {
             pipelines: Default::default(),
             pipelines_to_compile: Default::default(),
             bindless_layout,
+            bindless_pool,
+            bindless_ds,
         })
     }
 
@@ -563,6 +578,8 @@ impl<'game> Drop for RenderContext<'game> {
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
         unsafe {
+            self.device
+                .destroy_descriptor_pool(self.bindless_pool, None);
             self.device
                 .destroy_descriptor_set_layout(self.bindless_layout, None);
             self.device.destroy_device(None);
