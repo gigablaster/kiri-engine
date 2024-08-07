@@ -99,6 +99,9 @@ pub struct RenderContext<'game> {
     bindless_layout: vk::DescriptorSetLayout,
     bindless_pool: vk::DescriptorPool,
     bindless_ds: vk::DescriptorSet,
+    sampler_layout: vk::DescriptorSetLayout,
+    sampler_pool: vk::DescriptorPool,
+    sampler_ds: vk::DescriptorSet,
     pub(crate) sampled_images_to_update: Mutex<HashSet<ImageHandle>>,
     pub(crate) storage_images_to_update: Mutex<HashSet<ImageHandle>>,
     pub(crate) storage_buffers_to_update: Mutex<HashSet<BufferHandle>>,
@@ -135,6 +138,49 @@ const BINDLESS_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
             slot: STORAGE_BUFFERS_SLOT,
             ty: vk::DescriptorType::STORAGE_BUFFER,
             count: MAX_POOL_INDEX,
+        },
+    ],
+};
+
+const SAMPLER_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    bindless: false,
+    stage: vk::ShaderStageFlags::FRAGMENT,
+    set: &[
+        DescriptorBindingDesc {
+            name: "sampler_lr",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
+        },
+        DescriptorBindingDesc {
+            name: "sampler_lb",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
+        },
+        DescriptorBindingDesc {
+            name: "sampler_lm",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
+        },
+        DescriptorBindingDesc {
+            name: "sampler_nr",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
+        },
+        DescriptorBindingDesc {
+            name: "sampler_nb",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
+        },
+        DescriptorBindingDesc {
+            name: "sampler_nm",
+            slot: 0,
+            ty: vk::DescriptorType::SAMPLER,
+            count: 1,
         },
     ],
 };
@@ -258,6 +304,7 @@ impl<'game> RenderContext<'game> {
         )?);
         let samplers = Self::generate_samplers(&device);
         let bindless_layout = create_descriptor_set_layout(&device, &samplers, &BINDLESS_SET)?;
+        let sampler_layout = create_descriptor_set_layout(&device, &samplers, &SAMPLER_SET)?;
 
         let sizes = BINDLESS_SET.to_pool_size(1);
         let pool_create_info = vk::DescriptorPoolCreateInfo::default()
@@ -265,12 +312,24 @@ impl<'game> RenderContext<'game> {
             .max_sets(1)
             .pool_sizes(&sizes);
         let bindless_pool = unsafe { device.create_descriptor_pool(&pool_create_info, None) }?;
+        let sizes = SAMPLER_SET.to_pool_size(1);
+        let pool_create_info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(1)
+            .pool_sizes(&sizes);
+        let sampler_pool = unsafe { device.create_descriptor_pool(&pool_create_info, None) }?;
+
         let layouts = [bindless_layout];
         let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(bindless_pool)
             .set_layouts(&layouts);
         allocate_info.descriptor_set_count = 1;
         let bindless_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
+        let layouts = [sampler_layout];
+        let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(sampler_pool)
+            .set_layouts(&layouts);
+        allocate_info.descriptor_set_count = 1;
+        let sampler_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
 
         Ok(Self {
             staging,
@@ -294,6 +353,9 @@ impl<'game> RenderContext<'game> {
             bindless_layout,
             bindless_pool,
             bindless_ds,
+            sampler_layout,
+            sampler_pool,
+            sampler_ds,
             sampled_images_to_update: Default::default(),
             storage_images_to_update: Default::default(),
             storage_buffers_to_update: Default::default(),
@@ -309,9 +371,10 @@ impl<'game> RenderContext<'game> {
         let address_modes = [
             vk::SamplerAddressMode::REPEAT,
             vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            vk::SamplerAddressMode::CLAMP_TO_BORDER,
             vk::SamplerAddressMode::MIRRORED_REPEAT,
         ];
-        let aniso_levels = [0, 1, 2, 3];
+        let aniso_levels = [0, 1, 2, 3, 4];
         let mut result = HashMap::new();
         texel_filters.into_iter().for_each(|texel_filter| {
             mipmap_modes.into_iter().for_each(|mipmap_mode| {
@@ -678,8 +741,11 @@ impl<'game> Drop for RenderContext<'game> {
         unsafe {
             self.device
                 .destroy_descriptor_pool(self.bindless_pool, None);
+            self.device.destroy_descriptor_pool(self.sampler_pool, None);
             self.device
                 .destroy_descriptor_set_layout(self.bindless_layout, None);
+            self.device
+                .destroy_descriptor_set_layout(self.sampler_layout, None);
             self.device.destroy_device(None);
         }
     }

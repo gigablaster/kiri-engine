@@ -22,6 +22,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
+use log::debug;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{Error, ProgramHandle};
@@ -83,9 +84,9 @@ pub(crate) fn create_descriptor_set_layout(
                 bindings.insert(binding.slot, create_binding(set.stage, binding));
             }
             vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
-                let sampler = immutable_samplers
-                    .get(&get_suitable_sampler_desc())
-                    .unwrap();
+                let desc = get_suitable_sampler_desc(binding.name);
+                debug!("{} {:?}", binding.name, desc);
+                let sampler = immutable_samplers.get(&desc).unwrap();
                 samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
             }
             _ => panic!("Not yet implemented {:?}", binding.ty),
@@ -136,12 +137,56 @@ fn create_binding<'a>(
         .stage_flags(stage)
 }
 
-fn get_suitable_sampler_desc() -> SamplerDesc {
-    SamplerDesc {
-        texel_filter: vk::Filter::LINEAR,
-        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-        address_mode: vk::SamplerAddressMode::REPEAT,
-        anisotropy_level: 16, // TODO:: control anisotropy level
+fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
+    if name.ends_with("_nr") {
+        SamplerDesc {
+            texel_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode: vk::SamplerAddressMode::REPEAT,
+            anisotropy_level: 0, // TODO:: control anisotropy level
+        }
+    } else if name.ends_with("_nb") {
+        SamplerDesc {
+            texel_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode: vk::SamplerAddressMode::CLAMP_TO_BORDER,
+            anisotropy_level: 0, // TODO:: control anisotropy level
+        }
+    } else if name.ends_with("_nm") {
+        SamplerDesc {
+            texel_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            anisotropy_level: 0, // TODO:: control anisotropy level
+        }
+    } else if name.ends_with("_lb") {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::CLAMP_TO_BORDER,
+            anisotropy_level: 8, // TODO:: control anisotropy level
+        }
+    } else if name.ends_with("_lm") {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::MIRRORED_REPEAT,
+            anisotropy_level: 8, // TODO:: control anisotropy level
+        }
+    } else if name.ends_with("_lr") {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::REPEAT,
+            anisotropy_level: 8, // TODO:: control anisotropy level
+        }
+    } else {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::REPEAT,
+            anisotropy_level: 8, // TODO:: control anisotropy level
+        }
     }
 }
 
