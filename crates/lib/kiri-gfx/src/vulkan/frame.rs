@@ -18,9 +18,9 @@ use std::{collections::HashMap, thread};
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{Error};
+use crate::Error;
 
-use super::{DropList, GpuAllocator, GpuDescriptorAllocator};
+use super::{DropList, GpuAllocator};
 
 const PREALLOCATED_COMMAND_BUFFERS: usize = 8;
 
@@ -137,10 +137,8 @@ impl Frame {
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
-        descriptor_allocator: &mut GpuDescriptorAllocator,
     ) -> Result<(), Error> {
-        self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator);
+        self.drop_list.purge(device, memory_allocator);
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         self.per_thread_buffers
             .lock()
@@ -154,19 +152,13 @@ impl Frame {
         Ok(())
     }
 
-    pub(crate) fn free(
-        &mut self,
-        device: &ash::Device,
-        memory_allocator: &mut GpuAllocator,
-        descriptor_allocator: &mut GpuDescriptorAllocator,
-    ) {
+    pub(crate) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
             device.destroy_semaphore(self.finished, None);
         }
-        self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator);
+        self.drop_list.purge(device, memory_allocator);
         self.per_thread_buffers
             .lock()
             .drain()

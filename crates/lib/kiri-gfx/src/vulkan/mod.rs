@@ -41,6 +41,3 @@ pub use swapchain::*;
 
 type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
-type GpuDescriptor = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-type GpuDescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;

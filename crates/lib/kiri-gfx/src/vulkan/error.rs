@@ -28,8 +28,6 @@ pub enum Error {
     OutOfHostMemory,
     #[error("Too many objects")]
     TooManyObjects,
-    #[error("Descriptor pool fragmentation")]
-    Fragmentation,
     #[error("Not supported")]
     NotSupported,
     #[error("Vulkan not found or failed to load")]
@@ -112,16 +110,6 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<gpu_descriptor::AllocationError> for Error {
-    fn from(value: gpu_descriptor::AllocationError) -> Self {
-        match value {
-            gpu_descriptor::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
-            gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
-            gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
-        }
     }
 }
 

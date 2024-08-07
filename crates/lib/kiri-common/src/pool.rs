@@ -27,6 +27,8 @@ const GENERATION_MASK: u32 = u32::MAX - INDEX_MASK;
 const MAX_INDEX: u32 = (1 << INDEX_BITS) - 1;
 const MAX_GENERATION: u32 = 1 << GENERATION_BITS;
 
+pub const MAX_POOL_INDEX: u32 = MAX_INDEX;
+
 #[derive(Debug)]
 pub struct Handle<T> {
     data: u32,

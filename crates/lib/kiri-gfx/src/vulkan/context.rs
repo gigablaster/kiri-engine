@@ -18,7 +18,7 @@ use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc, u64};
 use arrayvec::ArrayVec;
 use ash::vk;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy};
+use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, MAX_POOL_INDEX};
 use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
@@ -28,8 +28,9 @@ use crate::{
 };
 
 use super::{
-    drop_list::DropList, frame::Frame, image::Image, physical_device::PhysicalDevice,
-    staging::Staging, GpuAllocator, GpuDescriptorAllocator, GpuMemory, Program, RenderPassLayout,
+    create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
+    physical_device::PhysicalDevice, staging::Staging, DescriptorBindingDesc,
+    DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPassLayout,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
@@ -66,7 +67,6 @@ pub struct RenderContext<'game> {
     pub(crate) device: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
     memory_allocator: Mutex<GpuAllocator>,
-    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     current_drop_list: Mutex<DropList>,
     pub(crate) images: RwLock<ImagePool>,
     pub(crate) buffers: RwLock<BufferPool>,
@@ -89,6 +89,7 @@ pub struct RenderContext<'game> {
     pub(crate) universal_queue_index: u32,
     pub(crate) transfer_queue_index: u32,
     pub(crate) staging: Mutex<Staging>,
+    bindless_layout: vk::DescriptorSetLayout,
 }
 
 impl<'game> Debug for RenderContext<'game> {
@@ -196,7 +197,6 @@ impl<'game> RenderContext<'game> {
         let allocator_props =
             unsafe { device_properties(instance.get(), Instance::vulkan_version(), pdevice.raw) }?;
         let memory_allocator = Mutex::new(GpuAllocator::new(allocator_config, allocator_props));
-        let descriptor_allocator = Mutex::new(GpuDescriptorAllocator::new(1));
 
         let frames = [
             Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
@@ -215,14 +215,41 @@ impl<'game> RenderContext<'game> {
             universal_queue_index,
             &mut memory_allocator.lock(),
         )?);
+        let samplers = Self::generate_samplers(&device);
+        let bindless_layout = create_descriptor_set_layout(
+            &device,
+            &samplers,
+            &DescriptorSetLayoutDesc {
+                stage: vk::ShaderStageFlags::ALL,
+                set: &[
+                    DescriptorBindingDesc {
+                        name: "sampled_images",
+                        slot: 0,
+                        ty: vk::DescriptorType::SAMPLED_IMAGE,
+                        count: MAX_POOL_INDEX,
+                    },
+                    DescriptorBindingDesc {
+                        name: "storage_images",
+                        slot: 0,
+                        ty: vk::DescriptorType::STORAGE_IMAGE,
+                        count: MAX_POOL_INDEX,
+                    },
+                    DescriptorBindingDesc {
+                        name: "storage_buffers",
+                        slot: 0,
+                        ty: vk::DescriptorType::STORAGE_BUFFER,
+                        count: MAX_POOL_INDEX,
+                    },
+                ],
+            },
+        )?;
 
         Ok(Self {
             staging,
             instance,
-            samplers: Self::generate_samplers(&device),
+            samplers,
             pdevice,
             memory_allocator,
-            descriptor_allocator,
             universal_queue,
             transfer_queue,
             frames,
@@ -236,6 +263,7 @@ impl<'game> RenderContext<'game> {
             programs: Default::default(),
             pipelines: Default::default(),
             pipelines_to_compile: Default::default(),
+            bindless_layout,
         })
     }
 
@@ -403,11 +431,7 @@ impl<'game> RenderContext<'game> {
                 self.device
                     .wait_for_fences(slice::from_ref(&frame.fence), true, u64::MAX)?
             };
-            frame.reset(
-                &self.device,
-                &mut self.memory_allocator.lock(),
-                &mut self.descriptor_allocator.lock(),
-            )?;
+            frame.reset(&self.device, &mut self.memory_allocator.lock())?;
         }
         Ok(frame.clone())
     }
@@ -510,7 +534,6 @@ impl<'game> Drop for RenderContext<'game> {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         self.staging.lock().free(&self);
         let mut memory_allocator = self.memory_allocator.lock();
-        let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
         self.images.write().drain().for_each(|(view, image)| {
             drop_list.drop_view(view);
@@ -520,19 +543,11 @@ impl<'game> Drop for RenderContext<'game> {
             .write()
             .drain()
             .for_each(|(_, buffer)| buffer.free(&mut drop_list));
-        drop_list.purge(
-            &self.device,
-            &mut memory_allocator,
-            &mut descriptor_allocator,
-        );
+        drop_list.purge(&self.device, &mut memory_allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
                 .expect("Nothing should hold a frame at point when we destroy rendering context")
-                .reset(
-                    &self.device,
-                    &mut memory_allocator,
-                    &mut descriptor_allocator,
-                )
+                .reset(&self.device, &mut memory_allocator)
                 .unwrap();
         });
         self.programs
@@ -542,16 +557,16 @@ impl<'game> Drop for RenderContext<'game> {
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
                 .expect("Nothing should hold frame at this point")
-                .free(
-                    &self.device,
-                    &mut memory_allocator,
-                    &mut descriptor_allocator,
-                )
+                .free(&self.device, &mut memory_allocator)
         });
         self.samplers
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
-        unsafe { self.device.destroy_device(None) };
+        unsafe {
+            self.device
+                .destroy_descriptor_set_layout(self.bindless_layout, None);
+            self.device.destroy_device(None);
+        }
     }
 }
 

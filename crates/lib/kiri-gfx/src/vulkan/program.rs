@@ -22,7 +22,6 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{Error, ProgramHandle};
@@ -58,25 +57,6 @@ pub(crate) fn create_descriptor_set_layout(
 ) -> Result<vk::DescriptorSetLayout, Error> {
     let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
     let mut bindings = HashMap::with_capacity(set.set.len());
-    let mut count = DescriptorTotalCount::default();
-    for binding in set.set.iter() {
-        match binding.ty {
-            vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += binding.count,
-            vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += binding.count,
-            vk::DescriptorType::STORAGE_IMAGE => count.storage_image += binding.count,
-            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                count.uniform_buffer_dynamic += binding.count
-            }
-            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                count.storage_buffer_dynamic += binding.count
-            }
-            vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += binding.count,
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                count.combined_image_sampler += binding.count
-            }
-            _ => panic!("Not yet implemented {:?}", binding.ty),
-        }
-    }
     for binding in set.set.iter() {
         match binding.ty {
             vk::DescriptorType::UNIFORM_BUFFER
