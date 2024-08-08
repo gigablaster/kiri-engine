@@ -123,7 +123,11 @@ impl<'a> Swapchain<'a> {
             panic!("Can't create swachain for surface with zero size");
         }
 
-        let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
+        let present_mode_preferences = [
+            vk::PresentModeKHR::MAILBOX,
+            vk::PresentModeKHR::FIFO_RELAXED,
+            vk::PresentModeKHR::FIFO,
+        ];
 
         let present_modes = unsafe {
             surface
