@@ -20,6 +20,7 @@ use std::{
     slice,
 };
 
+use arrayvec::ArrayVec;
 use ash::vk::{self};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -113,7 +114,27 @@ impl<'a> RenderPassLayout<'a> {
 pub struct RenderPass<'a> {
     pub layout: &'a RenderPassLayout<'a>,
     pub depth: Option<RenderTarget>,
-    pub color: &'a [RenderTarget],
+    pub color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+}
+
+impl<'a> RenderPass<'a> {
+    pub fn new(layout: &'a RenderPassLayout<'a>) -> Self {
+        Self {
+            layout,
+            depth: Default::default(),
+            color: Default::default(),
+        }
+    }
+
+    pub fn depth(mut self, depth: RenderTarget) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    pub fn color(mut self, color: RenderTarget) -> Self {
+        self.color.push(color);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]

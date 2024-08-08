@@ -32,6 +32,7 @@ use ash::vk;
 pub use buffer::*;
 pub use context::*;
 use draw_stream::*;
+pub use draw_stream::*;
 use drop_list::*;
 pub use error::*;
 use frame::*;

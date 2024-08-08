@@ -16,12 +16,12 @@
 use std::{io::Read, mem, slice, u32};
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, Rect2D};
+use ash::vk::{self, Pipeline, Rect2D};
 use parking_lot::Mutex;
 
 use crate::{PipelineHandle, PipelinePool, RenderPass};
 
-use super::Frame;
+use super::{Frame, ImageHandle};
 
 const PUSH_SIZE: usize = 128;
 
@@ -65,8 +65,8 @@ const PUSH_DATA_SIZE_MASK: u16 = 127 << PUSH_DATA_SIZE_SHIFT;
 pub enum DrawStreamError {
     #[error("Unexpected end of stream")]
     EndOfStream,
-    #[error("Invalid handle")]
-    InvalidHandle,
+    #[error("Invalid pipeline handle {0:?}")]
+    InvalidPipelineHandle(PipelineHandle),
 }
 
 impl<'a> DrawStreamReader<'a> {
@@ -208,7 +208,6 @@ impl Default for DrawState {
 }
 
 pub(crate) struct DrawStreamExecuteContext<'a> {
-    pub dims: [u32; 2],
     pub device: &'a ash::Device,
     pub cb: vk::CommandBuffer,
     pub pipelines: &'a PipelinePool,
@@ -224,33 +223,12 @@ impl DrawStream {
         let mut first_instance = u32::MAX;
         let mut instance_count = u32::MAX;
         let mut pipeline_layout = vk::PipelineLayout::null();
-        unsafe {
-            context.device.cmd_set_viewport(
-                context.cb,
-                0,
-                &[vk::Viewport::default()
-                    .width(context.dims[0] as _)
-                    .height(context.dims[1] as _)
-                    .min_depth(0.0)
-                    .max_depth(1.0)],
-            );
-            context.device.cmd_set_scissor(
-                context.cb,
-                0,
-                &[vk::Rect2D::default().extent(
-                    vk::Extent2D::default()
-                        .width(context.dims[0])
-                        .height(context.dims[1]),
-                )],
-            );
-        }
         while let Ok(mask) = reader.read() {
             if mask & PIPELINE_MASK == PIPELINE_MASK {
-                let index = reader.read_u32()? as usize;
-                let (pipeline, layout) = *context
-                    .pipelines
-                    .get(index)
-                    .ok_or(DrawStreamError::InvalidHandle)?;
+                let index = reader.read_u32()?;
+                let (pipeline, layout) = *context.pipelines.get(index as usize).ok_or(
+                    DrawStreamError::InvalidPipelineHandle(PipelineHandle(index)),
+                )?;
                 pipeline_layout = layout;
                 unsafe {
                     context.device.cmd_bind_pipeline(
@@ -311,7 +289,7 @@ impl DrawStream {
 #[derive(Debug)]
 pub struct RenderPassRecorder<'a> {
     context: &'a FrameRecorder<'a>,
-    pub(crate) pass: &'a RenderPass<'a>,
+    pub(crate) pass: RenderPass<'a>,
     pub(crate) streams: Mutex<Vec<DrawStream>>,
 }
 
@@ -319,6 +297,7 @@ pub struct RenderPassRecorder<'a> {
 pub struct FrameRecorder<'a> {
     pub(crate) frame: &'a Frame,
     pub(crate) passes: Mutex<Vec<RenderPassRecorder<'a>>>,
+    pub backbuffer: ImageHandle,
 }
 
 impl<'a> FrameRecorder<'a> {
@@ -326,7 +305,7 @@ impl<'a> FrameRecorder<'a> {
         self.passes.into_inner()
     }
 
-    pub fn record(&'a self, pass: &'a RenderPass<'a>) -> RenderPassRecorder<'a> {
+    pub fn record(&'a self, pass: RenderPass<'a>) -> RenderPassRecorder<'a> {
         RenderPassRecorder {
             context: &self,
             pass: pass,
@@ -342,5 +321,9 @@ impl<'a> RenderPassRecorder<'a> {
 
     pub fn finish(self) {
         self.context.passes.lock().push(self);
+    }
+
+    pub(crate) fn consume(self) -> (RenderPass<'a>, Vec<DrawStream>) {
+        (self.pass, self.streams.into_inner())
     }
 }

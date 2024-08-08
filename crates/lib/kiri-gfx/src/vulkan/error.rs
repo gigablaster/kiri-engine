@@ -20,6 +20,8 @@ use thiserror::Error;
 
 use crate::{BufferHandle, ImageHandle, ProgramHandle};
 
+use super::{DrawStreamError, PipelineHandle};
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Out of device memory")]
@@ -52,6 +54,8 @@ pub enum Error {
     InvalidBufferHandle(BufferHandle),
     #[error("Program handle {0:?} isn't valid")]
     InvalidProgramHandle(ProgramHandle),
+    #[error("Program handle {0:?} isn't valid")]
+    InvalidPipelineHandle(PipelineHandle),
     #[error("Image too big")]
     ImageTooBig,
     #[error("Memory isn't allocated")]
@@ -116,5 +120,16 @@ impl From<io::Error> for Error {
 impl From<rspirv_reflect::ReflectError> for Error {
     fn from(value: rspirv_reflect::ReflectError) -> Self {
         Self::ShaderReflectionFailed(value)
+    }
+}
+
+impl From<DrawStreamError> for Error {
+    fn from(value: DrawStreamError) -> Self {
+        match value {
+            DrawStreamError::EndOfStream => {
+                panic!("Internal error, draw stram shouldn't suddenly end")
+            }
+            DrawStreamError::InvalidPipelineHandle(handle) => Error::InvalidPipelineHandle(handle),
+        }
     }
 }

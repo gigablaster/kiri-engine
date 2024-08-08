@@ -16,6 +16,7 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::CString,
+    fmt::Display,
     mem, slice,
     sync::Arc,
     u32, u64,
@@ -31,9 +32,10 @@ use std::fmt::Debug;
 use crate::{
     vulkan::{
         barrier::{image_barrier, Barrier},
-        FrameRecorder,
+        DrawStreamExecuteContext, FrameRecorder,
     },
     AcquiredSurface, Buffer, Error, Instance, RasterPipelineCreateDesc, Swapchain, SwapchainImage,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 use super::{
@@ -573,6 +575,7 @@ impl<'game> RenderContext<'game> {
             let mut context = FrameRecorder {
                 frame: &frame,
                 passes: Default::default(),
+                backbuffer: target.image,
             };
             f(&mut context)?;
             context.finish()
@@ -597,6 +600,65 @@ impl<'game> RenderContext<'game> {
                 &[Barrier::DiscardRenderTarget(backbuffer)],
             );
             // TODO:: passes
+            let pipelines = self.pipelines.read();
+            for pass in passes {
+                let (pass, streams) = pass.consume();
+                let sizes = pass
+                    .color
+                    .iter()
+                    .map(|x| images.get_cold(x.image).unwrap().desc.dims)
+                    .chain(
+                        pass.depth
+                            .map(|x| images.get_cold(x.image).unwrap().desc.dims),
+                    )
+                    .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+                assert!(!sizes.is_empty());
+                let size = sizes[0];
+                assert!(sizes.iter().all(|x| *x == size));
+                let color_attachments = pass
+                    .color
+                    .iter()
+                    .map(|x| x.build(&images).unwrap())
+                    .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
+                let depth_attachment = pass.depth.iter().map(|x| x.build(&images).unwrap()).next();
+                let render_area = vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D {
+                        width: size[0],
+                        height: size[1],
+                    },
+                };
+                let mut rendering_info = vk::RenderingInfo::default()
+                    .color_attachments(&color_attachments)
+                    .layer_count(1)
+                    .render_area(render_area);
+                if let Some(depth) = &depth_attachment {
+                    rendering_info = rendering_info.depth_attachment(depth);
+                }
+                // Todo: barriers
+                unsafe {
+                    self.device.cmd_begin_rendering(frame.cb, &rendering_info);
+                    self.device.cmd_set_viewport(
+                        frame.cb,
+                        0,
+                        &[vk::Viewport::default()
+                            .width(size[0] as _)
+                            .height(size[1] as _)
+                            .max_depth(0.0)
+                            .max_depth(1.0)],
+                    );
+                    self.device.cmd_set_scissor(frame.cb, 0, &[render_area]);
+                }
+                streams.into_iter().try_for_each(|x| {
+                    x.execute(DrawStreamExecuteContext {
+                        device: &self.device,
+                        cb: frame.cb,
+                        pipelines: &pipelines,
+                        descriptors: &[self.bindless_ds, self.sampler_ds],
+                    })
+                })?;
+                unsafe { self.device.cmd_end_rendering(frame.cb) };
+            }
             image_barrier(&self.device, frame.cb, &[Barrier::ToPresent(backbuffer)]);
             unsafe { self.device.end_command_buffer(frame.cb) }?;
             let wait = [
