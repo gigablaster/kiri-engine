@@ -28,6 +28,7 @@ pub struct Instance {
     pub(crate) raw: ash::Instance,
     pub(crate) debug_utils: Option<ash::ext::debug_utils::Instance>,
     pub(crate) display_handle: RawDisplayHandle,
+    pub(crate) title: [String; 3],
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
 
@@ -37,15 +38,17 @@ pub struct InstanceBuilder {
     pub display_handle: RawDisplayHandle,
     pub debug: bool,
     pub trace: bool,
+    pub title: [String; 3],
 }
 
 impl InstanceBuilder {
-    pub fn new(display_handle: RawDisplayHandle) -> Self {
+    pub fn new(display_handle: RawDisplayHandle, title: (&str, &str, &str)) -> Self {
         Self {
             extensions: Vec::new(),
             display_handle,
             debug: false,
             trace: false,
+            title: [title.0.to_owned(), title.1.to_owned(), title.2.to_owned()],
         }
     }
     pub fn extensions(mut self, extensions: &[&'static CStr]) -> Self {
@@ -158,6 +161,7 @@ impl Instance {
             debug_utils,
             debug_messenger,
             display_handle: builder.display_handle,
+            title: builder.title,
         })
     }
 

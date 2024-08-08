@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    fs::File,
+    fs::{create_dir_all, File},
     io::{self},
     path::Path,
     slice,
@@ -24,6 +24,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use log::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -273,6 +274,7 @@ fn compile_raster_pipeline(
     program: ProgramHandle,
     render_pass_layout: &RenderPassLayout,
     desc: &RasterPipelineCreateDesc,
+    cache: vk::PipelineCache,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
     let program = context
         .resolve_program(program)
@@ -360,7 +362,7 @@ fn compile_raster_pipeline(
 
     let pipeline = unsafe {
         context.device.create_graphics_pipelines(
-            vk::PipelineCache::null(),
+            cache,
             slice::from_ref(&pipeline_create_info),
             None,
         )
@@ -397,8 +399,9 @@ impl<'game> RenderContext<'game> {
         program: ProgramHandle,
         pass: &RenderPassLayout<'static>,
         desc: RasterPipelineCreateDesc,
+        cache: vk::PipelineCache,
     ) -> Result<(PipelineHandle, vk::Pipeline, vk::PipelineLayout), Error> {
-        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, &desc)?;
+        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, &desc, cache)?;
         Ok((handle, pipeline, layout))
     }
 
@@ -421,6 +424,7 @@ impl<'game> RenderContext<'game> {
                         *program,
                         pass,
                         desc.clone(),
+                        self.cache,
                     ))
                 })
         });
@@ -538,13 +542,18 @@ pub(crate) fn load_or_create_pipeline_cache<P: AsRef<Path>>(
     pdevice: &PhysicalDevice,
     path: P,
 ) -> Result<vk::PipelineCache, Error> {
-    let data = if let Ok(cache) = PipelineDiskCache::read(File::open(path)?) {
-        if cache.vendor_id == pdevice.properties.vendor_id
-            && cache.device_id == pdevice.properties.device_id
-            && cache.driver_version == pdevice.properties.driver_version
-            && cache.uuid == Uuid::from_bytes(pdevice.properties.pipeline_cache_uuid)
-        {
-            Some(cache.data)
+    info!("Loading pipeline cache from {:?}", path.as_ref());
+    let data = if let Ok(file) = File::open(path) {
+        if let Ok(cache) = PipelineDiskCache::read(file) {
+            if cache.vendor_id == pdevice.properties.vendor_id
+                && cache.device_id == pdevice.properties.device_id
+                && cache.driver_version == pdevice.properties.driver_version
+                && cache.uuid == Uuid::from_bytes(pdevice.properties.pipeline_cache_uuid)
+            {
+                Some(cache.data)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -562,6 +571,7 @@ pub(crate) fn load_or_create_pipeline_cache<P: AsRef<Path>>(
         Ok(cache) => cache,
         Err(_) => {
             // Failed with initial data - so create empty cache.
+            warn!("Failed to load pipeline cache. Create new one.");
             let create_info = vk::PipelineCacheCreateInfo::default();
             unsafe { device.create_pipeline_cache(&create_info, None) }?
         }
@@ -576,11 +586,13 @@ pub(crate) fn save_pipeline_cache<P: AsRef<Path>>(
     cache: vk::PipelineCache,
     path: P,
 ) -> io::Result<()> {
+    info!("Saving pipeline cache to {:?}", path.as_ref());
     let data = unsafe { device.get_pipeline_cache_data(cache) }.map_err(|err| {
         io::Error::new(
             io::ErrorKind::Other,
             format!("Failed to get pipeline cache data from device: {:?}", err),
         )
     })?;
+    create_dir_all(path.as_ref().parent().unwrap())?;
     PipelineDiskCache::new(pdevice, &data).save(File::create(path)?)
 }

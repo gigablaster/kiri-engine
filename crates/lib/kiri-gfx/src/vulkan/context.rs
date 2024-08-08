@@ -16,16 +16,19 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::CString,
-    fmt::Display,
-    mem, slice,
+    mem,
+    path::PathBuf,
+    slice,
     sync::Arc,
     u32, u64,
 };
 
 use arrayvec::ArrayVec;
 use ash::vk::{self, DescriptorBufferInfo, DescriptorImageInfo, WriteDescriptorSet};
+use directories::ProjectDirs;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, TempList, MAX_POOL_INDEX};
+use log::error;
 use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
@@ -39,10 +42,16 @@ use crate::{
 };
 
 use super::{
-    create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
-    physical_device::PhysicalDevice, staging::Staging, DescriptorBindingDesc,
-    DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPass, RenderPassLayout,
-    RenderTarget,
+    create_descriptor_set_layout,
+    drop_list::DropList,
+    frame::Frame,
+    image::Image,
+    load_or_create_pipeline_cache,
+    physical_device::{self, PhysicalDevice},
+    save_pipeline_cache,
+    staging::Staging,
+    DescriptorBindingDesc, DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPass,
+    RenderPassLayout, RenderTarget,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
@@ -119,6 +128,7 @@ pub struct RenderContext<'game> {
     pub(crate) sampled_images_to_update: Mutex<HashSet<ImageHandle>>,
     pub(crate) storage_images_to_update: Mutex<HashSet<ImageHandle>>,
     pub(crate) storage_buffers_to_update: Mutex<HashSet<BufferHandle>>,
+    pub(crate) cache: vk::PipelineCache,
 }
 
 impl<'game> Debug for RenderContext<'game> {
@@ -345,6 +355,11 @@ impl<'game> RenderContext<'game> {
         allocate_info.descriptor_set_count = 1;
         let sampler_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
 
+        let cache = if let Some(path) = Self::get_pipelines_path(&instance) {
+            load_or_create_pipeline_cache(&device, &pdevice, &path)?
+        } else {
+            vk::PipelineCache::null()
+        };
         Ok(Self {
             staging,
             instance,
@@ -373,7 +388,18 @@ impl<'game> RenderContext<'game> {
             sampled_images_to_update: Default::default(),
             storage_images_to_update: Default::default(),
             storage_buffers_to_update: Default::default(),
+            cache,
         })
+    }
+
+    fn get_pipelines_path(instance: &Instance) -> Option<PathBuf> {
+        if let Some(dirs) =
+            ProjectDirs::from(&instance.title[0], &instance.title[1], &instance.title[2])
+        {
+            Some(dirs.cache_dir().join("pipelines.bin"))
+        } else {
+            None
+        }
     }
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
@@ -812,6 +838,15 @@ impl<'game> Drop for RenderContext<'game> {
         self.samplers
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
+        if self.cache != vk::PipelineCache::null() {
+            if let Some(path) = Self::get_pipelines_path(&self.instance) {
+                if let Err(err) = save_pipeline_cache(&self.device, &self.pdevice, self.cache, path)
+                {
+                    error!("Failed to save pipeline cache: {}", err);
+                }
+            }
+            unsafe { self.device.destroy_pipeline_cache(self.cache, None) };
+        }
         unsafe {
             self.device
                 .destroy_descriptor_pool(self.bindless_pool, None);

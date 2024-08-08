@@ -65,7 +65,7 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
         .position_centered()
         .vulkan()
         .build()?;
-    let instance = InstanceBuilder::new(window.display_handle()?.as_raw());
+    let instance = InstanceBuilder::new(window.display_handle()?.as_raw(), game.info());
     #[cfg(debug_assertions)]
     let instance = instance.debug(true);
     let instance = instance.build()?;
