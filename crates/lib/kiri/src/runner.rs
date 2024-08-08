@@ -61,6 +61,7 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
     let video = sdl.video()?;
     let window = video
         .window(game.title(), 1280, 720)
+        .allow_highdpi()
         .position_centered()
         .vulkan()
         .build()?;
