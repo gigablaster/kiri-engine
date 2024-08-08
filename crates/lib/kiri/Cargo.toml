@@ -6,8 +6,6 @@ edition = "2021"
 [dependencies]
 sdl2 = { version = "0.37.0", default-features = false, features = [
     "raw-window-handle",
-    "bundled",
-    "static-link",
 ] }
 kiri-common = { path = "../kiri-common" }
 kiri-gfx = { path = "../kiri-gfx" }
