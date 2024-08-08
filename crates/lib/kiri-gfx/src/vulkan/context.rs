@@ -826,6 +826,12 @@ impl<'game> Drop for RenderContext<'game> {
                 .reset(&self.device, &mut memory_allocator)
                 .unwrap();
         });
+        self.pipelines
+            .write()
+            .drain(..)
+            .for_each(|(pipeline, _)| unsafe {
+                self.device.destroy_pipeline(pipeline, None);
+            });
         self.programs
             .write()
             .drain(..)
