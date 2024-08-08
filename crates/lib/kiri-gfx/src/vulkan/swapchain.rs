@@ -269,16 +269,10 @@ impl<'a> Swapchain<'a> {
     }
 
     fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [
-            vk::SurfaceFormatKHR {
-                format: vk::Format::A2B10G10R10_UNORM_PACK32,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-            vk::SurfaceFormatKHR {
-                format: vk::Format::B8G8R8A8_UNORM,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-        ];
+        let prefered = [vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }];
 
         prefered.into_iter().find(|format| formats.contains(format))
     }

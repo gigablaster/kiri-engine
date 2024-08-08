@@ -84,9 +84,9 @@ pub(crate) fn create_descriptor_set_layout(
                 bindings.insert(binding.slot, create_binding(set.stage, binding));
             }
             vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
-                let desc = get_suitable_sampler_desc(binding.name);
-                debug!("{} {:?}", binding.name, desc);
-                let sampler = immutable_samplers.get(&desc).unwrap();
+                let sampler = immutable_samplers
+                    .get(&get_suitable_sampler_desc(binding.name))
+                    .unwrap();
                 samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
             }
             _ => panic!("Not yet implemented {:?}", binding.ty),

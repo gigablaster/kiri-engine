@@ -1,6 +1,8 @@
 use std::{error::Error, fmt::Display};
 
+use ash::vk;
 use kiri::{run_game, GameClient};
+use kiri_gfx::{ClearRenderTarget, RenderPass, RenderPassLayout, RenderTarget};
 
 #[derive(Debug, Default)]
 struct Loop {}
@@ -16,6 +18,11 @@ impl Display for LoopError {
     }
 }
 impl Error for LoopError {}
+
+const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::B8G8R8A8_UNORM],
+    depth: None,
+};
 
 impl GameClient<LoopError> for Loop {
     fn info(&self) -> (&str, &str, &str) {
@@ -35,10 +42,15 @@ impl GameClient<LoopError> for Loop {
         time: kiri_common::GameTime,
         context: &kiri_gfx::FrameRecorder<'a>,
     ) -> Result<(), kiri_gfx::Error> {
+        let pass = RenderPass::default().color(
+            RenderTarget::color(context.backbuffer)
+                .clear(ClearRenderTarget::Color([1.0, 0.0, 0.0, 1.0])),
+        );
+        context.record(pass).finish();
         Ok(())
     }
 }
 fn main() {
-    let logger = simple_logger::init().unwrap();
+    simple_logger::init().unwrap();
     run_game(Loop::default()).unwrap();
 }

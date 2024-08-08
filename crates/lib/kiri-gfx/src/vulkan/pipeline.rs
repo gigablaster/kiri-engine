@@ -67,6 +67,42 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
+    pub fn color(image: ImageHandle) -> Self {
+        Self {
+            image,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            load_op: vk::AttachmentLoadOp::DONT_CARE,
+            store_op: vk::AttachmentStoreOp::STORE,
+            clear: ClearRenderTarget::None,
+        }
+    }
+
+    pub fn depth(image: ImageHandle) -> Self {
+        Self {
+            image,
+            layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            load_op: vk::AttachmentLoadOp::DONT_CARE,
+            store_op: vk::AttachmentStoreOp::STORE,
+            clear: ClearRenderTarget::None,
+        }
+    }
+
+    pub fn discard(mut self) -> Self {
+        self.store_op = vk::AttachmentStoreOp::DONT_CARE;
+        self
+    }
+
+    pub fn clear(mut self, color: ClearRenderTarget) -> Self {
+        self.load_op = vk::AttachmentLoadOp::CLEAR;
+        self.clear = color;
+        self
+    }
+
+    pub fn load(mut self) -> Self {
+        self.load_op = vk::AttachmentLoadOp::LOAD;
+        self
+    }
+
     pub(crate) fn build(&self, images: &ImagePool) -> Result<vk::RenderingAttachmentInfo, Error> {
         let view = images
             .get(self.image)
@@ -80,6 +116,7 @@ impl RenderTarget {
         Ok(info)
     }
 }
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RenderPassLayout<'a> {
     pub color: &'a [vk::Format],
@@ -110,22 +147,14 @@ impl<'a> RenderPassLayout<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RenderPass<'a> {
-    pub layout: &'a RenderPassLayout<'a>,
+#[derive(Debug, Default)]
+pub struct RenderPass {
+    // pub layout: &'a RenderPassLayout<'a>,
     pub depth: Option<RenderTarget>,
     pub color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
 }
 
-impl<'a> RenderPass<'a> {
-    pub fn new(layout: &'a RenderPassLayout<'a>) -> Self {
-        Self {
-            layout,
-            depth: Default::default(),
-            color: Default::default(),
-        }
-    }
-
+impl RenderPass {
     pub fn depth(mut self, depth: RenderTarget) -> Self {
         self.depth = Some(depth);
         self

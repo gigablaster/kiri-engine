@@ -289,23 +289,29 @@ impl DrawStream {
 #[derive(Debug)]
 pub struct RenderPassRecorder<'a> {
     context: &'a FrameRecorder<'a>,
-    pub(crate) pass: RenderPass<'a>,
-    pub(crate) streams: Mutex<Vec<DrawStream>>,
+    pass: RenderPass,
+    streams: Mutex<Vec<DrawStream>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RecorderRenderPass {
+    pub pass: RenderPass,
+    pub streams: Mutex<Vec<DrawStream>>,
 }
 
 #[derive(Debug)]
 pub struct FrameRecorder<'a> {
     pub(crate) frame: &'a Frame,
-    pub(crate) passes: Mutex<Vec<RenderPassRecorder<'a>>>,
+    pub(crate) passes: Mutex<Vec<RecorderRenderPass>>,
     pub backbuffer: ImageHandle,
 }
 
 impl<'a> FrameRecorder<'a> {
-    pub(crate) fn finish(self) -> Vec<RenderPassRecorder<'a>> {
+    pub(crate) fn finish(self) -> Vec<RecorderRenderPass> {
         self.passes.into_inner()
     }
 
-    pub fn record(&'a self, pass: RenderPass<'a>) -> RenderPassRecorder<'a> {
+    pub fn record(&'a self, pass: RenderPass) -> RenderPassRecorder<'a> {
         RenderPassRecorder {
             context: &self,
             pass: pass,
@@ -320,10 +326,15 @@ impl<'a> RenderPassRecorder<'a> {
     }
 
     pub fn finish(self) {
-        self.context.passes.lock().push(self);
+        self.context.passes.lock().push(RecorderRenderPass {
+            pass: self.pass,
+            streams: self.streams,
+        });
     }
+}
 
-    pub(crate) fn consume(self) -> (RenderPass<'a>, Vec<DrawStream>) {
+impl RecorderRenderPass {
+    pub(crate) fn consume(self) -> (RenderPass, Vec<DrawStream>) {
         (self.pass, self.streams.into_inner())
     }
 }
