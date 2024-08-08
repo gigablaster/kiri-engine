@@ -27,8 +27,10 @@ use uuid::Uuid;
 
 use crate::{
     Error, ImageHandle, PhysicalDevice, PipelineCompilationContext, PipelineHandle, ProgramHandle,
-    RenderContext, RenderingContext,
+    RenderContext,
 };
+
+use super::ImagePool;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {
@@ -64,12 +66,8 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    pub(crate) fn build(
-        &self,
-        context: &RenderingContext,
-    ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let view = context
-            .images
+    pub(crate) fn build(&self, images: &ImagePool) -> Result<vk::RenderingAttachmentInfo, Error> {
+        let view = images
             .get(self.image)
             .ok_or(Error::InvalidImageHandle(self.image))?;
         let info = vk::RenderingAttachmentInfo::default()

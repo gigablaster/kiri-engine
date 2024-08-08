@@ -18,7 +18,7 @@ mod runner;
 use std::error::Error;
 
 use kiri_common::GameTime;
-use kiri_gfx::FrameRecordContext;
+use kiri_gfx::FrameRecorder;
 pub use runner::*;
 
 pub enum GameTickState {
@@ -30,9 +30,5 @@ pub trait GameClient<E: Error>: Default {
     fn info(&self) -> (&str, &str, &str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw<'a>(
-        &self,
-        time: GameTime,
-        context: &FrameRecordContext<'a>,
-    ) -> Result<(), kiri_gfx::Error>;
+    fn draw<'a>(&self, time: GameTime, context: &FrameRecorder<'a>) -> Result<(), kiri_gfx::Error>;
 }

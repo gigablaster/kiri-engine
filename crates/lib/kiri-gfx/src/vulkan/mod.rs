@@ -16,6 +16,7 @@
 mod barrier;
 mod buffer;
 mod context;
+mod draw_stream;
 mod drop_list;
 mod error;
 mod frame;
@@ -30,8 +31,10 @@ mod swapchain;
 use ash::vk;
 pub use buffer::*;
 pub use context::*;
+use draw_stream::*;
 use drop_list::*;
 pub use error::*;
+use frame::*;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;

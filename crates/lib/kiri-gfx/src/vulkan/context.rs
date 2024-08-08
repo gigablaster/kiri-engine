@@ -18,7 +18,7 @@ use std::{
     ffi::CString,
     mem, slice,
     sync::Arc,
-    u64,
+    u32, u64,
 };
 
 use arrayvec::ArrayVec;
@@ -26,28 +26,40 @@ use ash::vk::{self, DescriptorBufferInfo, DescriptorImageInfo, WriteDescriptorSe
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, TempList, MAX_POOL_INDEX};
 use parking_lot::{Mutex, RwLock};
-use rspirv_reflect::rspirv::dr;
 use std::fmt::Debug;
 
 use crate::{
-    vulkan::barrier::{image_barrier, Barrier},
+    vulkan::{
+        barrier::{image_barrier, Barrier},
+        FrameRecorder,
+    },
     AcquiredSurface, Buffer, Error, Instance, RasterPipelineCreateDesc, Swapchain, SwapchainImage,
 };
 
 use super::{
     create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
     physical_device::PhysicalDevice, staging::Staging, DescriptorBindingDesc,
-    DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPassLayout,
+    DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPass, RenderPassLayout,
+    RenderTarget,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::DeviceAddress>;
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub struct BufferSlice(pub BufferHandle, pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PipelineHandle(pub(crate) u32);
+
+impl Default for PipelineHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
 
 pub(crate) type ImagePool = HotColdPool<vk::ImageView, Image, SentinelPoolStrategy<vk::ImageView>>;
 pub(crate) type BufferPool =
@@ -543,7 +555,7 @@ impl<'game> RenderContext<'game> {
         mem::swap(frame, next_frame);
     }
 
-    pub fn frame<F: FnOnce(&mut FrameRecordContext) -> Result<(), Error>>(
+    pub fn frame<F: FnOnce(&mut FrameRecorder) -> Result<(), Error>>(
         &self,
         target: &Swapchain,
         f: F,
@@ -555,17 +567,21 @@ impl<'game> RenderContext<'game> {
             AcquiredSurface::Image(image) => image,
         };
         let frame = self.begin_frame()?;
-        let mut context = FrameRecordContext { context: &self };
-        {
+
+        let passes = {
             puffin::profile_scope!("Generate frame");
+            let mut context = FrameRecorder {
+                frame: &frame,
+                passes: Default::default(),
+            };
             f(&mut context)?;
-        }
+            context.finish()
+        };
         self.update_descriptors();
         {
             let mut staging = self.staging.lock();
             let upload = staging.upload(&self)?;
             let images = self.images.read();
-            let buffers = self.buffers.read();
             bevy_tasks::block_on(compile_pipelines)?;
             unsafe {
                 self.device
@@ -701,10 +717,6 @@ impl<'game> RenderContext<'game> {
     }
 }
 
-pub struct FrameRecordContext<'a> {
-    context: &'a RenderContext<'a>,
-}
-
 impl<'game> Drop for RenderContext<'game> {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
@@ -749,11 +761,6 @@ impl<'game> Drop for RenderContext<'game> {
             self.device.destroy_device(None);
         }
     }
-}
-
-pub(crate) struct RenderingContext<'a> {
-    pub images: &'a ImagePool,
-    pub buffers: &'a BufferPool,
 }
 
 pub(crate) struct PipelineCompilationContext<'a> {

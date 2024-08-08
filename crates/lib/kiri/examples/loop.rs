@@ -33,7 +33,7 @@ impl GameClient<LoopError> for Loop {
     fn draw<'a>(
         &self,
         time: kiri_common::GameTime,
-        context: &kiri_gfx::FrameRecordContext<'a>,
+        context: &kiri_gfx::FrameRecorder<'a>,
     ) -> Result<(), kiri_gfx::Error> {
         Ok(())
     }
