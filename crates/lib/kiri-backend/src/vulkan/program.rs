@@ -22,7 +22,6 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use log::debug;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{Error, ProgramHandle, ShaderStage};
@@ -401,10 +400,6 @@ impl Program {
             pipeline_layout,
             shaders,
         })
-    }
-
-    pub(crate) fn shaders(&self) -> impl Iterator<Item = &Shader> {
-        self.shaders.iter()
     }
 
     fn merge_reflected_layouts(

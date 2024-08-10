@@ -128,10 +128,6 @@ impl DrawStreamRecorder {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.stream.is_empty()
-    }
-
     pub fn bind_pipeline(&mut self, pipeline: PipelineHandle) {
         if self.current.pipeline != pipeline {
             self.mask |= PIPELINE_MASK;

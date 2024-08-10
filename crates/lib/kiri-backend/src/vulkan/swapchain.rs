@@ -79,7 +79,7 @@ pub(crate) struct SwapchainImage<'a> {
     pub rendering_finished: vk::Semaphore,
 }
 
-pub enum AcquiredSurface<'a> {
+pub(crate) enum AcquiredSurface<'a> {
     NeedRecreate,
     Image(SwapchainImage<'a>),
 }
@@ -223,7 +223,7 @@ impl<'a> Swapchain<'a> {
         })
     }
 
-    pub fn acquire_next_image(&self) -> Result<AcquiredSurface, Error> {
+    pub(crate) fn acquire_next_image(&self) -> Result<AcquiredSurface, Error> {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];

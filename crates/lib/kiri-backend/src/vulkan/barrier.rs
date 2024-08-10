@@ -15,10 +15,10 @@
 
 use ash::vk;
 
-use super::{Error, Image, ImageSubresourceRange};
+use super::{Image, ImageSubresourceRange};
 
 #[derive(Debug, Clone, Copy)]
-pub enum Barrier<'a> {
+pub(crate) enum Barrier<'a> {
     ToDepthRenderTarget(&'a Image),
     ToColorRenderTarget(&'a Image),
     ToPresent(&'a Image),

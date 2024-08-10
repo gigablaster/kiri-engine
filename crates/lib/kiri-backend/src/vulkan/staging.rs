@@ -24,9 +24,7 @@ use ash::vk::{self, ImageSubresourceRange};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
-use log::info;
 use parking_lot::Mutex;
-use rspirv_reflect::rspirv::dr;
 
 use crate::{Error, RenderContext};
 

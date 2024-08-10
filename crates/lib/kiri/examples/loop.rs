@@ -3,15 +3,13 @@
 use std::{error::Error, fmt::Display};
 
 use kiri::{run_game, GameClient};
-use kiri_backend::{ClearRenderTarget, Format, RenderPass, RenderPassLayout, RenderTarget};
+use kiri_backend::{ClearRenderTarget, RenderPass, RenderTarget};
 
 #[derive(Debug, Default)]
 struct Loop {}
 
 #[derive(Debug)]
-enum LoopError {
-    Dummy,
-}
+enum LoopError {}
 
 impl Display for LoopError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -19,11 +17,6 @@ impl Display for LoopError {
     }
 }
 impl Error for LoopError {}
-
-const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color: &[Format::BGRA8_UNORM],
-    depth: None,
-};
 
 impl GameClient<LoopError> for Loop {
     fn info(&self) -> (&str, &str, &str) {
@@ -34,13 +27,13 @@ impl GameClient<LoopError> for Loop {
         "Loop Demo"
     }
 
-    fn update(&mut self, time: kiri_common::GameTime) -> Result<kiri::GameTickState, LoopError> {
+    fn update(&mut self, _time: kiri_common::GameTime) -> Result<kiri::GameTickState, LoopError> {
         Ok(kiri::GameTickState::Continue)
     }
 
     fn draw<'a>(
         &self,
-        time: kiri_common::GameTime,
+        _time: kiri_common::GameTime,
         context: &kiri_backend::FrameRecorder<'a>,
     ) -> Result<(), kiri_backend::Error> {
         let pass = RenderPass::default().color(
