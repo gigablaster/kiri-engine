@@ -28,9 +28,9 @@ use log::info;
 use parking_lot::Mutex;
 use rspirv_reflect::rspirv::dr;
 
-use crate::{Error, Image, ImageSubresourceData, RenderContext};
+use crate::{Error, RenderContext};
 
-use super::{GpuAllocator, GpuMemory};
+use super::{GpuAllocator, GpuMemory, Image, ImageSubresourceData};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);

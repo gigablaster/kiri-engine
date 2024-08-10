@@ -28,11 +28,12 @@ use log::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    Error, ImageHandle, PhysicalDevice, PipelineCompilationContext, PipelineHandle, ProgramHandle,
-    RenderContext,
+    BlendFactor, BlendOp, CullMode, DepthCompareOp, Error, Format, ImageHandle, ImageLayout,
+    PhysicalDevice, PipelineHandle, ProgramHandle, RenderContext, RenderTargetLoadOp,
+    RenderTargetStoreOp,
 };
 
-use super::ImagePool;
+use super::{ImagePool, PipelineCompilationContext};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {
@@ -55,15 +56,88 @@ impl From<ClearRenderTarget> for vk::ClearValue {
     }
 }
 
+impl From<BlendFactor> for vk::BlendFactor {
+    fn from(value: BlendFactor) -> Self {
+        match value {
+            BlendFactor::Zero => vk::BlendFactor::ZERO,
+            BlendFactor::One => vk::BlendFactor::ONE,
+            BlendFactor::SrcColor => vk::BlendFactor::SRC_COLOR,
+            BlendFactor::OneMinusSrcColor => vk::BlendFactor::ONE_MINUS_SRC_COLOR,
+            BlendFactor::DstColor => vk::BlendFactor::DST_COLOR,
+            BlendFactor::OneMinusDstColor => vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            BlendFactor::SrcAlpha => vk::BlendFactor::SRC_ALPHA,
+            BlendFactor::OneMinusSrcAlpha => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            BlendFactor::DstAlpha => vk::BlendFactor::DST_ALPHA,
+            BlendFactor::OneMinusDstAlpha => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+        }
+    }
+}
+
+impl From<BlendOp> for vk::BlendOp {
+    fn from(value: BlendOp) -> Self {
+        match value {
+            BlendOp::Add => vk::BlendOp::ADD,
+            BlendOp::Subtract => vk::BlendOp::SUBTRACT,
+            BlendOp::ReverseSubtract => vk::BlendOp::REVERSE_SUBTRACT,
+            BlendOp::Min => vk::BlendOp::MIN,
+            BlendOp::Max => vk::BlendOp::MAX,
+        }
+    }
+}
+
+impl From<CullMode> for vk::CullModeFlags {
+    fn from(value: CullMode) -> Self {
+        match value {
+            CullMode::Front => vk::CullModeFlags::FRONT,
+            CullMode::Back => vk::CullModeFlags::BACK,
+            CullMode::FrontAndBack => vk::CullModeFlags::FRONT_AND_BACK,
+        }
+    }
+}
+
+impl From<DepthCompareOp> for vk::CompareOp {
+    fn from(value: DepthCompareOp) -> Self {
+        match value {
+            DepthCompareOp::Never => vk::CompareOp::NEVER,
+            DepthCompareOp::Less => vk::CompareOp::LESS,
+            DepthCompareOp::Equal => vk::CompareOp::EQUAL,
+            DepthCompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
+            DepthCompareOp::Greater => vk::CompareOp::GREATER,
+            DepthCompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
+            DepthCompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
+            DepthCompareOp::Always => vk::CompareOp::ALWAYS,
+        }
+    }
+}
+
+impl From<RenderTargetLoadOp> for vk::AttachmentLoadOp {
+    fn from(value: RenderTargetLoadOp) -> Self {
+        match value {
+            RenderTargetLoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+            RenderTargetLoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            RenderTargetLoadOp::Discard => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+}
+
+impl From<RenderTargetStoreOp> for vk::AttachmentStoreOp {
+    fn from(value: RenderTargetStoreOp) -> Self {
+        match value {
+            RenderTargetStoreOp::Store => vk::AttachmentStoreOp::STORE,
+            RenderTargetStoreOp::Discard => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+}
+
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTarget {
     pub image: ImageHandle,
-    pub layout: vk::ImageLayout,
-    pub load_op: vk::AttachmentLoadOp,
-    pub store_op: vk::AttachmentStoreOp,
+    pub layout: ImageLayout,
+    pub load: RenderTargetLoadOp,
+    pub store: RenderTargetStoreOp,
     pub clear: ClearRenderTarget,
 }
 
@@ -71,9 +145,9 @@ impl RenderTarget {
     pub fn color(image: ImageHandle) -> Self {
         Self {
             image,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            load_op: vk::AttachmentLoadOp::DONT_CARE,
-            store_op: vk::AttachmentStoreOp::STORE,
+            layout: ImageLayout::ColorTarget,
+            load: RenderTargetLoadOp::Discard,
+            store: RenderTargetStoreOp::Store,
             clear: ClearRenderTarget::None,
         }
     }
@@ -81,26 +155,31 @@ impl RenderTarget {
     pub fn depth(image: ImageHandle) -> Self {
         Self {
             image,
-            layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            load_op: vk::AttachmentLoadOp::DONT_CARE,
-            store_op: vk::AttachmentStoreOp::STORE,
+            layout: ImageLayout::DepthStencilTarget,
+            load: RenderTargetLoadOp::Discard,
+            store: RenderTargetStoreOp::Discard,
             clear: ClearRenderTarget::None,
         }
     }
 
     pub fn discard(mut self) -> Self {
-        self.store_op = vk::AttachmentStoreOp::DONT_CARE;
+        self.store = RenderTargetStoreOp::Discard;
         self
     }
 
     pub fn clear(mut self, color: ClearRenderTarget) -> Self {
-        self.load_op = vk::AttachmentLoadOp::CLEAR;
+        self.load = RenderTargetLoadOp::Clear;
         self.clear = color;
         self
     }
 
     pub fn load(mut self) -> Self {
-        self.load_op = vk::AttachmentLoadOp::LOAD;
+        self.load = RenderTargetLoadOp::Load;
+        self
+    }
+
+    pub fn store(mut self) -> Self {
+        self.store = RenderTargetStoreOp::Store;
         self
     }
 
@@ -110,37 +189,42 @@ impl RenderTarget {
             .ok_or(Error::InvalidImageHandle(self.image))?;
         let info = vk::RenderingAttachmentInfo::default()
             .image_view(*view)
-            .image_layout(self.layout)
-            .load_op(self.load_op)
-            .store_op(self.store_op)
+            .image_layout(self.layout.into())
+            .load_op(self.load.into())
+            .store_op(self.store.into())
             .clear_value(self.clear.into());
         Ok(info)
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RenderPassLayout<'a> {
-    pub color: &'a [vk::Format],
+    pub color: &'a [Format],
+    pub depth: Option<Format>,
+}
+
+struct RenderPassLayoutInner {
+    pub color: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
     pub depth: Option<vk::Format>,
 }
 
-impl<'a> RenderPassLayout<'a> {
-    fn build(&self) -> vk::PipelineRenderingCreateInfo<'a> {
+impl<'a> From<RenderPassLayout<'a>> for RenderPassLayoutInner {
+    fn from(value: RenderPassLayout<'a>) -> Self {
+        RenderPassLayoutInner {
+            color: value
+                .color
+                .into_iter()
+                .map(|x| (*x).into())
+                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
+            depth: value.depth.map(|x| x.into()),
+        }
+    }
+}
+
+impl RenderPassLayoutInner {
+    fn build(&self) -> vk::PipelineRenderingCreateInfo {
         let mut info =
             vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&self.color);
-        if let Some(depth) = self.depth {
-            info.depth_attachment_format = depth;
-        }
-        info
-    }
-
-    pub(crate) fn inheretence(
-        &self,
-        flags: vk::RenderingFlags,
-    ) -> vk::CommandBufferInheritanceRenderingInfo<'a> {
-        let mut info = vk::CommandBufferInheritanceRenderingInfo::default()
-            .color_attachment_formats(&self.color)
-            .flags(flags);
         if let Some(depth) = self.depth {
             info.depth_attachment_format = depth;
         }
@@ -346,6 +430,7 @@ fn compile_raster_pipeline(
         .attachments(slice::from_ref(&color_blend_attachment))
         .logic_op_enable(false);
 
+    let render_pass_layout: RenderPassLayoutInner = (*render_pass_layout).into();
     let mut rendering_info = render_pass_layout.build();
 
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()

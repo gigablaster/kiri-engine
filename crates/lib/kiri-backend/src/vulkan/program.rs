@@ -25,7 +25,7 @@ use byte_slice_cast::AsSliceOf;
 use log::debug;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
-use crate::{Error, ProgramHandle};
+use crate::{Error, ProgramHandle, ShaderStage};
 
 use super::{RenderContext, SamplerDesc};
 
@@ -33,6 +33,22 @@ const MAX_SAMPLERS: usize = 32;
 pub(crate) const BINDLESS_BINDING_SLOT: usize = 0;
 pub(crate) const DYNAMIC_BINDING_SLOT: usize = 3;
 pub(crate) const MAX_DESCRIPTOR_SETS: usize = 4;
+
+impl From<ShaderStage> for vk::ShaderStageFlags {
+    fn from(value: ShaderStage) -> Self {
+        let mut result = vk::ShaderStageFlags::empty();
+        if value.contains(ShaderStage::Vertex) {
+            result |= vk::ShaderStageFlags::VERTEX;
+        }
+        if value.contains(ShaderStage::Fragment) {
+            result |= vk::ShaderStageFlags::FRAGMENT;
+        }
+        if value.contains(ShaderStage::Compute) {
+            result |= vk::ShaderStageFlags::COMPUTE;
+        }
+        result
+    }
+}
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorBindingDesc<'a> {
@@ -192,13 +208,13 @@ fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct ShaderDesc<'a> {
-    pub stage: vk::ShaderStageFlags,
+    pub stage: ShaderStage,
     pub entry: &'a str,
     pub code: &'a [u8],
 }
 
 impl<'a> ShaderDesc<'a> {
-    pub fn new(stage: vk::ShaderStageFlags, code: &'a [u8]) -> Self {
+    pub fn new(stage: ShaderStage, code: &'a [u8]) -> Self {
         Self {
             stage,
             entry: "main",
@@ -208,7 +224,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn vertex(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::VERTEX,
+            stage: ShaderStage::Vertex,
             entry: "main",
             code,
         }
@@ -216,7 +232,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn fragment(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::FRAGMENT,
+            stage: ShaderStage::Fragment,
             entry: "main",
             code,
         }
@@ -224,7 +240,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn compute(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::COMPUTE,
+            stage: ShaderStage::Compute,
             entry: "main",
             code,
         }
@@ -253,7 +269,7 @@ impl Shader {
         let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
         Ok(Self {
             raw: shader,
-            stage: desc.stage,
+            stage: desc.stage.into(),
             entry: CString::new(desc.entry).unwrap(),
             layout,
         })
@@ -348,7 +364,7 @@ impl Program {
         let shaders = shaders
             .iter()
             .map(|desc| {
-                stages |= desc.stage;
+                stages |= desc.stage.into();
                 Shader::new(&context.device, desc).unwrap()
             })
             .collect::<Vec<_>>();

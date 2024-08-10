@@ -426,11 +426,10 @@ dependencies = [
 name = "kiri"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bevy_tasks",
  "directories",
+ "kiri-backend",
  "kiri-common",
- "kiri-gfx",
  "log",
  "raw-window-handle",
  "sdl2",
@@ -440,20 +439,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiri-common"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
-name = "kiri-gfx"
+name = "kiri-backend"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ash",
  "ash-window",
  "bevy_tasks",
+ "bitflags 2.6.0",
  "byte-slice-cast",
  "byteorder",
  "bytes",
@@ -467,8 +460,16 @@ dependencies = [
  "puffin",
  "raw-window-handle",
  "rspirv-reflect",
+ "speedy",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "kiri-common"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
 ]
 
 [[package]]
@@ -526,6 +527,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -781,6 +791,28 @@ name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+
+[[package]]
+name = "speedy"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da1992073f0e55aab599f4483c460598219b4f9ff0affa124b33580ab511e25a"
+dependencies = [
+ "memoffset",
+ "speedy-derive",
+ "uuid",
+]
+
+[[package]]
+name = "speedy-derive"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658f2ca5276b92c3dfd65fa88316b4e032ace68f88d7570b43967784c0bac5ac"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "spirv"

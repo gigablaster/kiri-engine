@@ -16,9 +16,8 @@
 use std::error::Error;
 
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPoolBuilder};
+use kiri_backend::{FrameState, InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
 use kiri_common::TimeFilter;
-use kiri_gfx::{InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
-use log::info;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use sdl2::{event::Event, video::WindowBuildError};
 
@@ -27,12 +26,12 @@ use crate::{GameClient, GameTickState};
 #[derive(Debug, thiserror::Error)]
 pub enum GameError<E: Error> {
     GameFailure(E),
-    GraphicsFailure(kiri_gfx::Error),
+    GraphicsFailure(kiri_backend::Error),
     SdlError(String),
 }
 
-impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
-    fn from(value: kiri_gfx::Error) -> Self {
+impl<E: Error> From<kiri_backend::Error> for GameError<E> {
+    fn from(value: kiri_backend::Error) -> Self {
         Self::GraphicsFailure(value)
     }
 }
@@ -70,10 +69,8 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
     let instance = instance.debug(true);
     let instance = instance.build()?;
     let surface = Surface::new(&instance, window.window_handle()?.as_raw())?;
-    let context = instance.create_context(
-        &surface,
-        &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
-    )?;
+    let var_name = [PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated];
+    let context = instance.create_context(&surface, &var_name)?;
     let timer = sdl.timer()?;
     let last_time = timer.performance_counter();
     let mut swapchain = None;
@@ -100,7 +97,7 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
         if size.0 > 0 && size.1 > 0 {
             if let Some(swapchain_frame) = &swapchain {
                 match context.frame(&swapchain_frame, |context| Ok(game.draw(dt, context)?))? {
-                    kiri_gfx::FrameState::NeedRecreateSwapchain => swapchain = None,
+                    FrameState::NeedRecreateSwapchain => swapchain = None,
                     _ => {}
                 }
             } else {

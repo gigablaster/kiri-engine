@@ -15,32 +15,98 @@
 
 use ash::vk;
 
-use crate::{ImageHandle, RenderContext};
+use crate::{
+    Format, ImageAspect, ImageHandle, ImageLayout, ImageMultisampling, ImageType, ImageUsage,
+    ImageViewType, RenderContext,
+};
 
 use super::{error::Error, DropList, GpuMemory};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub dims: [u32; 2],
-    pub ty: vk::ImageType,
-    pub usage: vk::ImageUsageFlags,
-    pub format: vk::Format,
+    pub ty: ImageType,
+    pub usage: ImageUsage,
+    pub format: Format,
     pub mip_levels: u32,
     pub array_elements: u32,
-    pub tiling: vk::ImageTiling,
+}
+
+impl From<ImageType> for vk::ImageType {
+    fn from(value: ImageType) -> Self {
+        match value {
+            ImageType::Type1D => vk::ImageType::TYPE_1D,
+            ImageType::Type2D => vk::ImageType::TYPE_2D,
+            ImageType::Type3D => vk::ImageType::TYPE_3D,
+        }
+    }
+}
+
+impl From<ImageViewType> for vk::ImageViewType {
+    fn from(value: ImageViewType) -> Self {
+        match value {
+            ImageViewType::Type1D => vk::ImageViewType::TYPE_1D,
+            ImageViewType::Type1DArray => vk::ImageViewType::TYPE_1D_ARRAY,
+            ImageViewType::Type2D => vk::ImageViewType::TYPE_2D,
+            ImageViewType::Type2DArray => vk::ImageViewType::TYPE_2D_ARRAY,
+            ImageViewType::Type3D => vk::ImageViewType::TYPE_3D,
+        }
+    }
+}
+
+impl From<ImageUsage> for vk::ImageUsageFlags {
+    fn from(value: ImageUsage) -> Self {
+        let mut result = vk::ImageUsageFlags::empty();
+        if value.contains(ImageUsage::Sampled) {
+            result |= vk::ImageUsageFlags::SAMPLED;
+        }
+        if value.contains(ImageUsage::Storage) {
+            result |= vk::ImageUsageFlags::STORAGE;
+        }
+        if value.contains(ImageUsage::ColorTarget) {
+            result |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
+        }
+        if value.contains(ImageUsage::DepthStencilTarget) {
+            result |= vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT;
+        }
+        if value.contains(ImageUsage::TransferDestination) {
+            result |= vk::ImageUsageFlags::TRANSFER_DST;
+        }
+        if value.contains(ImageUsage::Source) {
+            result |= vk::ImageUsageFlags::TRANSFER_DST;
+        }
+        result
+    }
+}
+
+impl From<ImageAspect> for vk::ImageAspectFlags {
+    fn from(value: ImageAspect) -> Self {
+        let mut result = vk::ImageAspectFlags::empty();
+        if value.contains(ImageAspect::Color) {
+            result |= vk::ImageAspectFlags::COLOR;
+        }
+        if value.contains(ImageAspect::Depth) {
+            result |= vk::ImageAspectFlags::DEPTH;
+        }
+        if value.contains(ImageAspect::Stencil) {
+            result |= vk::ImageAspectFlags::STENCIL;
+        }
+
+        result
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc {
-    pub ty: Option<vk::ImageViewType>,
-    pub format: Option<vk::Format>,
-    pub aspect: vk::ImageAspectFlags,
+    pub ty: Option<ImageViewType>,
+    pub format: Option<Format>,
+    pub aspect: ImageAspect,
     pub base_mip_level: u32,
     pub level_count: Option<u32>,
 }
 
 impl ImageViewDesc {
-    pub fn new(aspect: vk::ImageAspectFlags) -> Self {
+    pub fn new(aspect: ImageAspect) -> Self {
         Self {
             ty: None,
             format: None,
@@ -53,7 +119,7 @@ impl ImageViewDesc {
         Self {
             ty: None,
             format: None,
-            aspect: vk::ImageAspectFlags::COLOR,
+            aspect: ImageAspect::Color,
             base_mip_level: 0,
             level_count: None,
         }
@@ -63,18 +129,18 @@ impl ImageViewDesc {
         Self {
             ty: None,
             format: None,
-            aspect: vk::ImageAspectFlags::DEPTH,
+            aspect: ImageAspect::Depth,
             base_mip_level: 0,
             level_count: None,
         }
     }
 
-    pub fn view_type(mut self, view_type: vk::ImageViewType) -> Self {
+    pub fn view_type(mut self, view_type: ImageViewType) -> Self {
         self.ty = Some(view_type);
         self
     }
 
-    pub fn format(mut self, format: vk::Format) -> Self {
+    pub fn format(mut self, format: Format) -> Self {
         self.format = Some(format);
         self
     }
@@ -91,7 +157,7 @@ impl ImageViewDesc {
 
     pub(crate) fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
-            .format(self.format.unwrap_or(image.desc.format))
+            .format(self.format.unwrap_or(image.desc.format).into())
             .components(vk::ComponentMapping {
                 r: vk::ComponentSwizzle::R,
                 g: vk::ComponentSwizzle::G,
@@ -100,10 +166,11 @@ impl ImageViewDesc {
             })
             .view_type(
                 self.ty
-                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image)),
+                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image))
+                    .into(),
             )
             .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: self.aspect,
+                aspect_mask: self.aspect.into(),
                 base_mip_level: self.base_mip_level,
                 level_count: self.level_count.unwrap_or(image.desc.mip_levels),
                 base_array_layer: 0,
@@ -112,14 +179,37 @@ impl ImageViewDesc {
             .image(image.raw)
     }
 
-    fn convert_image_type_to_view_type(image: &Image) -> vk::ImageViewType {
+    fn convert_image_type_to_view_type(image: &Image) -> ImageViewType {
         match image.desc.ty {
-            vk::ImageType::TYPE_1D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_1D,
-            vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D_ARRAY,
-            vk::ImageType::TYPE_2D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_2D,
-            vk::ImageType::TYPE_2D => vk::ImageViewType::TYPE_2D_ARRAY,
-            vk::ImageType::TYPE_3D => vk::ImageViewType::TYPE_3D,
-            _ => unreachable!(),
+            ImageType::Type1D if image.desc.array_elements == 1 => ImageViewType::Type1D,
+            ImageType::Type1D => ImageViewType::Type1DArray,
+            ImageType::Type2D if image.desc.array_elements == 1 => ImageViewType::Type2D,
+            ImageType::Type2D => ImageViewType::Type2DArray,
+            ImageType::Type3D => ImageViewType::Type3D,
+        }
+    }
+}
+
+impl From<ImageMultisampling> for vk::SampleCountFlags {
+    fn from(value: ImageMultisampling) -> Self {
+        match value {
+            ImageMultisampling::None => vk::SampleCountFlags::TYPE_1,
+            ImageMultisampling::Multisampling2 => vk::SampleCountFlags::TYPE_2,
+            ImageMultisampling::Multisampling4 => vk::SampleCountFlags::TYPE_4,
+            ImageMultisampling::Multisampling8 => vk::SampleCountFlags::TYPE_8,
+        }
+    }
+}
+
+impl From<ImageLayout> for vk::ImageLayout {
+    fn from(value: ImageLayout) -> Self {
+        match value {
+            ImageLayout::ShaderRead => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ImageLayout::ColorTarget => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            ImageLayout::DepthStencilTarget => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ImageLayout::DepthStencilRead => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            ImageLayout::Destination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::Source => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         }
     }
 }
@@ -127,10 +217,10 @@ impl ImageViewDesc {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageCreateDesc<'a> {
     pub dims: [u32; 2],
-    pub ty: vk::ImageType,
-    pub usage: vk::ImageUsageFlags,
-    pub format: vk::Format,
-    pub samples: vk::SampleCountFlags,
+    pub ty: ImageType,
+    pub usage: ImageUsage,
+    pub format: Format,
+    pub samples: ImageMultisampling,
     pub mip_levels: usize,
     pub array_elements: usize,
     pub dedicated: bool,
@@ -140,15 +230,15 @@ pub struct ImageCreateDesc<'a> {
 }
 
 impl<'a> ImageCreateDesc<'a> {
-    pub fn new(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn new(format: Format, dims: [u32; 2]) -> Self {
         Self {
             dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::empty(),
+            ty: ImageType::Type2D,
+            usage: ImageUsage::empty(),
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::None,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -156,15 +246,15 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn texture(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn texture(format: Format, dims: [u32; 2]) -> Self {
         Self {
             dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ty: ImageType::Type2D,
+            usage: ImageUsage::Sampled | ImageUsage::TransferDestination,
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::None,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -172,15 +262,15 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn cubemap(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn cubemap(format: Format, dims: [u32; 2]) -> Self {
         Self {
             dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ty: ImageType::Type2D,
+            usage: ImageUsage::Sampled | ImageUsage::TransferDestination,
             flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::None,
             mip_levels: 1,
             array_elements: 6,
             dedicated: false,
@@ -188,15 +278,15 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn color_attachment(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn color_target(format: Format, dims: [u32; 2]) -> Self {
         Self {
             dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            ty: ImageType::Type2D,
+            usage: ImageUsage::ColorTarget,
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::None,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -204,15 +294,15 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn depth_stencil_attachment(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn depth_stencil_target(format: Format, dims: [u32; 2]) -> Self {
         Self {
             dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            ty: ImageType::Type2D,
+            usage: ImageUsage::DepthStencilTarget,
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::None,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -220,22 +310,22 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn ty(mut self, value: vk::ImageType) -> Self {
+    pub fn ty(mut self, value: ImageType) -> Self {
         self.ty = value;
         self
     }
 
-    pub fn usage(mut self, value: vk::ImageUsageFlags) -> Self {
+    pub fn usage(mut self, value: ImageUsage) -> Self {
         self.usage = value;
         self
     }
 
     pub fn sampled(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::SAMPLED;
+        self.usage |= ImageUsage::Sampled;
         self
     }
 
-    pub fn samples(mut self, value: vk::SampleCountFlags) -> Self {
+    pub fn samples(mut self, value: ImageMultisampling) -> Self {
         self.samples = value;
         self
     }
@@ -259,33 +349,32 @@ impl<'a> ImageCreateDesc<'a> {
         vk::ImageCreateInfo::default()
             .array_layers(self.array_elements as _)
             .mip_levels(self.mip_levels as _)
-            .usage(self.usage)
+            .usage(self.usage.into())
             .flags(self.flags)
-            .format(self.format)
-            .samples(self.samples)
-            .image_type(self.ty)
+            .format(self.format.into())
+            .samples(self.samples.into())
+            .image_type(self.ty.into())
             .tiling(self.tiling)
             .extent(self.create_dims())
     }
 
     fn create_dims(&self) -> vk::Extent3D {
         match self.ty {
-            vk::ImageType::TYPE_1D => vk::Extent3D {
+            ImageType::Type1D => vk::Extent3D {
                 width: self.dims[0],
                 height: 1,
                 depth: 1,
             },
-            vk::ImageType::TYPE_2D => vk::Extent3D {
+            ImageType::Type2D => vk::Extent3D {
                 width: self.dims[0],
                 height: self.dims[1],
                 depth: 1,
             },
-            vk::ImageType::TYPE_3D => vk::Extent3D {
+            ImageType::Type3D => vk::Extent3D {
                 width: self.dims[0],
                 height: self.dims[1],
                 depth: self.array_elements as u32,
             },
-            _ => unreachable!(),
         }
     }
 }
@@ -344,7 +433,6 @@ impl Image {
                 ty: desc.ty,
                 usage: desc.usage,
                 format: desc.format,
-                tiling: desc.tiling,
                 mip_levels: desc.mip_levels as u32,
                 array_elements: desc.array_elements as u32,
             },
@@ -391,7 +479,7 @@ impl<'game> RenderContext<'game> {
     pub fn create_image(
         &self,
         desc: ImageCreateDesc,
-        aspect: vk::ImageAspectFlags,
+        aspect: ImageAspect,
         data: Option<&[ImageSubresourceData]>,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self, desc)?;
@@ -405,27 +493,23 @@ impl<'game> RenderContext<'game> {
         &self,
         image: vk::Image,
         desc: ImageDesc,
-        aspect: vk::ImageAspectFlags,
+        aspect: ImageAspect,
     ) -> Result<ImageHandle, Error> {
         let image = Image::internal(image, desc);
         self.insert_image(image, aspect)
     }
 
-    fn insert_image(
-        &self,
-        image: Image,
-        aspect: vk::ImageAspectFlags,
-    ) -> Result<ImageHandle, Error> {
+    fn insert_image(&self, image: Image, aspect: ImageAspect) -> Result<ImageHandle, Error> {
         let view = unsafe {
             self.device
                 .create_image_view(&ImageViewDesc::new(aspect).build(&image), None)
         }?;
         let desc = image.desc;
         let handle = self.images.write().push(view, image);
-        if desc.usage.contains(vk::ImageUsageFlags::SAMPLED) {
+        if desc.usage.contains(ImageUsage::Sampled) {
             self.sampled_images_to_update.lock().insert(handle);
         }
-        if desc.usage.contains(vk::ImageUsageFlags::STORAGE) {
+        if desc.usage.contains(ImageUsage::Storage) {
             self.storage_images_to_update.lock().insert(handle);
         }
         Ok(handle)

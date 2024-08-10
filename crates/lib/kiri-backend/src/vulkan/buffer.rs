@@ -17,17 +17,42 @@ use std::ptr::NonNull;
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
-use log::info;
 
-use crate::{BufferHandle, Error, RenderContext};
+use crate::{BufferHandle, BufferUsage, Error, RenderContext};
 
 use super::{DropList, GpuMemory};
+
+impl From<BufferUsage> for vk::BufferUsageFlags {
+    fn from(value: BufferUsage) -> Self {
+        let mut result = vk::BufferUsageFlags::empty();
+        if value.contains(BufferUsage::Vertex) {
+            result |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        }
+        if value.contains(BufferUsage::Index) {
+            result |= vk::BufferUsageFlags::INDEX_BUFFER;
+        }
+        if value.contains(BufferUsage::Storage) {
+            result |= vk::BufferUsageFlags::STORAGE_BUFFER;
+        }
+        if value.contains(BufferUsage::Uniform) {
+            result |= vk::BufferUsageFlags::UNIFORM_BUFFER;
+        }
+        if value.contains(BufferUsage::Destination) {
+            result |= vk::BufferUsageFlags::TRANSFER_DST;
+        }
+        if value.contains(BufferUsage::Source) {
+            result |= vk::BufferUsageFlags::TRANSFER_SRC;
+        }
+
+        result
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Buffer {
     pub raw: vk::Buffer,
     pub size: u32,
-    pub usage: vk::BufferUsageFlags,
+    pub usage: BufferUsage,
     memory: Option<GpuMemory>,
 }
 
@@ -43,7 +68,7 @@ impl Buffer {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
     pub size: u32,
-    pub usage: vk::BufferUsageFlags,
+    pub usage: BufferUsage,
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
@@ -54,7 +79,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn gpu(size: u32) -> Self {
         Self {
             size,
-            usage: vk::BufferUsageFlags::empty(),
+            usage: BufferUsage::empty(),
             memory_location: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: false,
@@ -65,7 +90,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn host(size: u32) -> Self {
         Self {
             size,
-            usage: vk::BufferUsageFlags::empty(),
+            usage: BufferUsage::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
             alignment: None,
             dedicated: false,
@@ -76,7 +101,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn upload(size: u32) -> Self {
         Self {
             size,
-            usage: vk::BufferUsageFlags::empty(),
+            usage: BufferUsage::empty(),
             memory_location: gpu_alloc::UsageFlags::UPLOAD,
             alignment: None,
             dedicated: false,
@@ -87,7 +112,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn shared(size: u32) -> Self {
         Self {
             size,
-            usage: vk::BufferUsageFlags::empty(),
+            usage: BufferUsage::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
                 | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
@@ -96,7 +121,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
+    pub fn usage(mut self, usage: BufferUsage) -> Self {
         self.usage = usage;
         self
     }
@@ -118,7 +143,7 @@ impl<'a> BufferCreateDesc<'a> {
 
     fn build(&self) -> vk::BufferCreateInfo {
         vk::BufferCreateInfo::default()
-            .usage(self.usage)
+            .usage(self.usage.into())
             .size(self.size as _)
     }
 }
@@ -155,7 +180,7 @@ impl<'game> RenderContext<'game> {
                 memory: Some(memory),
             },
         );
-        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+        if desc.usage.contains(BufferUsage::Storage) {
             self.storage_buffers_to_update.lock().insert(handle);
         }
         Ok(handle)

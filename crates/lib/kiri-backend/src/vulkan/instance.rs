@@ -19,9 +19,9 @@ use ash::vk::{self, Bool32, DebugUtilsMessengerEXT};
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use crate::{Error, FindSuitableDevice, PhysicalDeviceType, Surface};
+use crate::{Error, PhysicalDeviceType, Surface};
 
-use super::RenderContext;
+use super::{FindSuitableDevice, RenderContext};
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,

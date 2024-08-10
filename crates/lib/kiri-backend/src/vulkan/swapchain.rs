@@ -20,7 +20,10 @@ use ash::vk::{self};
 use log::info;
 use raw_window_handle::RawWindowHandle;
 
-use crate::{Error, ImageDesc, ImageHandle, Instance, RenderContext};
+use crate::{
+    Error, Format, ImageAspect, ImageDesc, ImageHandle, ImageType, ImageUsage, Instance,
+    RenderContext,
+};
 
 use super::physical_device::PhysicalDevice;
 
@@ -177,15 +180,14 @@ impl<'a> Swapchain<'a> {
                     .register_image(
                         *image,
                         ImageDesc {
-                            ty: vk::ImageType::TYPE_2D,
-                            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                            format: format.format,
+                            ty: ImageType::Type2D,
+                            usage: ImageUsage::ColorTarget,
+                            format: Format::BGRA8_UNORM,
                             dims: [surface_resolution.width, surface_resolution.height],
-                            tiling: vk::ImageTiling::OPTIMAL,
                             mip_levels: 1,
                             array_elements: 1,
                         },
-                        vk::ImageAspectFlags::COLOR,
+                        ImageAspect::Color,
                     )
                     .unwrap()
             })

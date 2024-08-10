@@ -1,4 +1,8 @@
 [workspace]
-members = ["crates/lib/kiri", "crates/lib/kiri-common", "crates/lib/kiri-gfx"]
+members = [
+    "crates/lib/kiri",
+    "crates/lib/kiri-common",
+    "crates/lib/kiri-backend",
+]
 
 resolver = "2"

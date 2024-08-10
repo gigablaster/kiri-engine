@@ -35,23 +35,17 @@ use std::fmt::Debug;
 use crate::{
     vulkan::{
         barrier::{image_barrier, Barrier},
-        DrawStreamExecuteContext, FrameRecorder,
+        AcquiredSurface, Buffer, DrawStreamExecuteContext, FrameRecorder, MAX_ATTACHMENTS,
+        MAX_COLOR_ATTACHMENTS,
     },
-    AcquiredSurface, Buffer, Error, Instance, RasterPipelineCreateDesc, Swapchain, SwapchainImage,
-    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    Error, Instance, RasterPipelineCreateDesc, Swapchain,
 };
 
 use super::{
-    create_descriptor_set_layout,
-    drop_list::DropList,
-    frame::Frame,
-    image::Image,
-    load_or_create_pipeline_cache,
-    physical_device::{self, PhysicalDevice},
-    save_pipeline_cache,
-    staging::Staging,
-    DescriptorBindingDesc, DescriptorSetLayoutDesc, GpuAllocator, GpuMemory, Program, RenderPass,
-    RenderPassLayout, RenderTarget,
+    create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
+    load_or_create_pipeline_cache, physical_device::PhysicalDevice, save_pipeline_cache,
+    staging::Staging, DescriptorBindingDesc, DescriptorSetLayoutDesc, GpuAllocator, GpuMemory,
+    Program, RenderPassLayout, SwapchainImage,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;

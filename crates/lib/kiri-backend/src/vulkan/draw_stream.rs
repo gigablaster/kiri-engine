@@ -16,12 +16,12 @@
 use std::{io::Read, mem, slice, u32};
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, Pipeline, Rect2D};
+use ash::vk;
 use parking_lot::Mutex;
 
-use crate::{PipelineHandle, PipelinePool, RenderPass};
+use crate::{PipelineHandle, RenderPass};
 
-use super::{Frame, ImageHandle};
+use super::{Frame, ImageHandle, PipelinePool};
 
 const PUSH_SIZE: usize = 128;
 
