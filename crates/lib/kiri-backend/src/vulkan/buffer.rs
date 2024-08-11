@@ -16,7 +16,6 @@
 use std::ptr::NonNull;
 
 use ash::vk;
-use gpu_alloc::UsageFlags;
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{BufferHandle, BufferUsage, Error, RenderContext};
@@ -53,7 +52,6 @@ impl From<BufferUsage> for vk::BufferUsageFlags {
 pub(crate) struct Buffer {
     pub raw: vk::Buffer,
     pub size: u32,
-    pub usage: BufferUsage,
     memory: Option<GpuMemory>,
 }
 
@@ -178,14 +176,13 @@ impl<'game> RenderContext<'game> {
             self.set_object_name(buffer, name);
         }
         if let Some(data) = data {
-            self.staging.lock().upload_buffer(&self, buffer, 0, data)?;
+            self.staging.lock().upload_buffer(self, buffer, 0, data)?;
         }
         let handle = self.buffers.write().push(
             address,
             Buffer {
                 raw: buffer,
                 size: desc.size,
-                usage: desc.usage,
                 memory: Some(memory),
             },
         );

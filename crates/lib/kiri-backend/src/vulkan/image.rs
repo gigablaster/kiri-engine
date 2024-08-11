@@ -115,45 +115,6 @@ impl ImageViewDesc {
             level_count: None,
         }
     }
-    pub fn color() -> Self {
-        Self {
-            ty: None,
-            format: None,
-            aspect: ImageAspect::Color,
-            base_mip_level: 0,
-            level_count: None,
-        }
-    }
-
-    pub fn depth() -> Self {
-        Self {
-            ty: None,
-            format: None,
-            aspect: ImageAspect::Depth,
-            base_mip_level: 0,
-            level_count: None,
-        }
-    }
-
-    pub fn view_type(mut self, view_type: ImageViewType) -> Self {
-        self.ty = Some(view_type);
-        self
-    }
-
-    pub fn format(mut self, format: Format) -> Self {
-        self.format = Some(format);
-        self
-    }
-
-    pub fn base_mip_level(mut self, base_mip_level: u32) -> Self {
-        self.base_mip_level = base_mip_level;
-        self
-    }
-
-    pub fn level_count(mut self, level_count: u32) -> Self {
-        self.level_count = Some(level_count);
-        self
-    }
 
     pub(crate) fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
@@ -392,12 +353,6 @@ pub(crate) struct Image {
     memory: Option<GpuMemory>,
 }
 
-pub(crate) enum ImageSubresourceRange {
-    All,
-    Level(u32),
-    LevelAndMip(u32, u32),
-}
-
 impl Image {
     pub(crate) fn internal(image: vk::Image, desc: ImageDesc) -> Self {
         Self {
@@ -447,31 +402,13 @@ impl Image {
         }
     }
 
-    pub(crate) fn subresource(
-        &self,
-        range: ImageSubresourceRange,
-        aspect: vk::ImageAspectFlags,
-    ) -> vk::ImageSubresourceRange {
-        match range {
-            ImageSubresourceRange::All => vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect)
-                .base_array_layer(0)
-                .base_mip_level(0)
-                .layer_count(self.desc.array_elements)
-                .level_count(self.desc.mip_levels),
-            ImageSubresourceRange::Level(level) => vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect)
-                .base_array_layer(level)
-                .base_mip_level(0)
-                .layer_count(1)
-                .level_count(self.desc.mip_levels),
-            ImageSubresourceRange::LevelAndMip(level, mip) => vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect)
-                .base_array_layer(level)
-                .base_mip_level(mip)
-                .layer_count(1)
-                .level_count(1),
-        }
+    pub(crate) fn subresource(&self, aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
+        vk::ImageSubresourceRange::default()
+            .aspect_mask(aspect)
+            .base_array_layer(0)
+            .base_mip_level(0)
+            .layer_count(self.desc.array_elements)
+            .level_count(self.desc.mip_levels)
     }
 }
 
@@ -482,9 +419,9 @@ impl<'game> RenderContext<'game> {
         aspect: ImageAspect,
         data: Option<&[ImageSubresourceData]>,
     ) -> Result<ImageHandle, Error> {
-        let image = Image::new(&self, desc)?;
+        let image = Image::new(self, desc)?;
         if let Some(data) = data {
-            self.staging.lock().upload_image(&self, &image, data)?;
+            self.staging.lock().upload_image(self, &image, data)?;
         }
         self.insert_image(image, aspect)
     }

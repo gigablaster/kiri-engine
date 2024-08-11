@@ -30,9 +30,5 @@ pub trait GameClient<E: Error>: Default {
     fn info(&self) -> (&str, &str, &str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw<'a>(
-        &self,
-        time: GameTime,
-        context: &FrameRecorder<'a>,
-    ) -> Result<(), kiri_backend::Error>;
+    fn draw(&self, time: GameTime, context: &FrameRecorder) -> Result<(), kiri_backend::Error>;
 }

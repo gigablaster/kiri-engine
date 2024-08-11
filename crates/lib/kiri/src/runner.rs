@@ -19,7 +19,11 @@ use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPoolBuil
 use kiri_backend::{FrameState, InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
 use kiri_common::TimeFilter;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
-use sdl2::{event::Event, video::WindowBuildError};
+use sdl2::{
+    event::Event,
+    keyboard::{Keycode, Mod},
+    video::{FullscreenType, WindowBuildError},
+};
 
 use crate::{GameClient, GameTickState};
 
@@ -58,7 +62,7 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
     let mut game = game;
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
-    let window = video
+    let mut window = video
         .window(game.title(), 1280, 720)
         .allow_highdpi()
         .position_centered()
@@ -83,22 +87,33 @@ pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>>
         for event in pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
+                Event::KeyDown {
+                    keycode: Some(Keycode::RETURN),
+                    keymod: Mod::LALTMOD,
+                    ..
+                } => {
+                    if window.fullscreen_state() == FullscreenType::Desktop {
+                        window.set_fullscreen(FullscreenType::Off)?;
+                    } else {
+                        window.set_fullscreen(FullscreenType::Desktop)?;
+                    }
+                }
                 _ => {}
             }
         }
         let new_time = timer.performance_counter();
         let dt =
             game_time.sample((new_time - last_time) as f64 / timer.performance_frequency() as f64);
-        match game.update(dt).map_err(|e| GameError::GameFailure(e))? {
-            GameTickState::Exit => break 'main,
-            _ => {}
+        if let GameTickState::Exit = game.update(dt).map_err(|e| GameError::GameFailure(e))? {
+            break 'main;
         }
         let size = window.vulkan_drawable_size();
         if size.0 > 0 && size.1 > 0 {
             if let Some(swapchain_frame) = &swapchain {
-                match context.frame(&swapchain_frame, |context| Ok(game.draw(dt, context)?))? {
-                    FrameState::NeedRecreateSwapchain => swapchain = None,
-                    _ => {}
+                if let FrameState::NeedRecreateSwapchain =
+                    context.frame(swapchain_frame, |context| game.draw(dt, context))?
+                {
+                    swapchain = None
                 }
             } else {
                 swapchain = Some(Swapchain::new(&context, &surface, [size.0, size.1])?);

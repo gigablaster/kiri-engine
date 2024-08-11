@@ -65,7 +65,7 @@ pub struct DescriptorSetLayoutDesc<'a> {
 }
 
 impl<'a> DescriptorSetLayoutDesc<'a> {
-    pub fn to_pool_size(&self, count: u32) -> Vec<vk::DescriptorPoolSize> {
+    pub fn to_pool_size(self, count: u32) -> Vec<vk::DescriptorPoolSize> {
         self.set
             .iter()
             .map(|x| {
@@ -148,7 +148,7 @@ fn create_binding<'a>(
     vk::DescriptorSetLayoutBinding::default()
         .binding(binding.slot as _)
         .descriptor_type(binding.ty)
-        .descriptor_count(binding.count.into())
+        .descriptor_count(binding.count)
         .stage_flags(stage)
 }
 
@@ -196,12 +196,7 @@ fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
             anisotropy_level: 8, // TODO:: control anisotropy level
         }
     } else {
-        SamplerDesc {
-            texel_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode: vk::SamplerAddressMode::REPEAT,
-            anisotropy_level: 8, // TODO:: control anisotropy level
-        }
+        panic!("Unkown sampler type {}", name)
     }
 }
 
@@ -410,7 +405,7 @@ impl Program {
             .iter()
             .for_each(|x| Self::merge_reflected_layout_set(&mut result, x));
         for i in 0..MAX_DESCRIPTOR_SETS {
-            result.entry(i).or_insert(ReflectedDescriptorSet::default());
+            result.entry(i).or_default();
         }
         result
     }
@@ -446,7 +441,7 @@ impl Program {
 
 impl<'game> RenderContext<'game> {
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let program = Program::new(&self, shaders)?;
+        let program = Program::new(self, shaders)?;
         let mut programs = self.programs.write();
         let index = programs.len();
         programs.push(program);

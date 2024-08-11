@@ -174,7 +174,7 @@ impl Instance {
         let optimal = physical_devices
             .find_suitable_device(surface, preferences)
             .ok_or(Error::NoSuitableDevice)?;
-        RenderContext::new(&self, optimal)
+        RenderContext::new(self, optimal)
     }
 
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {

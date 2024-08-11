@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, slice, u32};
+use std::{mem, slice};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -311,8 +311,8 @@ impl<'a> FrameRecorder<'a> {
 
     pub fn record(&'a self, pass: RenderPass) -> RenderPassRecorder<'a> {
         RenderPassRecorder {
-            context: &self,
-            pass: pass,
+            context: self,
+            pass,
             streams: Default::default(),
             image_barriers: Default::default(),
         }

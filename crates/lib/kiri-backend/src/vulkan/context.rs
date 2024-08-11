@@ -20,7 +20,6 @@ use std::{
     path::PathBuf,
     slice,
     sync::Arc,
-    u32, u64,
 };
 
 use arrayvec::ArrayVec;
@@ -359,7 +358,7 @@ impl<'game> RenderContext<'game> {
         allocate_info.descriptor_set_count = 1;
         let sampler_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
 
-        let cache = if let Some(path) = Self::get_pipelines_path(&instance) {
+        let cache = if let Some(path) = Self::get_pipelines_path(instance) {
             load_or_create_pipeline_cache(&device, &pdevice, &path)?
         } else {
             vk::PipelineCache::null()
@@ -397,13 +396,8 @@ impl<'game> RenderContext<'game> {
     }
 
     fn get_pipelines_path(instance: &Instance) -> Option<PathBuf> {
-        if let Some(dirs) =
-            ProjectDirs::from(&instance.title[0], &instance.title[1], &instance.title[2])
-        {
-            Some(dirs.cache_dir().join("pipelines.bin"))
-        } else {
-            None
-        }
+        ProjectDirs::from(&instance.title[0], &instance.title[1], &instance.title[2])
+            .map(|dirs| dirs.cache_dir().join("pipelines.bin"))
     }
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
@@ -593,7 +587,7 @@ impl<'game> RenderContext<'game> {
         f: F,
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
-        let compile_pipelines = Self::compile_all_pipelines(&self);
+        let compile_pipelines = Self::compile_all_pipelines(self);
         let target = match target.acquire_next_image()? {
             AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
             AcquiredSurface::Image(image) => image,
@@ -613,14 +607,14 @@ impl<'game> RenderContext<'game> {
         self.update_descriptors();
         {
             let mut staging = self.staging.lock();
-            let upload = staging.upload(&self)?;
+            let upload = staging.upload(self)?;
             let images = self.images.read();
             bevy_tasks::block_on(compile_pipelines)?;
             unsafe {
                 self.device
                     .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
             }?;
-            staging.execute_pending_barriers(&self, frame.cb);
+            staging.execute_pending_barriers(self, frame.cb);
             let pipelines = self.pipelines.read();
             for pass in passes {
                 let (pass, streams, image_barriers) = pass.consume();
@@ -808,7 +802,7 @@ impl<'game> RenderContext<'game> {
 impl<'game> Drop for RenderContext<'game> {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
-        self.staging.lock().free(&self);
+        self.staging.lock().free(self);
         let mut memory_allocator = self.memory_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
         self.images.write().drain().for_each(|(view, image)| {
@@ -845,7 +839,7 @@ impl<'game> Drop for RenderContext<'game> {
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
         if self.cache != vk::PipelineCache::null() {
-            if let Some(path) = Self::get_pipelines_path(&self.instance) {
+            if let Some(path) = Self::get_pipelines_path(self.instance) {
                 if let Err(err) = save_pipeline_cache(&self.device, &self.pdevice, self.cache, path)
                 {
                     error!("Failed to save pipeline cache: {}", err);

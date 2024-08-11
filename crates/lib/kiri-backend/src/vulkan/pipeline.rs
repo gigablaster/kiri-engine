@@ -33,10 +33,7 @@ use crate::{
     RenderTargetStoreOp,
 };
 
-use super::{
-    barrier::{ImageBarrier, ImageBarrierType},
-    ImagePool, PipelineCompilationContext,
-};
+use super::{ImagePool, PipelineCompilationContext};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {
@@ -216,7 +213,7 @@ impl<'a> From<RenderPassLayout<'a>> for RenderPassLayoutInner {
         RenderPassLayoutInner {
             color: value
                 .color
-                .into_iter()
+                .iter()
                 .map(|x| (*x).into())
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth: value.depth.map(|x| x.into()),
@@ -477,7 +474,7 @@ impl<'game> RenderContext<'game> {
         };
         self.pipelines_to_compile
             .lock()
-            .insert(handle, (program, pass_layout.clone(), desc));
+            .insert(handle, (program, *pass_layout, desc));
         handle
     }
 

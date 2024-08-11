@@ -15,7 +15,7 @@
 
 use ash::vk;
 
-use super::{Image, ImageHandle, ImagePool, ImageSubresourceRange};
+use super::{Image, ImageHandle, ImagePool};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImageBarrierType {
@@ -41,7 +41,7 @@ impl ImageBarrier {
 }
 
 impl ImageBarrierType {
-    fn to_vk(&self, image: &Image) -> vk::ImageMemoryBarrier2 {
+    fn to_vk(self, image: &Image) -> vk::ImageMemoryBarrier2 {
         match self {
             ImageBarrierType::ToColorRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
@@ -51,9 +51,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                 .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::COLOR)),
             ImageBarrierType::ToPresent => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -62,9 +60,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                 .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::COLOR)),
             ImageBarrierType::ToDepthRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
@@ -73,9 +69,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                 .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER) // fixme?
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::DEPTH),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::DEPTH)),
             ImageBarrierType::DiscardRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
@@ -84,9 +78,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                 .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::COLOR)),
             ImageBarrierType::DiscardDepthTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
@@ -95,9 +87,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
                 .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER) // fixme?
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::DEPTH),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::DEPTH)),
             ImageBarrierType::FromRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_READ)
@@ -106,9 +96,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                 .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::COLOR)),
             ImageBarrierType::FromDepthTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
@@ -117,9 +105,7 @@ impl ImageBarrierType {
                 .new_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
                 .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER) // fixme?
                 .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                .subresource_range(
-                    image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::DEPTH),
-                ),
+                .subresource_range(image.subresource(vk::ImageAspectFlags::DEPTH)),
         }
     }
 }

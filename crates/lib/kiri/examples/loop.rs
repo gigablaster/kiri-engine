@@ -20,7 +20,7 @@ impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
     fn info(&self) -> (&str, &str, &str) {
-        (&"com", &"gigablaster", "kiri-demo-loop")
+        ("com", "gigablasterca", "kiri-demo-loop")
     }
 
     fn title(&self) -> &str {
@@ -31,10 +31,10 @@ impl GameClient<LoopError> for Loop {
         Ok(kiri::GameTickState::Continue)
     }
 
-    fn draw<'a>(
+    fn draw(
         &self,
         _time: kiri_common::GameTime,
-        context: &kiri_backend::FrameRecorder<'a>,
+        context: &kiri_backend::FrameRecorder,
     ) -> Result<(), kiri_backend::Error> {
         let pass = RenderPass::default().color(
             RenderTarget::color(context.backbuffer)
