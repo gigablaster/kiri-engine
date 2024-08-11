@@ -50,9 +50,6 @@ use super::{
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::DeviceAddress>;
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
-pub struct BufferSlice(pub BufferHandle, pub u32);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
 

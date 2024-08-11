@@ -192,6 +192,24 @@ impl<'game> RenderContext<'game> {
         Ok(handle)
     }
 
+    pub fn update_buffer(
+        &self,
+        handle: BufferHandle,
+        offset: u32,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        let buffer = self
+            .buffers
+            .read()
+            .get_cold(handle)
+            .ok_or(Error::InvalidBufferHandle(handle))?
+            .raw;
+        self.staging
+            .lock()
+            .upload_buffer(self, buffer, offset, data)?;
+        Ok(())
+    }
+
     pub fn destroy_buffer(&self, handle: BufferHandle) {
         if let Some((_, buffer)) = self.buffers.write().remove(handle) {
             self.with_drop_list(|drop_list| {
