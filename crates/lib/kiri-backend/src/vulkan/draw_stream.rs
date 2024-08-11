@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{io::Read, mem, slice, u32};
+use std::{mem, slice, u32};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 
 use crate::{PipelineHandle, RenderPass};
 
-use super::{Frame, ImageHandle, PipelinePool};
+use super::{Error, Frame, ImageHandle, PipelinePool};
 
 const PUSH_SIZE: usize = 128;
 
@@ -317,7 +317,7 @@ impl<'a> FrameRecorder<'a> {
 }
 
 impl<'a> RenderPassRecorder<'a> {
-    pub fn push(&self, stream: DrawStreamRecorder) {
+    pub fn record(&self, stream: DrawStreamRecorder) {
         self.streams.lock().push(stream.finish());
     }
 
@@ -326,6 +326,10 @@ impl<'a> RenderPassRecorder<'a> {
             pass: self.pass,
             streams: self.streams,
         });
+    }
+
+    pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<vk::DeviceAddress, Error> {
+        self.context.frame.push_temp(data)
     }
 }
 

@@ -301,11 +301,21 @@ impl<'game> RenderContext<'game> {
         };
         let allocator_props =
             unsafe { device_properties(instance.get(), Instance::vulkan_version(), pdevice.raw) }?;
-        let memory_allocator = Mutex::new(GpuAllocator::new(allocator_config, allocator_props));
+        let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
 
         let frames = [
-            Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
-            Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
+            Mutex::new(Arc::new(Frame::new(
+                &device,
+                &pdevice,
+                &mut memory_allocator,
+                universal_queue_index,
+            )?)),
+            Mutex::new(Arc::new(Frame::new(
+                &device,
+                &pdevice,
+                &mut memory_allocator,
+                universal_queue_index,
+            )?)),
         ];
 
         let debug = instance
@@ -318,7 +328,7 @@ impl<'game> RenderContext<'game> {
             &device,
             transfer_queue_index,
             universal_queue_index,
-            &mut memory_allocator.lock(),
+            &mut memory_allocator,
         )?);
         let samplers = Self::generate_samplers(&device);
         let bindless_layout = create_descriptor_set_layout(&device, &samplers, &BINDLESS_SET)?;
@@ -359,7 +369,7 @@ impl<'game> RenderContext<'game> {
             instance,
             samplers,
             pdevice,
-            memory_allocator,
+            memory_allocator: Mutex::new(memory_allocator),
             universal_queue,
             transfer_queue,
             frames,

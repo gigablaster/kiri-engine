@@ -13,14 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, thread};
+use core::slice;
+use std::{
+    collections::HashMap,
+    mem,
+    ptr::{copy_nonoverlapping, NonNull},
+    thread,
+};
 
 use ash::vk::{self};
+use gpu_alloc::UsageFlags;
+use gpu_alloc_ash::AshMemoryDevice;
+use kiri_common::BumpAllocator;
 use parking_lot::Mutex;
 
 use crate::Error;
 
-use super::{DropList, GpuAllocator};
+use super::{DropList, GpuAllocator, GpuMemory, PhysicalDevice, RenderContext};
 
 const PREALLOCATED_COMMAND_BUFFERS: usize = 8;
 
@@ -89,6 +98,82 @@ impl SecondaryCommandBufferPool {
 }
 
 #[derive(Debug)]
+struct TempBuffer {
+    buffer: vk::Buffer,
+    memory: Option<GpuMemory>,
+    allocator: BumpAllocator,
+    address: vk::DeviceAddress,
+    aligment: u64,
+    map: NonNull<u8>,
+}
+
+impl TempBuffer {
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        size: u64,
+        allocator: &mut GpuAllocator,
+    ) -> Result<Self, Error> {
+        let create_info = vk::BufferCreateInfo::default().size(size).usage(
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        );
+        let buffer = unsafe { device.create_buffer(&create_info, None) }?;
+        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let mut memory = RenderContext::allocate_impl(
+            device,
+            allocator,
+            requirements,
+            UsageFlags::FAST_DEVICE_ACCESS | UsageFlags::DEVICE_ADDRESS | UsageFlags::HOST_ACCESS,
+            true,
+        )?;
+        unsafe { device.bind_buffer_memory(buffer, *memory.memory(), memory.offset()) }?;
+        let map = unsafe { memory.map(AshMemoryDevice::wrap(device), 0, size as _) }?;
+        let address = unsafe {
+            device.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
+        };
+        Ok(Self {
+            buffer,
+            memory: Some(memory),
+            allocator: BumpAllocator::new(size as _),
+            aligment: pdevice
+                .properties
+                .limits
+                .min_storage_buffer_offset_alignment,
+            address,
+            map,
+        })
+    }
+
+    pub fn push(&self, data: &[u8]) -> Result<vk::DeviceAddress, Error> {
+        let offset = self
+            .allocator
+            .allocate(data.len(), self.aligment as _)
+            .ok_or(Error::OutOfTempMemory)? as u64;
+        unsafe {
+            copy_nonoverlapping(
+                data.as_ptr(),
+                self.map.byte_add(offset as _).as_ptr(),
+                data.len(),
+            )
+        }
+        Ok(offset + self.address)
+    }
+
+    pub fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
+        if let Some(memory) = self.memory.take() {
+            unsafe {
+                allocator.dealloc(AshMemoryDevice::wrap(device), memory);
+                device.destroy_buffer(self.buffer, None)
+            }
+        }
+    }
+
+    pub fn reset(&self) {
+        self.allocator.reset();
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Frame {
     pool: vk::CommandPool,
     pub cb: vk::CommandBuffer,
@@ -96,13 +181,21 @@ pub(crate) struct Frame {
     pub finished: vk::Semaphore,
     drop_list: DropList,
     per_thread_buffers: Mutex<HashMap<thread::ThreadId, SecondaryCommandBufferPool>>,
+    temp: TempBuffer,
 }
 
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
+const TEMP_BUFFER_SIZE: u64 = 16 * 1024 * 1024;
+
 impl Frame {
-    pub(crate) fn new(device: &ash::Device, queue_family_index: u32) -> Result<Self, Error> {
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        allocator: &mut GpuAllocator,
+        queue_family_index: u32,
+    ) -> Result<Self, Error> {
         unsafe {
             let pool = device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -129,11 +222,12 @@ impl Frame {
                 finished,
                 drop_list,
                 per_thread_buffers: Mutex::default(),
+                temp: TempBuffer::new(device, pdevice, TEMP_BUFFER_SIZE, allocator)?,
             })
         }
     }
 
-    pub(crate) fn reset(
+    pub fn reset(
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
@@ -148,11 +242,13 @@ impl Frame {
             device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
             device.reset_fences(&[self.fence])?;
         }
+        self.temp.reset();
 
         Ok(())
     }
 
-    pub(crate) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
+    pub fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
+        self.temp.free(device, memory_allocator);
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
@@ -165,7 +261,7 @@ impl Frame {
             .for_each(|(_, x)| x.free(device));
     }
 
-    pub(crate) fn assign_drop_list(&mut self, drop_list: DropList) {
+    pub fn assign_drop_list(&mut self, drop_list: DropList) {
         self.drop_list = drop_list;
     }
 
@@ -185,5 +281,11 @@ impl Frame {
 
             cb
         }
+    }
+
+    pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<vk::DeviceAddress, Error> {
+        let data =
+            unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, mem::size_of_val(data)) };
+        self.temp.push(data)
     }
 }

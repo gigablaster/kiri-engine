@@ -60,6 +60,8 @@ pub enum Error {
     ImageTooBig,
     #[error("Memory isn't allocated")]
     MemoryNotAllocated,
+    #[error("Out of temp memory")]
+    OutOfTempMemory,
 }
 
 impl From<vk::Result> for Error {

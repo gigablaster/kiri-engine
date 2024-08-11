@@ -16,6 +16,7 @@
 use std::ptr::NonNull;
 
 use ash::vk;
+use gpu_alloc::UsageFlags;
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{BufferHandle, BufferUsage, Error, RenderContext};
@@ -142,8 +143,12 @@ impl<'a> BufferCreateDesc<'a> {
     }
 
     fn build(&self) -> vk::BufferCreateInfo {
+        let mut usage: vk::BufferUsageFlags = self.usage.into();
+        if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        }
         vk::BufferCreateInfo::default()
-            .usage(self.usage.into())
+            .usage(usage)
             .size(self.size as _)
     }
 }
@@ -156,6 +161,10 @@ impl<'game> RenderContext<'game> {
     ) -> Result<BufferHandle, Error> {
         let buffer = unsafe { self.device.create_buffer(&desc.build(), None) }?;
         let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        let mut location = desc.memory_location;
+        if desc.usage.contains(BufferUsage::Storage) {
+            location |= gpu_alloc::UsageFlags::DEVICE_ADDRESS;
+        }
         let memory = self.allocate(requirements, desc.memory_location, desc.dedicated)?;
         unsafe {
             self.device
