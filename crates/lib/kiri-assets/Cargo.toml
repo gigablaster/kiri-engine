@@ -1,0 +1,23 @@
+[package]
+name = "kiri-assets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kiri-common = { path = "../kiri-common" }
+kiri-backend = { path = "../kiri-backend" }
+speedy = { version = "0.8.7", features = ["speedy-derive", "uuid"] }
+bytes = "1.7.1"
+siphasher = "1.0.1"
+image = { version = "0.25.2", default-features = false, features = [
+    "jpeg",
+    "png",
+    "pnm",
+    "tga",
+    "tiff",
+    "webp",
+    "bmp",
+    "hdr",
+] }
+
+intel_tex_2 = "0.4.0"

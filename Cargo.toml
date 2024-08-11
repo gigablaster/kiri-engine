@@ -3,6 +3,7 @@ members = [
     "crates/lib/kiri",
     "crates/lib/kiri-common",
     "crates/lib/kiri-backend",
+    "crates/lib/kiri-assets",
 ]
 
 resolver = "2"
