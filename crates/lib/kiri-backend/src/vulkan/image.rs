@@ -426,6 +426,40 @@ impl<'game> RenderContext<'game> {
         self.insert_image(image, aspect)
     }
 
+    pub fn update_image(
+        &self,
+        handle: ImageHandle,
+        desc: ImageCreateDesc,
+        aspect: ImageAspect,
+        data: Option<&[ImageSubresourceData]>,
+    ) -> Result<(), Error> {
+        let image = Image::new(self, desc)?;
+        if let Some(data) = data {
+            self.staging.lock().upload_image(self, &image, data)?;
+        }
+        let view = unsafe {
+            self.device
+                .create_image_view(&ImageViewDesc::new(aspect).build(&image), None)
+        }?;
+        let desc = image.desc;
+        let (old_view, old_image) = self
+            .images
+            .write()
+            .replace_hot_cold(handle, view, image)
+            .ok_or(Error::InvalidImageHandle(handle))?;
+        self.with_drop_list(|drop_list| {
+            drop_list.drop_view(old_view);
+            old_image.free(drop_list);
+        });
+        if desc.usage.contains(ImageUsage::Sampled) {
+            self.sampled_images_to_update.lock().insert(handle);
+        }
+        if desc.usage.contains(ImageUsage::Storage) {
+            self.storage_images_to_update.lock().insert(handle);
+        }
+        Ok(())
+    }
+
     pub(crate) fn register_image(
         &self,
         image: vk::Image,
