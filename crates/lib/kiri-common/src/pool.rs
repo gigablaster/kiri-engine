@@ -249,7 +249,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
     }
 
     pub fn get(&self, handle: Handle<T>) -> Option<&T> {
-        if self.is_handle_valid(&handle) {
+        if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::get(&self.data[index]).unwrap())
         } else {
@@ -258,7 +258,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
     }
 
     pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
-        if self.is_handle_valid(&handle) {
+        if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::get_mut(&mut self.data[index]).unwrap())
         } else {
@@ -267,7 +267,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
     }
 
     pub fn replace(&mut self, handle: Handle<T>, data: T) -> Option<T> {
-        if self.is_handle_valid(&handle) {
+        if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::replace(&mut self.data[index], data))
         } else {
@@ -276,7 +276,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
     }
 
     pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
-        if self.is_handle_valid(&handle) {
+        if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             self.generations[index] = self.generations[index].wrapping_add(1) % MAX_GENERATION;
             self.empty.push(index as _);
@@ -286,7 +286,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
         None
     }
 
-    pub fn is_handle_valid(&self, handle: &Handle<T>) -> bool {
+    pub fn is_handle_valid(&self, handle: Handle<T>) -> bool {
         let index = handle.index() as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
@@ -473,6 +473,21 @@ where
 
     pub fn replace_cold(&mut self, handle: Handle<T>, data: U) -> Option<U> {
         self.cold.replace(handle.into_another(), data)
+    }
+
+    pub fn replace_hot_cold(&mut self, handle: Handle<T>, hot: T, cold: U) -> Option<(T, U)> {
+        if self.is_handle_valud(handle) {
+            Some((
+                self.hot.replace(handle, hot).unwrap(),
+                self.cold.replace(handle.into_another(), cold).unwrap(),
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn is_handle_valud(&self, handle: Handle<T>) -> bool {
+        self.hot.is_handle_valid(handle) && self.cold.is_handle_valid(handle.into_another())
     }
 
     pub fn remove(&mut self, handle: Handle<T>) -> Option<(T, U)> {
