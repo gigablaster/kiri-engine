@@ -34,7 +34,7 @@ use std::fmt::Debug;
 
 use crate::{
     vulkan::{
-        barrier::{image_barrier, Barrier},
+        barrier::{image_barrier, ImageBarrier, ImageBarrierType},
         AcquiredSurface, Buffer, DrawStreamExecuteContext, FrameRecorder, MAX_ATTACHMENTS,
         MAX_COLOR_ATTACHMENTS,
     },
@@ -621,18 +621,9 @@ impl<'game> RenderContext<'game> {
                     .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
             }?;
             staging.execute_pending_barriers(&self, frame.cb);
-            let backbuffer = images
-                .get_cold(target.image)
-                .expect("Back buffer MUST exist");
-            image_barrier(
-                &self.device,
-                frame.cb,
-                &[Barrier::DiscardRenderTarget(backbuffer)],
-            );
-            // TODO:: passes
             let pipelines = self.pipelines.read();
             for pass in passes {
-                let (pass, streams) = pass.consume();
+                let (pass, streams, image_barriers) = pass.consume();
                 let sizes = pass
                     .color
                     .iter()
@@ -665,7 +656,7 @@ impl<'game> RenderContext<'game> {
                 if let Some(depth) = &depth_attachment {
                     rendering_info = rendering_info.depth_attachment(depth);
                 }
-                // Todo: barriers
+                image_barrier(&self.device, frame.cb, &images, &image_barriers);
                 unsafe {
                     self.device.cmd_begin_rendering(frame.cb, &rendering_info);
                     self.device.cmd_set_viewport(
@@ -689,7 +680,12 @@ impl<'game> RenderContext<'game> {
                 })?;
                 unsafe { self.device.cmd_end_rendering(frame.cb) };
             }
-            image_barrier(&self.device, frame.cb, &[Barrier::ToPresent(backbuffer)]);
+            image_barrier(
+                &self.device,
+                frame.cb,
+                &images,
+                &[ImageBarrier::new(target.image, ImageBarrierType::ToPresent)],
+            );
             unsafe { self.device.end_command_buffer(frame.cb) }?;
             let wait = [
                 upload,

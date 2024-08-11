@@ -15,23 +15,35 @@
 
 use ash::vk;
 
-use super::{Image, ImageSubresourceRange};
+use super::{Image, ImageHandle, ImagePool, ImageSubresourceRange};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Barrier<'a> {
-    ToDepthRenderTarget(&'a Image),
-    ToColorRenderTarget(&'a Image),
-    ToPresent(&'a Image),
-    FromRenderTarget(&'a Image),
-    FromDepthTarget(&'a Image),
-    DiscardRenderTarget(&'a Image),
-    DiscardDepthTarget(&'a Image),
+pub enum ImageBarrierType {
+    ToDepthRenderTarget,
+    ToColorRenderTarget,
+    ToPresent,
+    FromRenderTarget,
+    FromDepthTarget,
+    DiscardRenderTarget,
+    DiscardDepthTarget,
 }
 
-impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
-    fn from(value: Barrier) -> Self {
-        match value {
-            Barrier::ToColorRenderTarget(image) => vk::ImageMemoryBarrier2::default()
+#[derive(Debug, Clone, Copy)]
+pub struct ImageBarrier {
+    pub image: ImageHandle,
+    pub ty: ImageBarrierType,
+}
+
+impl ImageBarrier {
+    pub fn new(image: ImageHandle, ty: ImageBarrierType) -> Self {
+        Self { image, ty }
+    }
+}
+
+impl ImageBarrierType {
+    fn to_vk(&self, image: &Image) -> vk::ImageMemoryBarrier2 {
+        match self {
+            ImageBarrierType::ToColorRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
                 .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -42,7 +54,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
                 ),
-            Barrier::ToPresent(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::ToPresent => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                 .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
@@ -53,7 +65,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
                 ),
-            Barrier::ToDepthRenderTarget(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::ToDepthRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
                 .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
@@ -64,7 +76,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::DEPTH),
                 ),
-            Barrier::DiscardRenderTarget(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::DiscardRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
                 .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -75,7 +87,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
                 ),
-            Barrier::DiscardDepthTarget(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::DiscardDepthTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::SHADER_READ)
                 .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
@@ -86,7 +98,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::DEPTH),
                 ),
-            Barrier::FromRenderTarget(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::FromRenderTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_READ)
                 .dst_access_mask(vk::AccessFlags2::SHADER_READ)
@@ -97,7 +109,7 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
                 .subresource_range(
                     image.subresource(ImageSubresourceRange::All, vk::ImageAspectFlags::COLOR),
                 ),
-            Barrier::FromDepthTarget(image) => vk::ImageMemoryBarrier2::default()
+            ImageBarrierType::FromDepthTarget => vk::ImageMemoryBarrier2::default()
                 .image(image.raw)
                 .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                 .dst_access_mask(vk::AccessFlags2::SHADER_READ)
@@ -112,8 +124,19 @@ impl<'a> From<Barrier<'a>> for vk::ImageMemoryBarrier2<'a> {
     }
 }
 
-pub fn image_barrier<'a>(device: &ash::Device, cb: vk::CommandBuffer, barriers: &[Barrier]) {
-    let to_apply = barriers.iter().map(|x| (*x).into()).collect::<Vec<_>>();
+pub(crate) fn image_barrier(
+    device: &ash::Device,
+    cb: vk::CommandBuffer,
+    images: &ImagePool,
+    barriers: &[ImageBarrier],
+) {
+    let to_apply = barriers
+        .iter()
+        .map(|x| {
+            let image = images.get_cold(x.image).unwrap();
+            x.ty.to_vk(image)
+        })
+        .collect::<Vec<_>>();
     unsafe {
         device.cmd_pipeline_barrier2(
             cb,

@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 
 use crate::{PipelineHandle, RenderPass};
 
-use super::{Error, Frame, ImageHandle, PipelinePool};
+use super::{barrier::ImageBarrier, Error, Frame, ImageHandle, PipelinePool};
 
 const PUSH_SIZE: usize = 128;
 
@@ -287,12 +287,14 @@ pub struct RenderPassRecorder<'a> {
     context: &'a FrameRecorder<'a>,
     pass: RenderPass,
     streams: Mutex<Vec<DrawStream>>,
+    image_barriers: Mutex<Vec<ImageBarrier>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct RecorderRenderPass {
     pub pass: RenderPass,
-    pub streams: Mutex<Vec<DrawStream>>,
+    pub streams: Vec<DrawStream>,
+    pub image_barriers: Vec<ImageBarrier>,
 }
 
 #[derive(Debug)]
@@ -312,6 +314,7 @@ impl<'a> FrameRecorder<'a> {
             context: &self,
             pass: pass,
             streams: Default::default(),
+            image_barriers: Default::default(),
         }
     }
 }
@@ -324,17 +327,23 @@ impl<'a> RenderPassRecorder<'a> {
     pub fn finish(self) {
         self.context.passes.lock().push(RecorderRenderPass {
             pass: self.pass,
-            streams: self.streams,
+            streams: self.streams.into_inner(),
+            image_barriers: self.image_barriers.into_inner(),
         });
     }
 
     pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<vk::DeviceAddress, Error> {
         self.context.frame.push_temp(data)
     }
+
+    pub fn barriers(&self, barriers: &[ImageBarrier]) {
+        let mut target = self.image_barriers.lock();
+        barriers.iter().for_each(|x| target.push(*x));
+    }
 }
 
 impl RecorderRenderPass {
-    pub(crate) fn consume(self) -> (RenderPass, Vec<DrawStream>) {
-        (self.pass, self.streams.into_inner())
+    pub(crate) fn consume(self) -> (RenderPass, Vec<DrawStream>, Vec<ImageBarrier>) {
+        (self.pass, self.streams, self.image_barriers)
     }
 }

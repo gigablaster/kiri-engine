@@ -33,7 +33,10 @@ use crate::{
     RenderTargetStoreOp,
 };
 
-use super::{ImagePool, PipelineCompilationContext};
+use super::{
+    barrier::{ImageBarrier, ImageBarrierType},
+    ImagePool, PipelineCompilationContext,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {

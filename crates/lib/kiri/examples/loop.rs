@@ -3,7 +3,7 @@
 use std::{error::Error, fmt::Display};
 
 use kiri::{run_game, GameClient};
-use kiri_backend::{ClearRenderTarget, RenderPass, RenderTarget};
+use kiri_backend::{ClearRenderTarget, ImageBarrier, ImageBarrierType, RenderPass, RenderTarget};
 
 #[derive(Debug, Default)]
 struct Loop {}
@@ -40,7 +40,12 @@ impl GameClient<LoopError> for Loop {
             RenderTarget::color(context.backbuffer)
                 .clear(ClearRenderTarget::Color([1.0, 0.0, 0.0, 1.0])),
         );
-        context.record(pass).finish();
+        let recorder = context.record(pass);
+        recorder.barriers(&[ImageBarrier::new(
+            context.backbuffer,
+            ImageBarrierType::DiscardRenderTarget,
+        )]);
+        recorder.finish();
         Ok(())
     }
 }

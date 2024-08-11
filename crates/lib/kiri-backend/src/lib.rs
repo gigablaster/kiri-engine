@@ -271,7 +271,8 @@ use speedy::{Readable, Writable};
 pub use vulkan::Error;
 pub use vulkan::{
     BufferCreateDesc, BufferHandle, ClearRenderTarget, DrawStream, FrameRecorder, FrameState,
-    ImageCreateDesc, ImageDesc, ImageHandle, Instance, InstanceBuilder, PhysicalDevice,
-    PhysicalDeviceType, PipelineHandle, ProgramHandle, RasterPipelineCreateDesc, RenderContext,
-    RenderPass, RenderPassLayout, RenderTarget, Surface, Swapchain,
+    ImageBarrier, ImageBarrierType, ImageCreateDesc, ImageDesc, ImageHandle, Instance,
+    InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, ProgramHandle,
+    RasterPipelineCreateDesc, RenderContext, RenderPass, RenderPassLayout, RenderTarget, Surface,
+    Swapchain,
 };

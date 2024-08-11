@@ -29,6 +29,7 @@ mod staging;
 mod swapchain;
 
 use ash::vk;
+pub use barrier::*;
 pub use buffer::*;
 pub use context::*;
 pub use draw_stream::*;
