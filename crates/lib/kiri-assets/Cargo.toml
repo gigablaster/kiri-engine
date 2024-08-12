@@ -21,3 +21,12 @@ image = { version = "0.25.2", default-features = false, features = [
 ] }
 
 intel_tex_2 = "0.4.0"
+normalize-path = "0.2.1"
+numquant = "0.2.0"
+mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
+    "glam",
+], default-features = false }
+glam = "0.28.0"
+meshopt = "0.3.0"
+gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
+thiserror = "1.0.61"

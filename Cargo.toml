@@ -4,6 +4,7 @@ members = [
     "crates/lib/kiri-common",
     "crates/lib/kiri-backend",
     "crates/lib/kiri-assets",
+    "crates/bin/builder",
 ]
 
 resolver = "2"

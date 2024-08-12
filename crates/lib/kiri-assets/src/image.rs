@@ -15,7 +15,8 @@
 
 use std::{
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use bytes::Bytes;
@@ -24,7 +25,10 @@ use intel_tex_2::{bc5, bc7};
 use kiri_backend::Format;
 use speedy::{Readable, Writable};
 
-use crate::{read_to_end, Asset, AssetImportContext, AssetSource, Error, ImportAsset};
+use crate::{
+    get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetImportContext, AssetSource,
+    Error, ImportAsset,
+};
 
 #[derive(Debug, Readable, Writable)]
 pub struct ImageAsset {
@@ -47,18 +51,61 @@ pub enum ImageAssetType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ImageSource {
+pub struct ImageAssetSource {
     pub ty: ImageAssetType,
     pub srgb: bool,
-    pub need_mips: bool,
+    pub mips: bool,
     pub data: ImageData,
 }
 
-impl AssetSource for ImageSource {
+impl ImageAssetSource {
+    pub fn from_file<P: AsRef<Path>>(p: P) -> Self {
+        Self {
+            ty: ImageAssetType::Rgba,
+            srgb: true,
+            mips: true,
+            data: ImageData::Path(p.as_ref().to_owned()),
+        }
+    }
+
+    pub fn from_color(color: [u8; 4]) -> Self {
+        Self {
+            ty: ImageAssetType::Rgba,
+            srgb: true,
+            mips: false,
+            data: ImageData::Color(color),
+        }
+    }
+
+    pub fn srgb(mut self, value: bool) -> Self {
+        self.srgb = value;
+        self
+    }
+
+    pub fn mips(mut self, value: bool) -> Self {
+        self.mips = value;
+        self
+    }
+
+    pub fn ty(mut self, value: ImageAssetType) -> Self {
+        self.ty = value;
+        self
+    }
+}
+
+impl AssetSource for ImageAssetSource {
     fn reference(&self) -> crate::AssetReference {
         let mut hasher = siphasher::sip::SipHasher::default();
         self.hash(&mut hasher);
         hasher.finish().into()
+    }
+
+    fn changed(&self, last_update: SystemTime) -> bool {
+        if let ImageData::Path(path) = &self.data {
+            is_asset_changed(path, last_update)
+        } else {
+            false
+        }
     }
 }
 
@@ -72,11 +119,11 @@ impl Asset for ImageAsset {
     }
 }
 
-impl ImportAsset<ImageSource> for ImageAsset {
-    fn import(source: ImageSource, _context: &dyn AssetImportContext) -> Result<Self, Error> {
+impl ImportAsset<ImageAssetSource> for ImageAsset {
+    fn import(source: ImageAssetSource, _context: &dyn AssetImportContext) -> Result<Self, Error> {
         // Load image data
         let data = match &source.data {
-            ImageData::Path(path) => read_to_end(path)?.into(),
+            ImageData::Path(path) => read_to_end(get_absolute_asset_path(path)?)?.into(),
             ImageData::Bytes(data) => data.clone(),
             ImageData::Color(color) => {
                 // Special case - just return 1x1 image with color
@@ -92,7 +139,7 @@ impl ImportAsset<ImageSource> for ImageAsset {
             image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
         let dims = [image.width(), image.height()];
         let is_pow2 = dims[0].is_power_of_two() && dims[1].is_power_of_two();
-        if is_pow2 && source.need_mips {
+        if is_pow2 && source.mips {
             // Generate and compress mips
             let bc = match source.ty {
                 ImageAssetType::Rgba => BcMode::Bc7,
@@ -177,7 +224,7 @@ fn block_compress(image: ImageBuffer<image::Rgba<u8>, Vec<u8>>, bc: BcMode) -> V
     compressed_bytes
 }
 
-fn get_compressed_format(data: &ImageSource) -> Format {
+fn get_compressed_format(data: &ImageAssetSource) -> Format {
     match data.ty {
         ImageAssetType::Rgba if data.srgb => Format::BC7_SRGB,
         ImageAssetType::Rgba => Format::BC7_UNORM,
@@ -185,7 +232,7 @@ fn get_compressed_format(data: &ImageSource) -> Format {
     }
 }
 
-fn get_uncompressed_format(source: &ImageSource) -> Format {
+fn get_uncompressed_format(source: &ImageAssetSource) -> Format {
     match source.ty {
         ImageAssetType::Rgba if source.srgb => Format::RGBA8_SRGB,
         ImageAssetType::Rgba => Format::RGBA8_UNORM,
