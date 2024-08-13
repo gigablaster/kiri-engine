@@ -16,7 +16,7 @@ use kiri_assets::{
     GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset,
     MeshAssetBuilder, ROOT_DATA_PATH,
 };
-use log::info;
+use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
@@ -76,24 +76,24 @@ fn asset_need_rebuild<T: AssetSource>(asset: &T) -> bool {
 
 impl ContentProcessor {
     async fn build_scene(&self, scene: GltfSceneSource) {
-        println!("Building scene {:?}", scene);
+        info!("Building scene {:?}", scene);
         if let Err(err) = self.build_asset::<GltfAsset, GltfSceneSource>(scene.clone()) {
-            eprintln!("Failed to build scene {:?}: {}", scene, err);
+            error!("Failed to build scene {:?}: {}", scene, err);
         }
     }
 
     async fn build_mesh(&self, source: GltfMeshSource, data: MeshAssetBuilder) {
-        println!("Building mesh {:?}", source);
+        info!("Building mesh {:?}", source);
         let mesh = data.build();
         if let Err(err) = self.write_asset(source.reference(), mesh) {
-            eprint!("Failed to write mesh {:?}: {}", source, err);
+            error!("Failed to write mesh {:?}: {}", source, err);
         }
     }
 
     async fn build_image(&self, image: ImageAssetSource) {
-        println!("Building image {:?}", image);
+        info!("Building image {:?}", image);
         if let Err(err) = self.build_asset::<ImageAsset, ImageAssetSource>(image.clone()) {
-            eprintln!("Failed to build image {:?}: {}", image, err);
+            error!("Failed to build image {:?}: {}", image, err);
         }
     }
 
@@ -162,7 +162,7 @@ fn main() {
     let args = clap::Command::new("builder")
         .version("0.1.0")
         .author("gigablaster <gigakek@protonmail.com>")
-        .about("Asset builder for dess engine")
+        .about("Asset builder for kiri engine")
         .arg(
             Arg::new("watch")
                 .long("watch")
