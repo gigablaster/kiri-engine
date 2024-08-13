@@ -219,7 +219,7 @@ fn quantize_uv(value: [f32; 2], max: f32) -> [u16; 2] {
 }
 
 fn quantize_float(value: f32, max: f32) -> u16 {
-    let value = ((value / max).clamp(-1.0, 1.0) + 1.0) / 0.5;
+    let value = ((value / max).clamp(-1.0, 1.0) + 1.0) / 2.0;
     let value = u16::MAX as f32 * value;
     value as u16
 }
@@ -276,5 +276,22 @@ impl MeshAssetBuilder {
             uv_scale: [uv1_scale, uv2_scale],
             bounds,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn quantize() {
+        assert_eq!(32767, quantize_float(0.0, 1.0));
+        assert_eq!(0, quantize_float(-1.0, 1.0));
+        assert_eq!(u16::MAX, quantize_float(1.0, 1.0));
+        assert_eq!(32767, quantize_float(0.0, 100.0));
+        assert_eq!(0, quantize_float(-100.0, 100.0));
+        assert_eq!(u16::MAX, quantize_float(100.0, 100.0));
+        assert_eq!(49151, quantize_float(50.0, 100.0));
+        assert_eq!(16383, quantize_float(-50.0, 100.0));
     }
 }
