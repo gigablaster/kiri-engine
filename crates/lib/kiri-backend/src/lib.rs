@@ -142,7 +142,7 @@ bitflags! {
         const ColorTarget = 4;
         const DepthStencilTarget = 8;
         const TransferDestination = 16;
-        const Source = 32;
+        const TransferSource = 32;
     }
 }
 
@@ -152,8 +152,8 @@ pub enum ImageLayout {
     ColorTarget,
     DepthStencilTarget,
     DepthStencilRead,
-    Destination,
-    Source,
+    TransferDestination,
+    TransferSource,
 }
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
@@ -265,14 +265,27 @@ bitflags! {
     }
 }
 
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
+pub enum BindType {
+    Uniform,
+    DynamicUniform,
+    Storage,
+    DynamicStorage,
+    SampledImage,
+    CombinedSampledImage,
+    Sampler,
+}
+
 use bitflags::bitflags;
 use speedy::{Readable, Writable};
 
 pub use vulkan::Error;
 pub use vulkan::{
-    BufferCreateDesc, BufferHandle, ClearRenderTarget, DrawStream, FrameRecorder, FrameState,
-    ImageBarrier, ImageBarrierType, ImageCreateDesc, ImageDesc, ImageHandle, Instance,
-    InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, ProgramHandle,
-    RasterPipelineCreateDesc, RenderContext, RenderPass, RenderPassLayout, RenderTarget, Surface,
-    Swapchain,
+    BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
+    BufferHandle, ClearRenderTarget, DrawStream, FrameRecorder, FrameState, ImageBarrier,
+    ImageBarrierType, ImageCreateDesc, ImageDesc, ImageHandle, InputVertexStreamAttrubute,
+    InputVertexStreamDesc, Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType,
+    PipelineHandle, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPass,
+    RenderPassLayout, RenderTarget, SkipMissingSlots, Surface, Swapchain, DYNAMIC_BINDING_SLOT,
+    FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };

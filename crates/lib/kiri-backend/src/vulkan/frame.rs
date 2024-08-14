@@ -20,83 +20,46 @@ use std::{
 };
 
 use ash::vk::{self};
-use gpu_alloc::UsageFlags;
-use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
 
 use crate::Error;
 
-use super::{DropList, GpuAllocator, GpuMemory, PhysicalDevice, RenderContext};
+use super::{DropList, GpuAllocator, GpuDescriptorAllocator, PhysicalDevice, Uniforms};
 
 #[derive(Debug)]
 struct TempBuffer {
-    buffer: vk::Buffer,
-    memory: Option<GpuMemory>,
+    offset: u32,
     allocator: BumpAllocator,
-    address: vk::DeviceAddress,
     aligment: u64,
-    map: NonNull<u8>,
+    memory: NonNull<u8>,
 }
 
 impl TempBuffer {
-    pub fn new(
-        device: &ash::Device,
-        pdevice: &PhysicalDevice,
-        size: u64,
-        allocator: &mut GpuAllocator,
-    ) -> Result<Self, Error> {
-        let create_info = vk::BufferCreateInfo::default().size(size).usage(
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        );
-        let buffer = unsafe { device.create_buffer(&create_info, None) }?;
-        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let mut memory = RenderContext::allocate_impl(
-            device,
-            allocator,
-            requirements,
-            UsageFlags::FAST_DEVICE_ACCESS | UsageFlags::DEVICE_ADDRESS | UsageFlags::HOST_ACCESS,
-            true,
-        )?;
-        unsafe { device.bind_buffer_memory(buffer, *memory.memory(), memory.offset()) }?;
-        let map = unsafe { memory.map(AshMemoryDevice::wrap(device), 0, size as _) }?;
-        let address = unsafe {
-            device.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
-        };
-        Ok(Self {
-            buffer,
-            memory: Some(memory),
+    pub fn new(size: u32, offset: u32, pdevice: &PhysicalDevice, memory: NonNull<u8>) -> Self {
+        Self {
+            offset,
             allocator: BumpAllocator::new(size as _),
             aligment: pdevice
                 .properties
                 .limits
                 .min_storage_buffer_offset_alignment,
-            address,
-            map,
-        })
+            memory,
+        }
     }
 
-    pub fn push(&self, data: &[u8]) -> Result<vk::DeviceAddress, Error> {
+    pub fn push(&self, data: &[u8]) -> Result<u32, Error> {
         let offset = self
             .allocator
             .allocate(data.len(), self.aligment as _)
-            .ok_or(Error::OutOfTempMemory)? as u64;
+            .ok_or(Error::OutOfTempMemory)? as u32;
         unsafe {
             copy_nonoverlapping(
                 data.as_ptr(),
-                self.map.byte_add(offset as _).as_ptr(),
+                self.memory.byte_add(offset as _).as_ptr(),
                 data.len(),
             )
         }
-        Ok(offset + self.address)
-    }
-
-    pub fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
-        if let Some(memory) = self.memory.take() {
-            unsafe {
-                allocator.dealloc(AshMemoryDevice::wrap(device), memory);
-                device.destroy_buffer(self.buffer, None)
-            }
-        }
+        Ok(self.offset + offset)
     }
 
     pub fn reset(&self) {
@@ -117,14 +80,15 @@ pub(crate) struct Frame {
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
-const TEMP_BUFFER_SIZE: u64 = 16 * 1024 * 1024;
+pub(crate) const TEMP_BUFFER_SIZE: u32 = 16 * 1024 * 1024;
 
 impl Frame {
     pub fn new(
         device: &ash::Device,
         pdevice: &PhysicalDevice,
-        allocator: &mut GpuAllocator,
         queue_family_index: u32,
+        temp_memory: NonNull<u8>,
+        temp_memory_offset: u32,
     ) -> Result<Self, Error> {
         unsafe {
             let pool = device.create_command_pool(
@@ -151,7 +115,12 @@ impl Frame {
                 fence,
                 finished,
                 drop_list,
-                temp: TempBuffer::new(device, pdevice, TEMP_BUFFER_SIZE, allocator)?,
+                temp: TempBuffer::new(
+                    TEMP_BUFFER_SIZE,
+                    temp_memory_offset,
+                    pdevice,
+                    temp_memory.add(temp_memory_offset as _),
+                ),
             })
         }
     }
@@ -160,8 +129,11 @@ impl Frame {
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
+        uniforms: &mut Uniforms,
     ) -> Result<(), Error> {
-        self.drop_list.purge(device, memory_allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator, uniforms);
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         unsafe {
             device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
@@ -172,21 +144,27 @@ impl Frame {
         Ok(())
     }
 
-    pub fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
-        self.temp.free(device, memory_allocator);
+    pub fn free(
+        &mut self,
+        device: &ash::Device,
+        memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
+        uniforms: &mut Uniforms,
+    ) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
             device.destroy_semaphore(self.finished, None);
         }
-        self.drop_list.purge(device, memory_allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator, uniforms);
     }
 
     pub fn assign_drop_list(&mut self, drop_list: DropList) {
         self.drop_list = drop_list;
     }
 
-    pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<vk::DeviceAddress, Error> {
+    pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<u32, Error> {
         let data =
             unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, mem::size_of_val(data)) };
         self.temp.push(data)

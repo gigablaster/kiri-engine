@@ -20,10 +20,7 @@ use ash::vk::{self};
 use log::info;
 use raw_window_handle::RawWindowHandle;
 
-use crate::{
-    Error, Format, ImageAspect, ImageDesc, ImageHandle, ImageType, ImageUsage, Instance,
-    RenderContext,
-};
+use crate::{Error, Format, ImageDesc, ImageHandle, ImageType, ImageUsage, Instance, RenderDevice};
 
 use super::physical_device::PhysicalDevice;
 
@@ -61,7 +58,7 @@ impl Drop for Surface {
 }
 
 pub struct Swapchain<'a> {
-    context: &'a RenderContext<'a>,
+    device: &'a RenderDevice<'a>,
     pub raw: vk::SwapchainKHR,
     images: ArrayVec<ImageHandle, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
@@ -86,7 +83,7 @@ pub(crate) enum AcquiredSurface<'a> {
 
 impl<'a> Swapchain<'a> {
     pub fn new(
-        context: &'a RenderContext,
+        device: &'a RenderDevice,
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, Error> {
@@ -97,10 +94,10 @@ impl<'a> Swapchain<'a> {
         let surface_capabilities = unsafe {
             surface
                 .loader
-                .get_physical_device_surface_capabilities(context.pdevice.raw, surface.raw)
+                .get_physical_device_surface_capabilities(device.pdevice.raw, surface.raw)
         }?;
 
-        let formats = Self::enumerate_surface_formats(&context.pdevice, surface)?;
+        let formats = Self::enumerate_surface_formats(&device.pdevice, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
             None => return Err(Error::NotSupported),
@@ -135,7 +132,7 @@ impl<'a> Swapchain<'a> {
         let present_modes = unsafe {
             surface
                 .loader
-                .get_physical_device_surface_present_modes(context.pdevice.raw, surface.raw)
+                .get_physical_device_surface_present_modes(device.pdevice.raw, surface.raw)
         }?;
 
         info!("Swapchain format: {:?}", format.format);
@@ -170,13 +167,14 @@ impl<'a> Swapchain<'a> {
             .clipped(true)
             .image_array_layers(1);
 
-        let loader = ash::khr::swapchain::Device::new(&context.instance.raw, &context.device);
+        let loader = ash::khr::swapchain::Device::new(&device.instance.raw, &device.device);
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images
             .iter()
-            .map(|image| {
-                context
+            .enumerate()
+            .map(|(index, image)| {
+                device
                     .register_image(
                         *image,
                         ImageDesc {
@@ -186,8 +184,8 @@ impl<'a> Swapchain<'a> {
                             dims: [surface_resolution.width, surface_resolution.height],
                             mip_levels: 1,
                             array_elements: 1,
+                            name: Some(format!("Swapchain image #{}", index)),
                         },
-                        ImageAspect::Color,
                     )
                     .unwrap()
             })
@@ -197,22 +195,22 @@ impl<'a> Swapchain<'a> {
         let mut rendering_finished_semaphores = ArrayVec::new();
         for index in 0..desired_image_count {
             let acquire_semaphore = unsafe {
-                context
+                device
                     .device
                     .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
             }?;
             let rendering_finished_semaphore = unsafe {
-                context
+                device
                     .device
                     .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
             }?;
-            context.set_object_name(acquire_semaphore, &format!("Acquire {index}"));
-            context.set_object_name(rendering_finished_semaphore, &format!("Finished {index}"));
+            device.set_object_name(acquire_semaphore, &format!("Acquire {index}"));
+            device.set_object_name(rendering_finished_semaphore, &format!("Finished {index}"));
             acquire_semaphores.push(acquire_semaphore);
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
         Ok(Self {
-            context,
+            device,
             raw: swapchain,
             images,
             acquire_semaphores,
@@ -295,17 +293,17 @@ impl<'a> Swapchain<'a> {
 impl<'a> Drop for Swapchain<'a> {
     fn drop(&mut self) {
         unsafe {
-            self.context.device.device_wait_idle().unwrap();
+            self.device.device.device_wait_idle().unwrap();
             self.loader.destroy_swapchain(self.raw, None);
             for semaphore in &self.acquire_semaphores {
-                self.context.device.destroy_semaphore(*semaphore, None);
+                self.device.device.destroy_semaphore(*semaphore, None);
             }
             for semaphore in &mut self.rendering_finished_semaphores {
-                self.context.device.destroy_semaphore(*semaphore, None);
+                self.device.device.destroy_semaphore(*semaphore, None);
             }
         }
         for handle in self.images.drain(..) {
-            self.context.destroy_image(handle);
+            self.device.destroy_image(handle);
         }
     }
 }

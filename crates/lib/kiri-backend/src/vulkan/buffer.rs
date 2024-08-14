@@ -18,7 +18,7 @@ use std::ptr::NonNull;
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{BufferHandle, BufferUsage, Error, RenderContext};
+use crate::{BufferHandle, BufferUsage, Error, RenderDevice};
 
 use super::{DropList, GpuMemory};
 
@@ -52,7 +52,7 @@ impl From<BufferUsage> for vk::BufferUsageFlags {
 pub(crate) struct Buffer {
     pub raw: vk::Buffer,
     pub size: u32,
-    memory: Option<GpuMemory>,
+    pub memory: Option<GpuMemory>,
 }
 
 impl Buffer {
@@ -141,17 +141,13 @@ impl<'a> BufferCreateDesc<'a> {
     }
 
     fn build(&self) -> vk::BufferCreateInfo {
-        let mut usage: vk::BufferUsageFlags = self.usage.into();
-        if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
-            usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-        }
         vk::BufferCreateInfo::default()
-            .usage(usage)
+            .usage(self.usage.into())
             .size(self.size as _)
     }
 }
 
-impl<'game> RenderContext<'game> {
+impl<'game> RenderDevice<'game> {
     pub fn create_buffer(
         &self,
         desc: BufferCreateDesc,
@@ -159,19 +155,11 @@ impl<'game> RenderContext<'game> {
     ) -> Result<BufferHandle, Error> {
         let buffer = unsafe { self.device.create_buffer(&desc.build(), None) }?;
         let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
-        let mut location = desc.memory_location;
-        if desc.usage.contains(BufferUsage::Storage) {
-            location |= gpu_alloc::UsageFlags::DEVICE_ADDRESS;
-        }
         let memory = self.allocate(requirements, desc.memory_location, desc.dedicated)?;
         unsafe {
             self.device
                 .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
         }?;
-        let address = unsafe {
-            self.device
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
-        };
         if let Some(name) = desc.name {
             self.set_object_name(buffer, name);
         }
@@ -179,16 +167,13 @@ impl<'game> RenderContext<'game> {
             self.staging.lock().upload_buffer(self, buffer, 0, data)?;
         }
         let handle = self.buffers.write().push(
-            address,
+            buffer,
             Buffer {
                 raw: buffer,
                 size: desc.size,
                 memory: Some(memory),
             },
         );
-        if desc.usage.contains(BufferUsage::Storage) {
-            self.storage_buffers_to_update.lock().insert(handle);
-        }
         Ok(handle)
     }
 
@@ -211,6 +196,8 @@ impl<'game> RenderContext<'game> {
     }
 
     pub fn destroy_buffer(&self, handle: BufferHandle) {
+        // Can't manually delete temporarty buffer
+        debug_assert!(handle != self.temp_buffer_handle);
         if let Some((_, buffer)) = self.buffers.write().remove(handle) {
             self.with_drop_list(|drop_list| {
                 buffer.free(drop_list);

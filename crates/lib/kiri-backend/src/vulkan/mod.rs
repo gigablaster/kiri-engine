@@ -14,8 +14,8 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod barrier;
+mod bind_groups;
 mod buffer;
-mod context;
 mod draw_stream;
 mod drop_list;
 mod error;
@@ -25,13 +25,14 @@ mod instance;
 mod physical_device;
 mod pipeline;
 mod program;
+mod render_device;
 mod staging;
 mod swapchain;
 
 use ash::vk;
 pub use barrier::*;
+pub use bind_groups::*;
 pub use buffer::*;
-pub use context::*;
 pub use draw_stream::*;
 use drop_list::*;
 pub use error::*;
@@ -40,13 +41,17 @@ pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
-use program::*;
+pub use program::*;
+pub use render_device::*;
 pub use swapchain::*;
 
 use crate::Format;
 
 type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+pub type GpuDescriptor = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+pub type GpuDescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
 
 impl From<Format> for vk::Format {
     fn from(value: Format) -> Self {

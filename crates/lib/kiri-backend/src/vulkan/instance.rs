@@ -21,7 +21,7 @@ use raw_window_handle::RawDisplayHandle;
 
 use crate::{Error, PhysicalDeviceType, Surface};
 
-use super::{FindSuitableDevice, RenderContext};
+use super::{FindSuitableDevice, RenderDevice};
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -169,12 +169,12 @@ impl Instance {
         &self,
         surface: &Surface,
         preferences: &[PhysicalDeviceType],
-    ) -> Result<RenderContext, Error> {
+    ) -> Result<RenderDevice, Error> {
         let physical_devices = self.enumerate_physical_devices()?;
         let optimal = physical_devices
             .find_suitable_device(surface, preferences)
             .ok_or(Error::NoSuitableDevice)?;
-        RenderContext::new(self, optimal)
+        RenderDevice::new(self, optimal)
     }
 
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {

@@ -26,7 +26,7 @@ use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
 use parking_lot::Mutex;
 
-use crate::{Error, RenderContext};
+use crate::{Error, RenderDevice};
 
 use super::{GpuAllocator, GpuMemory, Image, ImageSubresourceData};
 
@@ -153,7 +153,7 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
         target: vk::Buffer,
         offset: u32,
         data: &[T],
@@ -179,7 +179,7 @@ impl Staging {
 
     pub fn upload_image(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
         target: &Image,
         data: &[ImageSubresourceData],
     ) -> Result<(), Error> {
@@ -193,7 +193,7 @@ impl Staging {
 
     fn try_push_mip(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
         target: &Image,
         mip: u32,
         data: &ImageSubresourceData,
@@ -247,7 +247,7 @@ impl Staging {
 
     fn try_push_buffer(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
         target: vk::Buffer,
         offset: u32,
         bytes: u32,
@@ -273,14 +273,14 @@ impl Staging {
 
     pub fn upload(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
     ) -> Result<(vk::Semaphore, vk::PipelineStageFlags2), Error> {
         self.upload_impl(context, true)
     }
 
     fn upload_impl(
         &mut self,
-        context: &RenderContext,
+        context: &RenderDevice,
         client_will_wait: bool,
     ) -> Result<(vk::Semaphore, vk::PipelineStageFlags2), Error> {
         puffin::profile_function!();
@@ -335,7 +335,7 @@ impl Staging {
         Ok((render_semaphore, vk::PipelineStageFlags2::TRANSFER))
     }
 
-    pub fn execute_pending_barriers(&self, context: &RenderContext, cb: vk::CommandBuffer) {
+    pub fn execute_pending_barriers(&self, context: &RenderDevice, cb: vk::CommandBuffer) {
         let mut pending_buffer_barriers = self.pending_buffer_barriers.lock();
         let mut pending_image_barriers = self.pending_image_barriers.lock();
 
@@ -425,7 +425,7 @@ impl Staging {
         }
     }
 
-    fn barrier_after(&self, context: &RenderContext, cb: vk::CommandBuffer) {
+    fn barrier_after(&self, context: &RenderDevice, cb: vk::CommandBuffer) {
         let mut pending_buffer_barriers = self.pending_buffer_barriers.lock();
         let mut pending_image_barriers = self.pending_image_barriers.lock();
 
@@ -509,7 +509,7 @@ impl Staging {
         })
     }
 
-    pub(crate) fn free(&mut self, context: &RenderContext) {
+    pub(crate) fn free(&mut self, context: &RenderDevice) {
         self.upload_impl(context, false).unwrap();
         unsafe {
             context.device.device_wait_idle().unwrap();

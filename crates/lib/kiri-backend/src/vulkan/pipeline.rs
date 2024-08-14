@@ -21,19 +21,19 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::vk::{self};
+use ash::vk::{self, CompareOp};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    BlendFactor, BlendOp, CullMode, DepthCompareOp, Error, Format, ImageHandle, ImageLayout,
-    PhysicalDevice, PipelineHandle, ProgramHandle, RenderContext, RenderTargetLoadOp,
+    BlendFactor, BlendOp, CullMode, DepthCompareOp, Error, Format, ImageAspect, ImageHandle,
+    ImageLayout, PhysicalDevice, PipelineHandle, ProgramHandle, RenderDevice, RenderTargetLoadOp,
     RenderTargetStoreOp,
 };
 
-use super::{ImagePool, PipelineCompilationContext};
+use super::{ImagePool, ImageViewDesc, PipelineCompilationContext};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {
@@ -183,12 +183,18 @@ impl RenderTarget {
         self
     }
 
-    pub(crate) fn build(&self, images: &ImagePool) -> Result<vk::RenderingAttachmentInfo, Error> {
+    pub(crate) fn build(
+        &self,
+        device: &ash::Device,
+        images: &ImagePool,
+        aspect: ImageAspect,
+    ) -> Result<vk::RenderingAttachmentInfo, Error> {
         let view = images
-            .get(self.image)
-            .ok_or(Error::InvalidImageHandle(self.image))?;
+            .get_cold(self.image)
+            .ok_or(Error::InvalidImageHandle(self.image))?
+            .view(device, ImageViewDesc::new(aspect))?;
         let info = vk::RenderingAttachmentInfo::default()
-            .image_view(*view)
+            .image_view(view)
             .image_layout(self.layout.into())
             .load_op(self.load.into())
             .store_op(self.store.into())
@@ -267,8 +273,9 @@ impl PipelineBlendDesc {
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
-pub struct RasterPipelineCreateDesc {
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct RasterPipelineCreateDesc<'a> {
+    pub streams: &'a [InputVertexStreamDesc<'a>],
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
     /// Culling
@@ -279,7 +286,40 @@ pub struct RasterPipelineCreateDesc {
     pub depth_write: bool,
 }
 
-impl RasterPipelineCreateDesc {
+pub type InputVertexStreamAttrubute = (Format, u32, u32);
+#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct InputVertexStreamDesc<'a>(pub &'a [InputVertexStreamAttrubute]);
+
+impl<'a> InputVertexStreamDesc<'a> {
+    fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
+        let stride = self.0.iter().map(|x| x.1 + x.2).max().unwrap();
+        let attributes = self
+            .0
+            .iter()
+            .enumerate()
+            .map(|(index, attr)| vk::VertexInputAttributeDescription {
+                location: index as u32,
+                binding: binding as u32,
+                format: attr.0.into(),
+                offset: attr.1,
+            })
+            .collect();
+
+        (stride, attributes)
+    }
+}
+
+impl<'a> RasterPipelineCreateDesc<'a> {
+    pub fn new(streams: &'a [InputVertexStreamDesc<'a>]) -> Self {
+        Self {
+            streams,
+            blend: None,
+            cull: None,
+            depth_test: Some(CompareOp::LESS),
+            depth_write: true,
+        }
+    }
+
     pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
@@ -378,6 +418,38 @@ fn compile_raster_pipeline(
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
+    let streams = desc
+        .streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| stream.build(index))
+        .collect::<Vec<_>>();
+
+    let strides = streams
+        .iter()
+        .map(|(stride, _)| stride)
+        .copied()
+        .collect::<Vec<_>>();
+    let attributes = streams
+        .iter()
+        .flat_map(|(_, attributes)| attributes)
+        .copied()
+        .collect::<Vec<_>>();
+    let vertex_binding_desc = strides
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            vk::VertexInputBindingDescription::default()
+                .stride(strides[index] as _)
+                .binding(attributes[index].binding)
+                .input_rate(vk::VertexInputRate::VERTEX)
+        })
+        .collect::<Vec<_>>();
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&vertex_binding_desc)
+        .vertex_attribute_descriptions(&attributes);
+
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic_state_create_info =
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -436,6 +508,7 @@ fn compile_raster_pipeline(
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .layout(program.pipeline_layout)
         .stages(&shader_create_info)
+        .vertex_input_state(&vertex_input)
         .dynamic_state(&dynamic_state_create_info)
         .viewport_state(&viewport_state)
         .multisample_state(&multisample_state)
@@ -456,7 +529,7 @@ fn compile_raster_pipeline(
     Ok((pipeline, program.pipeline_layout()))
 }
 
-impl<'game> RenderContext<'game> {
+impl<'game> RenderDevice<'game> {
     /// Create pipeline
     ///
     /// Pipeline will be compiled right before next frame
@@ -464,7 +537,7 @@ impl<'game> RenderContext<'game> {
         &self,
         program: ProgramHandle,
         pass_layout: &RenderPassLayout<'static>,
-        desc: RasterPipelineCreateDesc,
+        desc: &RasterPipelineCreateDesc<'static>,
     ) -> PipelineHandle {
         let handle = {
             let mut pipelines = self.pipelines.write();
@@ -474,7 +547,7 @@ impl<'game> RenderContext<'game> {
         };
         self.pipelines_to_compile
             .lock()
-            .insert(handle, (program, *pass_layout, desc));
+            .insert(handle, (program, *pass_layout, *desc));
         handle
     }
 
@@ -483,10 +556,10 @@ impl<'game> RenderContext<'game> {
         handle: PipelineHandle,
         program: ProgramHandle,
         pass: &RenderPassLayout<'static>,
-        desc: RasterPipelineCreateDesc,
+        desc: &RasterPipelineCreateDesc<'static>,
         cache: vk::PipelineCache,
     ) -> Result<(PipelineHandle, vk::Pipeline, vk::PipelineLayout), Error> {
-        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, &desc, cache)?;
+        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, desc, cache)?;
         Ok((handle, pipeline, layout))
     }
 
@@ -504,12 +577,7 @@ impl<'game> RenderContext<'game> {
                 .iter()
                 .for_each(|(handle, (program, pass, desc))| {
                     s.spawn(Self::compile_pipeline(
-                        &context,
-                        *handle,
-                        *program,
-                        pass,
-                        desc.clone(),
-                        self.cache,
+                        &context, *handle, *program, pass, desc, self.cache,
                     ))
                 })
         });

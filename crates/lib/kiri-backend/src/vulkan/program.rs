@@ -17,21 +17,39 @@ use std::{
     collections::{BTreeMap, HashMap},
     ffi::{CStr, CString},
     slice,
+    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
+use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
-use crate::{Error, ProgramHandle, ShaderStage};
+use crate::{BindType, Error, ProgramHandle, ShaderStage};
 
-use super::{RenderContext, SamplerDesc};
+use super::{RenderDevice, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 32;
-pub(crate) const BINDLESS_BINDING_SLOT: usize = 0;
-pub(crate) const DYNAMIC_BINDING_SLOT: usize = 3;
+pub const FRAME_BINDING_SLOT: usize = 0;
+pub const OBJECT_BINDING_SLOT: usize = 1;
+pub const MATERIAL_BINDING_SLOT: usize = 2;
+pub const DYNAMIC_BINDING_SLOT: usize = 3;
 pub(crate) const MAX_DESCRIPTOR_SETS: usize = 4;
+
+impl From<BindType> for vk::DescriptorType {
+    fn from(value: BindType) -> Self {
+        match value {
+            BindType::Uniform => vk::DescriptorType::UNIFORM_BUFFER,
+            BindType::DynamicUniform => vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            BindType::Storage => vk::DescriptorType::STORAGE_BUFFER,
+            BindType::DynamicStorage => vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            BindType::SampledImage => vk::DescriptorType::SAMPLED_IMAGE,
+            BindType::CombinedSampledImage => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            BindType::Sampler => vk::DescriptorType::SAMPLER,
+        }
+    }
+}
 
 impl From<ShaderStage> for vk::ShaderStageFlags {
     fn from(value: ShaderStage) -> Self {
@@ -50,104 +68,131 @@ impl From<ShaderStage> for vk::ShaderStageFlags {
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct DescriptorBindingDesc<'a> {
+pub struct BindGroupSlotDesc<'a> {
     pub name: &'a str,
     pub slot: u32,
-    pub ty: vk::DescriptorType,
+    pub ty: BindType,
     pub count: u32,
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct DescriptorSetLayoutDesc<'a> {
-    pub bindless: bool,
+pub struct BindGroupDesc<'a> {
     pub stage: vk::ShaderStageFlags,
-    pub set: &'a [DescriptorBindingDesc<'a>],
+    pub set: &'a [BindGroupSlotDesc<'a>],
 }
 
-impl<'a> DescriptorSetLayoutDesc<'a> {
+impl<'a> BindGroupDesc<'a> {
     pub fn to_pool_size(self, count: u32) -> Vec<vk::DescriptorPoolSize> {
         self.set
             .iter()
             .map(|x| {
                 vk::DescriptorPoolSize::default()
-                    .ty(x.ty)
+                    .ty(x.ty.into())
                     .descriptor_count(x.count * count)
             })
             .collect::<Vec<_>>()
     }
 }
 
-type ReflectedDescriptorSet = HashMap<usize, (String, vk::DescriptorType, u32)>;
+type ReflectedDescriptorSet = HashMap<usize, (String, BindType, u32)>;
 type RelfectedDescriptorSetLayout = HashMap<usize, ReflectedDescriptorSet>;
+
+#[derive(Debug)]
+pub(crate) struct DescriptorSetLayout {
+    pub raw: vk::DescriptorSetLayout,
+    pub count: DescriptorTotalCount,
+    pub types: HashMap<usize, vk::DescriptorType>,
+    pub names: HashMap<String, usize>,
+}
+
+impl DescriptorSetLayout {
+    pub fn free(&self, device: &ash::Device) {
+        unsafe { device.destroy_descriptor_set_layout(self.raw, None) }
+    }
+}
 
 pub(crate) fn create_descriptor_set_layout(
     device: &ash::Device,
     immutable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
-    set: &DescriptorSetLayoutDesc,
-) -> Result<vk::DescriptorSetLayout, Error> {
+    set: &BindGroupDesc,
+) -> Result<Arc<DescriptorSetLayout>, Error> {
     let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
     let mut bindings = HashMap::with_capacity(set.set.len());
-    let mut flags = Vec::with_capacity(set.set.len());
     for binding in set.set.iter() {
         match binding.ty {
-            vk::DescriptorType::UNIFORM_BUFFER
-            | vk::DescriptorType::STORAGE_BUFFER
-            | vk::DescriptorType::STORAGE_IMAGE
-            | vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-            | vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-            | vk::DescriptorType::SAMPLED_IMAGE => {
+            BindType::Uniform
+            | BindType::Storage
+            | BindType::DynamicUniform
+            | BindType::DynamicStorage
+            | BindType::SampledImage => {
                 bindings.insert(binding.slot, create_binding(set.stage, binding));
             }
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
+            BindType::CombinedSampledImage | BindType::Sampler => {
                 let sampler = immutable_samplers
                     .get(&get_suitable_sampler_desc(binding.name))
                     .unwrap();
                 samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
+                if binding.ty == BindType::CombinedSampledImage {
+                    bindings.insert(binding.slot, create_binding(set.stage, binding));
+                }
             }
-            _ => panic!("Not yet implemented {:?}", binding.ty),
         };
+    }
+    let mut count = DescriptorTotalCount::default();
+    for binding in bindings.values() {
+        match binding.descriptor_type {
+            vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += binding.descriptor_count,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+                count.uniform_buffer_dynamic += binding.descriptor_count
+            }
+            vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += binding.descriptor_count,
+            vk::DescriptorType::STORAGE_IMAGE => count.storage_image += binding.descriptor_count,
+            vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += binding.descriptor_count,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                count.combined_image_sampler += binding.descriptor_count
+            }
+            vk::DescriptorType::SAMPLER => count.sampler += binding.descriptor_count,
+            _ => panic!(),
+        }
     }
     for (sampler, slot, count, ty, stage) in &samplers {
         let layout_biding = vk::DescriptorSetLayoutBinding::default()
             .binding(*slot as _)
             .descriptor_count(*count as _)
-            .descriptor_type(*ty)
+            .descriptor_type((*ty).into())
             .stage_flags(*stage)
             .immutable_samplers(slice::from_ref(sampler));
-        flags.push(
-            vk::DescriptorBindingFlags::PARTIALLY_BOUND
-                | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
-        );
         bindings.insert(*slot, layout_biding);
     }
 
     let layout = bindings.values().copied().collect::<Vec<_>>();
-    let mut types = HashMap::with_capacity(set.set.len());
-    bindings.into_iter().for_each(|(index, binding)| {
-        types.insert(index, binding.descriptor_type);
-    });
-    let mut layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout);
-    let mut binding_flags =
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
-    binding_flags.binding_count = flags.len() as u32;
-    if set.bindless {
-        layout_create_info = layout_create_info
-            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-            .push_next(&mut binding_flags);
-    }
-
+    let types = bindings
+        .iter()
+        .map(|(index, binding)| (*index as usize, binding.descriptor_type))
+        .collect::<HashMap<_, _>>();
+    let names = set
+        .set
+        .iter()
+        .map(|x| (x.name.to_owned(), x.slot as usize))
+        .collect::<HashMap<_, _>>();
+    let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout);
     let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
 
-    Ok(layout)
+    Ok(Arc::new(DescriptorSetLayout {
+        raw: layout,
+        count,
+        types,
+        names,
+    }))
 }
 
 fn create_binding<'a>(
     stage: vk::ShaderStageFlags,
-    binding: &'a DescriptorBindingDesc,
+    binding: &'a BindGroupSlotDesc,
 ) -> vk::DescriptorSetLayoutBinding<'a> {
     vk::DescriptorSetLayoutBinding::default()
         .binding(binding.slot as _)
-        .descriptor_type(binding.ty)
+        .descriptor_type(binding.ty.into())
         .descriptor_count(binding.count)
         .stage_flags(stage)
 }
@@ -303,31 +348,22 @@ impl Shader {
                 return Err(Error::ArrayBindingsArentSupported);
             }
             let ty = match info.ty {
-                rspirv_reflect::DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
-                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => vk::DescriptorType::SAMPLED_IMAGE,
+                rspirv_reflect::DescriptorType::SAMPLER => BindType::Sampler,
+                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => BindType::SampledImage,
 
                 rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
-                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+                    BindType::DynamicStorage
                 }
                 rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
-                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+                    BindType::DynamicUniform
                 }
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
-                    vk::DescriptorType::STORAGE_BUFFER
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
-                    vk::DescriptorType::UNIFORM_BUFFER
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                }
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                }
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER => BindType::Storage,
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER => BindType::Uniform,
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => BindType::DynamicUniform,
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => BindType::DynamicStorage,
                 rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                    BindType::CombinedSampledImage
                 }
-                rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
                 _ => panic!("Not supported {}", info.ty.0),
             };
             let count = match info.binding_count {
@@ -348,12 +384,12 @@ impl Shader {
 #[derive(Debug)]
 pub(crate) struct Program {
     pub(crate) shaders: Vec<Shader>,
-    layouts: Vec<vk::DescriptorSetLayout>,
+    pub(crate) layouts: Vec<Arc<DescriptorSetLayout>>,
     pub(crate) pipeline_layout: vk::PipelineLayout,
 }
 
 impl Program {
-    pub fn new(context: &RenderContext, shaders: &[ShaderDesc]) -> Result<Self, Error> {
+    pub fn new(context: &RenderDevice, shaders: &[ShaderDesc]) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
         let shaders = shaders
             .iter()
@@ -368,26 +404,28 @@ impl Program {
         layout.sort_by_key(|(index, _)| *index);
         let layouts = layout
             .iter()
-            .enumerate()
-            .map(|(index, (_, set))| {
+            .map(|(_, set)| {
                 let descs = set
                     .iter()
-                    .map(|(index, desc)| DescriptorBindingDesc {
+                    .map(|(index, desc)| BindGroupSlotDesc {
                         name: &desc.0,
                         slot: *index as u32,
                         ty: desc.1,
                         count: desc.2,
                     })
                     .collect::<Vec<_>>();
-                let desc = DescriptorSetLayoutDesc {
-                    bindless: index == BINDLESS_BINDING_SLOT,
+                let desc = BindGroupDesc {
                     stage: stages,
                     set: &descs,
                 };
                 create_descriptor_set_layout(&context.device, &context.samplers, &desc).unwrap()
             })
             .collect::<Vec<_>>();
-        let layout_desc = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
+        let vk_layouts = layouts
+            .iter()
+            .map(|x| x.raw)
+            .collect::<ArrayVec<_, MAX_DESCRIPTOR_SETS>>();
+        let layout_desc = vk::PipelineLayoutCreateInfo::default().set_layouts(&vk_layouts);
         let pipeline_layout = unsafe { context.device.create_pipeline_layout(&layout_desc, None) }?;
 
         Ok(Self {
@@ -433,13 +471,11 @@ impl Program {
     pub fn free(self, device: &ash::Device) {
         self.shaders.iter().for_each(|shader| shader.free(device));
         unsafe { device.destroy_pipeline_layout(self.pipeline_layout, None) };
-        self.layouts
-            .iter()
-            .for_each(|x| unsafe { device.destroy_descriptor_set_layout(*x, None) });
+        self.layouts.into_iter().for_each(|x| x.free(device));
     }
 }
 
-impl<'game> RenderContext<'game> {
+impl<'game> RenderDevice<'game> {
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
         let program = Program::new(self, shaders)?;
         let mut programs = self.programs.write();
@@ -451,7 +487,7 @@ impl<'game> RenderContext<'game> {
 
 #[cfg(test)]
 mod test {
-    use ash::vk;
+    use crate::BindType;
 
     use super::Program;
 
@@ -460,22 +496,16 @@ mod test {
     #[test]
     fn merge_refected_layouts() {
         let mut set1 = ReflectedDescriptorSet::new();
-        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE, 1));
-        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER, 1));
+        set1.insert(0, ("shared1".into(), BindType::SampledImage, 1));
+        set1.insert(1, ("shared2".into(), BindType::Uniform, 1));
         let mut set2 = ReflectedDescriptorSet::new();
-        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
+        set2.insert(0, ("set_a".into(), BindType::Storage, 1));
         let mut set3 = ReflectedDescriptorSet::new();
-        set3.insert(
-            1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
-        );
+        set3.insert(1, ("set_b".into(), BindType::DynamicStorage, 1));
 
         let mut combined = ReflectedDescriptorSet::new();
-        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
-        combined.insert(
-            1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
-        );
+        combined.insert(0, ("set_a".into(), BindType::Storage, 1));
+        combined.insert(1, ("set_b".into(), BindType::DynamicStorage, 1));
 
         let mut a = RelfectedDescriptorSetLayout::new();
         a.insert(0, set1.clone());

@@ -13,16 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use ash::vk;
+use parking_lot::Mutex;
 
 use crate::{
     Format, ImageAspect, ImageHandle, ImageLayout, ImageMultisampling, ImageType, ImageUsage,
-    ImageViewType, RenderContext,
+    ImageViewType, RenderDevice,
 };
 
 use super::{error::Error, DropList, GpuMemory};
 
-#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub dims: [u32; 2],
     pub ty: ImageType,
@@ -30,6 +33,7 @@ pub struct ImageDesc {
     pub format: Format,
     pub mip_levels: u32,
     pub array_elements: u32,
+    pub name: Option<String>,
 }
 
 impl From<ImageType> for vk::ImageType {
@@ -72,8 +76,8 @@ impl From<ImageUsage> for vk::ImageUsageFlags {
         if value.contains(ImageUsage::TransferDestination) {
             result |= vk::ImageUsageFlags::TRANSFER_DST;
         }
-        if value.contains(ImageUsage::Source) {
-            result |= vk::ImageUsageFlags::TRANSFER_DST;
+        if value.contains(ImageUsage::TransferSource) {
+            result |= vk::ImageUsageFlags::TRANSFER_SRC;
         }
         result
     }
@@ -169,8 +173,8 @@ impl From<ImageLayout> for vk::ImageLayout {
             ImageLayout::ColorTarget => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilTarget => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilRead => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-            ImageLayout::Destination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            ImageLayout::Source => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ImageLayout::TransferDestination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::TransferSource => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         }
     }
 }
@@ -351,6 +355,7 @@ pub(crate) struct Image {
     pub raw: vk::Image,
     pub desc: ImageDesc,
     memory: Option<GpuMemory>,
+    views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 impl Image {
@@ -359,10 +364,11 @@ impl Image {
             raw: image,
             desc,
             memory: None,
+            views: Default::default(),
         }
     }
 
-    pub fn new(context: &RenderContext, desc: ImageCreateDesc) -> Result<Self, Error> {
+    pub fn new(context: &RenderDevice, desc: ImageCreateDesc) -> Result<Self, Error> {
         let image = unsafe { context.device.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             context.set_object_name(image, name);
@@ -390,8 +396,10 @@ impl Image {
                 format: desc.format,
                 mip_levels: desc.mip_levels as u32,
                 array_elements: desc.array_elements as u32,
+                name: desc.name.map(|x| x.to_owned()),
             },
             memory: Some(memory),
+            views: Default::default(),
         })
     }
 
@@ -400,6 +408,14 @@ impl Image {
             drop_list.drop_memory(memory);
             drop_list.drop_image(self.raw);
         }
+        self.clear_views(drop_list);
+    }
+
+    pub(crate) fn clear_views(self, drop_list: &mut DropList) {
+        self.views
+            .lock()
+            .drain()
+            .for_each(|(_, view)| drop_list.drop_view(view))
     }
 
     pub(crate) fn subresource(&self, aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
@@ -410,53 +426,65 @@ impl Image {
             .layer_count(self.desc.array_elements)
             .level_count(self.desc.mip_levels)
     }
+
+    pub(crate) fn view(
+        &self,
+        device: &ash::Device,
+        desc: ImageViewDesc,
+    ) -> Result<vk::ImageView, Error> {
+        let mut views = self.views.lock();
+        if let Some(view) = views.get(&desc) {
+            Ok(*view)
+        } else {
+            let view = self.create_view(device, desc)?;
+            views.insert(desc, view);
+            Ok(view)
+        }
+    }
+
+    fn create_view(
+        &self,
+        device: &ash::Device,
+        desc: ImageViewDesc,
+    ) -> Result<vk::ImageView, Error> {
+        let create_info = desc.build(self);
+        let view = unsafe { device.create_image_view(&create_info, None) }?;
+        Ok(view)
+    }
 }
 
-impl<'game> RenderContext<'game> {
+impl<'game> RenderDevice<'game> {
     pub fn create_image(
         &self,
         desc: ImageCreateDesc,
-        aspect: ImageAspect,
         data: Option<&[ImageSubresourceData]>,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(self, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(self, &image, data)?;
         }
-        self.insert_image(image, aspect)
+        self.insert_image(image)
     }
 
     pub fn update_image(
         &self,
         handle: ImageHandle,
         desc: ImageCreateDesc,
-        aspect: ImageAspect,
         data: Option<&[ImageSubresourceData]>,
     ) -> Result<(), Error> {
         let image = Image::new(self, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(self, &image, data)?;
         }
-        let view = unsafe {
-            self.device
-                .create_image_view(&ImageViewDesc::new(aspect).build(&image), None)
-        }?;
-        let desc = image.desc;
-        let (old_view, old_image) = self
+        let (_, old_image) = self
             .images
             .write()
-            .replace_hot_cold(handle, view, image)
+            .replace_hot_cold(handle, image.raw, image)
             .ok_or(Error::InvalidImageHandle(handle))?;
         self.with_drop_list(|drop_list| {
-            drop_list.drop_view(old_view);
             old_image.free(drop_list);
         });
-        if desc.usage.contains(ImageUsage::Sampled) {
-            self.sampled_images_to_update.lock().insert(handle);
-        }
-        if desc.usage.contains(ImageUsage::Storage) {
-            self.storage_images_to_update.lock().insert(handle);
-        }
+        self.image_updated(handle);
         Ok(())
     }
 
@@ -464,32 +492,22 @@ impl<'game> RenderContext<'game> {
         &self,
         image: vk::Image,
         desc: ImageDesc,
-        aspect: ImageAspect,
     ) -> Result<ImageHandle, Error> {
+        if let Some(name) = &desc.name {
+            self.set_object_name(image, name);
+        }
         let image = Image::internal(image, desc);
-        self.insert_image(image, aspect)
+        self.insert_image(image)
     }
 
-    fn insert_image(&self, image: Image, aspect: ImageAspect) -> Result<ImageHandle, Error> {
-        let view = unsafe {
-            self.device
-                .create_image_view(&ImageViewDesc::new(aspect).build(&image), None)
-        }?;
-        let desc = image.desc;
-        let handle = self.images.write().push(view, image);
-        if desc.usage.contains(ImageUsage::Sampled) {
-            self.sampled_images_to_update.lock().insert(handle);
-        }
-        if desc.usage.contains(ImageUsage::Storage) {
-            self.storage_images_to_update.lock().insert(handle);
-        }
+    fn insert_image(&self, image: Image) -> Result<ImageHandle, Error> {
+        let handle = self.images.write().push(image.raw, image);
         Ok(handle)
     }
 
     pub fn destroy_image(&self, handle: ImageHandle) {
-        if let Some((view, image)) = self.images.write().remove(handle) {
+        if let Some((_, image)) = self.images.write().remove(handle) {
             self.with_drop_list(|drop_list| {
-                drop_list.drop_view(view);
                 image.free(drop_list);
             })
         }

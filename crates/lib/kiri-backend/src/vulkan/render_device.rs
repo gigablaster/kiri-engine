@@ -23,10 +23,12 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, DescriptorBufferInfo, DescriptorImageInfo, WriteDescriptorSet};
+use ash::vk::{self};
 use directories::ProjectDirs;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy, TempList, MAX_POOL_INDEX};
+use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
+use gpu_descriptor_ash::AshDescriptorDevice;
+use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy};
 use log::error;
 use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
@@ -37,18 +39,23 @@ use crate::{
         AcquiredSurface, Buffer, DrawStreamExecuteContext, FrameRecorder, MAX_ATTACHMENTS,
         MAX_COLOR_ATTACHMENTS,
     },
-    Error, Instance, RasterPipelineCreateDesc, Swapchain,
+    Error, ImageAspect, Instance, RasterPipelineCreateDesc, Swapchain,
 };
 
 use super::{
     create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
     load_or_create_pipeline_cache, physical_device::PhysicalDevice, save_pipeline_cache,
-    staging::Staging, DescriptorBindingDesc, DescriptorSetLayoutDesc, GpuAllocator, GpuMemory,
-    Program, RenderPassLayout, SwapchainImage,
+    staging::Staging, BindGroupData, BindGroupDesc, DescriptorSetLayout, GpuAllocator,
+    GpuDescriptor, GpuDescriptorAllocator, GpuMemory, Program, RenderPassLayout, SwapchainImage,
+    Uniforms, TEMP_BUFFER_SIZE, UNIFORM_BUFFER_SIZE,
 };
 
-pub type ImageHandle = Handle<vk::ImageView>;
-pub type BufferHandle = Handle<vk::DeviceAddress>;
+pub type ImageHandle = Handle<vk::Image>;
+pub type BufferHandle = Handle<vk::Buffer>;
+pub type BindGroupHandle = Handle<vk::DescriptorSet>;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferSlice(pub BufferHandle, pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
@@ -62,11 +69,12 @@ impl Default for PipelineHandle {
     }
 }
 
-pub(crate) type ImagePool = HotColdPool<vk::ImageView, Image, SentinelPoolStrategy<vk::ImageView>>;
-pub(crate) type BufferPool =
-    HotColdPool<vk::DeviceAddress, Buffer, SentinelPoolStrategy<vk::DeviceAddress>>;
+pub(crate) type ImagePool = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;
+pub(crate) type BufferPool = HotColdPool<vk::Buffer, Buffer, SentinelPoolStrategy<vk::Buffer>>;
 pub(crate) type ProgramPool = Vec<Program>;
 pub(crate) type PipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
+pub(crate) type BindGroupPool =
+    HotColdPool<vk::DescriptorSet, BindGroupData, SentinelPoolStrategy<vk::DescriptorSet>>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -81,12 +89,18 @@ pub enum FrameState {
     NeedRecreateSwapchain,
 }
 
-pub struct RenderContext<'game> {
+const EMPTY_BIND_GROUP: BindGroupDesc = BindGroupDesc {
+    stage: vk::ShaderStageFlags::ALL_GRAPHICS,
+    set: &[],
+};
+
+pub struct RenderDevice<'game> {
     pub(crate) instance: &'game Instance,
     pub(crate) pdevice: PhysicalDevice,
     pub(crate) device: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
     memory_allocator: Mutex<GpuAllocator>,
+    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     current_drop_list: Mutex<DropList>,
     pub(crate) images: RwLock<ImagePool>,
     pub(crate) buffers: RwLock<BufferPool>,
@@ -98,7 +112,7 @@ pub struct RenderContext<'game> {
             (
                 ProgramHandle,
                 RenderPassLayout<'static>,
-                RasterPipelineCreateDesc,
+                RasterPipelineCreateDesc<'static>,
             ),
         >,
     >,
@@ -109,97 +123,23 @@ pub struct RenderContext<'game> {
     pub(crate) universal_queue_index: u32,
     pub(crate) transfer_queue_index: u32,
     pub(crate) staging: Mutex<Staging>,
-    bindless_layout: vk::DescriptorSetLayout,
-    bindless_pool: vk::DescriptorPool,
-    bindless_ds: vk::DescriptorSet,
-    sampler_layout: vk::DescriptorSetLayout,
-    sampler_pool: vk::DescriptorPool,
-    sampler_ds: vk::DescriptorSet,
-    pub(crate) sampled_images_to_update: Mutex<HashSet<ImageHandle>>,
-    pub(crate) storage_images_to_update: Mutex<HashSet<ImageHandle>>,
-    pub(crate) storage_buffers_to_update: Mutex<HashSet<BufferHandle>>,
     pub(crate) cache: vk::PipelineCache,
+    pub(crate) temp_buffer_handle: BufferHandle,
+    pub(crate) temp_buffer: vk::Buffer,
+    pub(crate) bind_groups: Mutex<BindGroupPool>,
+    pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
+    pub(crate) uniforms: Mutex<Uniforms>,
+    pub(crate) layouts: Mutex<HashMap<BindGroupDesc<'static>, Arc<DescriptorSetLayout>>>,
+    empty: Option<GpuDescriptor>,
 }
 
-impl<'game> Debug for RenderContext<'game> {
+impl<'game> Debug for RenderDevice<'game> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
     }
 }
 
-const SAMPLED_IMAGES_SLOT: u32 = 0;
-const STORAGE_IMAGES_SLOT: u32 = 1;
-const STORAGE_BUFFERS_SLOT: u32 = 2;
-
-const BINDLESS_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    bindless: true,
-    stage: vk::ShaderStageFlags::ALL,
-    set: &[
-        DescriptorBindingDesc {
-            name: "sampled_images",
-            slot: SAMPLED_IMAGES_SLOT,
-            ty: vk::DescriptorType::SAMPLED_IMAGE,
-            count: MAX_POOL_INDEX,
-        },
-        DescriptorBindingDesc {
-            name: "storage_images",
-            slot: STORAGE_IMAGES_SLOT,
-            ty: vk::DescriptorType::STORAGE_IMAGE,
-            count: MAX_POOL_INDEX,
-        },
-        DescriptorBindingDesc {
-            name: "storage_buffers",
-            slot: STORAGE_BUFFERS_SLOT,
-            ty: vk::DescriptorType::STORAGE_BUFFER,
-            count: MAX_POOL_INDEX,
-        },
-    ],
-};
-
-const SAMPLER_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    bindless: false,
-    stage: vk::ShaderStageFlags::FRAGMENT,
-    set: &[
-        DescriptorBindingDesc {
-            name: "sampler_lr",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-        DescriptorBindingDesc {
-            name: "sampler_lb",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-        DescriptorBindingDesc {
-            name: "sampler_lm",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-        DescriptorBindingDesc {
-            name: "sampler_nr",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-        DescriptorBindingDesc {
-            name: "sampler_nb",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-        DescriptorBindingDesc {
-            name: "sampler_nm",
-            slot: 0,
-            ty: vk::DescriptorType::SAMPLER,
-            count: 1,
-        },
-    ],
-};
-
-impl<'game> RenderContext<'game> {
+impl<'game> RenderDevice<'game> {
     pub(crate) fn new(instance: &'game Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(Error::NoSuitableDevice);
@@ -249,22 +189,12 @@ impl<'game> RenderContext<'game> {
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
         let mut synchronization2 =
             vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
-        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
-            .runtime_descriptor_array(true)
-            .descriptor_binding_partially_bound(true)
-            .shader_storage_buffer_array_non_uniform_indexing(true)
-            .shader_sampled_image_array_non_uniform_indexing(true)
-            .shader_storage_image_array_non_uniform_indexing(true)
-            .descriptor_binding_storage_buffer_update_after_bind(true)
-            .descriptor_binding_storage_image_update_after_bind(true)
-            .descriptor_binding_sampled_image_update_after_bind(true);
         let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
         let mut buffer_device_address =
             vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
         let mut features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut dynamic_rendering)
             .push_next(&mut synchronization2)
-            .push_next(&mut descriptor_indexing)
             .push_next(&mut maintenance4)
             .push_next(&mut buffer_device_address)
             .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
@@ -298,19 +228,46 @@ impl<'game> RenderContext<'game> {
         let allocator_props =
             unsafe { device_properties(instance.get(), Instance::vulkan_version(), pdevice.raw) }?;
         let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
+        let temp_buffer_info = vk::BufferCreateInfo::default()
+            .size((TEMP_BUFFER_SIZE * 2) as _)
+            .usage(
+                vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::UNIFORM_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+            );
+        let temp_buffer = unsafe { device.create_buffer(&temp_buffer_info, None) }?;
+        let temp_buffer_requirements =
+            unsafe { device.get_buffer_memory_requirements(temp_buffer) };
+        let mut temp_memory = Self::allocate_impl(
+            &device,
+            &mut memory_allocator,
+            temp_buffer_requirements,
+            gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS | gpu_alloc::UsageFlags::HOST_ACCESS,
+            true,
+        )?;
+        let temp_map = unsafe {
+            temp_memory.map(
+                AshMemoryDevice::wrap(&device),
+                0,
+                (TEMP_BUFFER_SIZE * 2) as _,
+            )
+        }?;
 
         let frames = [
             Mutex::new(Arc::new(Frame::new(
                 &device,
                 &pdevice,
-                &mut memory_allocator,
                 universal_queue_index,
+                temp_map,
+                0,
             )?)),
             Mutex::new(Arc::new(Frame::new(
                 &device,
                 &pdevice,
-                &mut memory_allocator,
                 universal_queue_index,
+                temp_map,
+                TEMP_BUFFER_SIZE,
             )?)),
         ];
 
@@ -327,45 +284,50 @@ impl<'game> RenderContext<'game> {
             &mut memory_allocator,
         )?);
         let samplers = Self::generate_samplers(&device);
-        let bindless_layout = create_descriptor_set_layout(&device, &samplers, &BINDLESS_SET)?;
-        let sampler_layout = create_descriptor_set_layout(&device, &samplers, &SAMPLER_SET)?;
-
-        let sizes = BINDLESS_SET.to_pool_size(1);
-        let pool_create_info = vk::DescriptorPoolCreateInfo::default()
-            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
-            .max_sets(1)
-            .pool_sizes(&sizes);
-        let bindless_pool = unsafe { device.create_descriptor_pool(&pool_create_info, None) }?;
-        let sizes = SAMPLER_SET.to_pool_size(1);
-        let pool_create_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(1)
-            .pool_sizes(&sizes);
-        let sampler_pool = unsafe { device.create_descriptor_pool(&pool_create_info, None) }?;
-
-        let layouts = [bindless_layout];
-        let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(bindless_pool)
-            .set_layouts(&layouts);
-        allocate_info.descriptor_set_count = 1;
-        let bindless_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
-        let layouts = [sampler_layout];
-        let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(sampler_pool)
-            .set_layouts(&layouts);
-        allocate_info.descriptor_set_count = 1;
-        let sampler_ds = unsafe { device.allocate_descriptor_sets(&allocate_info) }?.remove(0);
 
         let cache = if let Some(path) = Self::get_pipelines_path(instance) {
             load_or_create_pipeline_cache(&device, &pdevice, &path)?
         } else {
             vk::PipelineCache::null()
         };
+
+        let mut descriptor_allocator = GpuDescriptorAllocator::new(0);
+        let mut buffers = BufferPool::default();
+        let temp_buffer_handle = buffers.push(
+            temp_buffer,
+            Buffer {
+                raw: temp_buffer,
+                size: TEMP_BUFFER_SIZE * 2,
+                memory: Some(temp_memory),
+            },
+        );
+
+        let uniforms = Uniforms::new(
+            &device,
+            UNIFORM_BUFFER_SIZE as _,
+            &mut memory_allocator,
+            &pdevice,
+        )?;
+        let empty_layout = create_descriptor_set_layout(&device, &samplers, &EMPTY_BIND_GROUP)?;
+        let mut layouts = HashMap::default();
+        layouts.insert(EMPTY_BIND_GROUP, empty_layout.clone());
+        let empty = unsafe {
+            descriptor_allocator.allocate(
+                AshDescriptorDevice::wrap(&device),
+                &empty_layout.raw,
+                DescriptorSetLayoutCreateFlags::empty(),
+                &DescriptorTotalCount::default(),
+                1,
+            )
+        }?
+        .remove(0);
         Ok(Self {
             staging,
             instance,
             samplers,
             pdevice,
             memory_allocator: Mutex::new(memory_allocator),
+            descriptor_allocator: Mutex::new(descriptor_allocator),
             universal_queue,
             transfer_queue,
             frames,
@@ -375,20 +337,18 @@ impl<'game> RenderContext<'game> {
             transfer_queue_index,
             debug,
             images: Default::default(),
-            buffers: Default::default(),
+            buffers: RwLock::new(buffers),
             programs: Default::default(),
             pipelines: Default::default(),
             pipelines_to_compile: Default::default(),
-            bindless_layout,
-            bindless_pool,
-            bindless_ds,
-            sampler_layout,
-            sampler_pool,
-            sampler_ds,
-            sampled_images_to_update: Default::default(),
-            storage_images_to_update: Default::default(),
-            storage_buffers_to_update: Default::default(),
             cache,
+            temp_buffer,
+            temp_buffer_handle,
+            bind_groups: Default::default(),
+            dirty_bind_groups: Default::default(),
+            layouts: Mutex::new(layouts),
+            uniforms: Mutex::new(uniforms),
+            empty: Some(empty),
         })
     }
 
@@ -486,11 +446,20 @@ impl<'game> RenderContext<'game> {
         }?)
     }
 
-    pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
+    pub(crate) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
     }
 
-    pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
+    pub(crate) fn with_descriptor_allocator<
+        CB: FnOnce(&mut GpuDescriptorAllocator) -> Result<(), Error>,
+    >(
+        &self,
+        cb: CB,
+    ) -> Result<(), Error> {
+        cb(&mut self.descriptor_allocator.lock())
+    }
+
+    pub(crate) fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
         if let Some(debug_utils) = &self.debug {
             let name = CString::new(name.as_ref()).unwrap();
             let name_info = vk::DebugUtilsObjectNameInfoEXT::default()
@@ -562,7 +531,12 @@ impl<'game> RenderContext<'game> {
                 self.device
                     .wait_for_fences(slice::from_ref(&frame.fence), true, u64::MAX)?
             };
-            frame.reset(&self.device, &mut self.memory_allocator.lock())?;
+            frame.reset(
+                &self.device,
+                &mut self.memory_allocator.lock(),
+                &mut self.descriptor_allocator.lock(),
+                &mut self.uniforms.lock(),
+            )?;
         }
         Ok(frame.clone())
     }
@@ -597,15 +571,18 @@ impl<'game> RenderContext<'game> {
                 frame: &frame,
                 passes: Default::default(),
                 backbuffer: target.image,
+                temp_buffer: self.temp_buffer_handle,
             };
             f(&mut context)?;
             context.finish()
         };
-        self.update_descriptors();
+        self.update_descriptors()?;
         {
             let mut staging = self.staging.lock();
             let upload = staging.upload(self)?;
             let images = self.images.read();
+            let bind_groups = self.bind_groups.lock();
+            let buffers = self.buffers.read();
             bevy_tasks::block_on(compile_pipelines)?;
             unsafe {
                 self.device
@@ -630,9 +607,13 @@ impl<'game> RenderContext<'game> {
                 let color_attachments = pass
                     .color
                     .iter()
-                    .map(|x| x.build(&images).unwrap())
+                    .map(|x| x.build(&self.device, &images, ImageAspect::Color).unwrap())
                     .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-                let depth_attachment = pass.depth.iter().map(|x| x.build(&images).unwrap()).next();
+                let depth_attachment = pass
+                    .depth
+                    .iter()
+                    .map(|x| x.build(&self.device, &images, ImageAspect::Depth).unwrap())
+                    .next();
                 let render_area = vk::Rect2D {
                     offset: vk::Offset2D::default(),
                     extent: vk::Extent2D {
@@ -666,7 +647,9 @@ impl<'game> RenderContext<'game> {
                         device: &self.device,
                         cb: frame.cb,
                         pipelines: &pipelines,
-                        descriptors: &[self.bindless_ds, self.sampler_ds],
+                        empty: *self.empty.as_ref().unwrap().raw(),
+                        bind_groups: &bind_groups,
+                        buffers: &buffers,
                     })
                 })?;
                 unsafe { self.device.cmd_end_rendering(frame.cb) };
@@ -715,106 +698,41 @@ impl<'game> RenderContext<'game> {
             Err(err) => panic!("Can't present image: {}", err),
         }
     }
-
-    fn update_descriptors(&self) {
-        puffin::profile_function!();
-        let images = self.images.read();
-        let buffers = self.buffers.read();
-        let sampled_images = self
-            .sampled_images_to_update
-            .lock()
-            .drain()
-            .map(|x| (x.index(), *images.get(x).unwrap()))
-            .collect::<Vec<_>>();
-        let storage_images = self
-            .storage_images_to_update
-            .lock()
-            .drain()
-            .map(|x| (x.index(), *images.get(x).unwrap()))
-            .collect::<Vec<_>>();
-        let storage_buffers = self
-            .storage_buffers_to_update
-            .lock()
-            .drain()
-            .map(|x| (x.index(), buffers.get_cold(x).unwrap().raw))
-            .collect::<Vec<_>>();
-        drop(images);
-        drop(buffers);
-        let mut writes =
-            Vec::with_capacity(sampled_images.len() + storage_buffers.len() + storage_images.len());
-        let image_info = TempList::new();
-        let buffer_info = TempList::new();
-        sampled_images.into_iter().for_each(|(index, view)| {
-            writes.push(
-                WriteDescriptorSet::default()
-                    .descriptor_count(1)
-                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                    .dst_array_element(index)
-                    .dst_set(self.bindless_ds)
-                    .dst_binding(SAMPLED_IMAGES_SLOT)
-                    .image_info(slice::from_ref(
-                        image_info.add(
-                            DescriptorImageInfo::default()
-                                .image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
-                                .image_view(view),
-                        ),
-                    )),
-            )
-        });
-        storage_images.into_iter().for_each(|(index, view)| {
-            writes.push(
-                WriteDescriptorSet::default()
-                    .descriptor_count(1)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .dst_array_element(index)
-                    .dst_set(self.bindless_ds)
-                    .dst_binding(STORAGE_IMAGES_SLOT)
-                    .image_info(slice::from_ref(
-                        image_info.add(
-                            DescriptorImageInfo::default()
-                                .image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
-                                .image_view(view),
-                        ),
-                    )),
-            )
-        });
-        storage_buffers.into_iter().for_each(|(index, buffer)| {
-            writes.push(
-                WriteDescriptorSet::default()
-                    .descriptor_count(1)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .dst_array_element(index)
-                    .dst_set(self.bindless_ds)
-                    .dst_binding(STORAGE_BUFFERS_SLOT)
-                    .buffer_info(slice::from_ref(
-                        buffer_info.add(DescriptorBufferInfo::default().buffer(buffer)),
-                    )),
-            )
-        });
-
-        unsafe { self.device.update_descriptor_sets(&writes, &[]) };
-    }
 }
 
-impl<'game> Drop for RenderContext<'game> {
+impl<'game> Drop for RenderDevice<'game> {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         self.staging.lock().free(self);
         let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
-        self.images.write().drain().for_each(|(view, image)| {
-            drop_list.drop_view(view);
+        let mut uniforms = self.uniforms.lock();
+        if let Some(empty) = self.empty.take() {
+            drop_list.drop_descriptor(empty);
+        }
+        self.images.write().drain().for_each(|(_, image)| {
             image.free(&mut drop_list);
         });
         self.buffers
             .write()
             .drain()
             .for_each(|(_, buffer)| buffer.free(&mut drop_list));
-        drop_list.purge(&self.device, &mut memory_allocator);
+        drop_list.purge(
+            &self.device,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+            &mut uniforms,
+        );
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
                 .expect("Nothing should hold a frame at point when we destroy rendering context")
-                .reset(&self.device, &mut memory_allocator)
+                .reset(
+                    &self.device,
+                    &mut memory_allocator,
+                    &mut descriptor_allocator,
+                    &mut uniforms,
+                )
                 .unwrap();
         });
         self.pipelines
@@ -830,8 +748,14 @@ impl<'game> Drop for RenderContext<'game> {
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
                 .expect("Nothing should hold frame at this point")
-                .free(&self.device, &mut memory_allocator)
+                .free(
+                    &self.device,
+                    &mut memory_allocator,
+                    &mut descriptor_allocator,
+                    &mut uniforms,
+                )
         });
+        uniforms.free(&self.device, &mut memory_allocator);
         self.samplers
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
@@ -845,13 +769,20 @@ impl<'game> Drop for RenderContext<'game> {
             unsafe { self.device.destroy_pipeline_cache(self.cache, None) };
         }
         unsafe {
-            self.device
-                .destroy_descriptor_pool(self.bindless_pool, None);
-            self.device.destroy_descriptor_pool(self.sampler_pool, None);
-            self.device
-                .destroy_descriptor_set_layout(self.bindless_layout, None);
-            self.device
-                .destroy_descriptor_set_layout(self.sampler_layout, None);
+            descriptor_allocator.free(
+                AshDescriptorDevice::wrap(&self.device),
+                self.bind_groups
+                    .lock()
+                    .drain()
+                    .filter_map(|(_, data)| data.set),
+            );
+            descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.device));
+            memory_allocator.cleanup(AshMemoryDevice::wrap(&self.device));
+        };
+        self.layouts.lock().drain().for_each(|(_, mut x)| {
+            Arc::get_mut(&mut x).unwrap().free(&self.device);
+        });
+        unsafe {
             self.device.destroy_device(None);
         }
     }
