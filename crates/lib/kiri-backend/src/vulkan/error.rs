@@ -44,8 +44,6 @@ pub enum Error {
     MemoryMapFailed,
     #[error("IO error: {0}")]
     Io(io::Error),
-    #[error("Shader reflection failed: {0}")]
-    ShaderReflectionFailed(rspirv_reflect::ReflectError),
     #[error("Array bindings aren't supported")]
     ArrayBindingsArentSupported,
     #[error("Image handle {0} isn't valid")]
@@ -132,12 +130,6 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<rspirv_reflect::ReflectError> for Error {
-    fn from(value: rspirv_reflect::ReflectError) -> Self {
-        Self::ShaderReflectionFailed(value)
     }
 }
 

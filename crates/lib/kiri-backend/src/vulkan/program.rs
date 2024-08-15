@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     ffi::{CStr, CString},
     slice,
     sync::Arc,
@@ -24,7 +24,6 @@ use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
 use gpu_descriptor::DescriptorTotalCount;
-use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{BindType, Error, ProgramHandle, ShaderStage};
 
@@ -93,9 +92,6 @@ impl<'a> BindGroupDesc<'a> {
             .collect::<Vec<_>>()
     }
 }
-
-type ReflectedDescriptorSet = HashMap<usize, (String, BindType, u32)>;
-type RelfectedDescriptorSetLayout = HashMap<usize, ReflectedDescriptorSet>;
 
 #[derive(Debug)]
 pub(crate) struct DescriptorSetLayout {
@@ -296,12 +292,10 @@ pub(crate) struct Shader {
     pub raw: vk::ShaderModule,
     stage: vk::ShaderStageFlags,
     entry: CString,
-    layout: RelfectedDescriptorSetLayout,
 }
 
 impl Shader {
     fn new(device: &ash::Device, desc: &ShaderDesc) -> Result<Self, Error> {
-        let layout = Self::reflect(desc.code)?;
         let shader_create_info =
             vk::ShaderModuleCreateInfo::default().code(desc.code.as_slice_of::<u32>().unwrap());
 
@@ -310,7 +304,6 @@ impl Shader {
             raw: shader,
             stage: desc.stage.into(),
             entry: CString::new(desc.entry).unwrap(),
-            layout,
         })
     }
 
@@ -325,57 +318,6 @@ impl Shader {
     pub fn entry(&self) -> &CStr {
         &self.entry
     }
-
-    fn reflect(code: &[u8]) -> Result<RelfectedDescriptorSetLayout, Error> {
-        let reflection = Reflection::new_from_spirv(code)?.get_descriptor_sets()?;
-        let mut layout = RelfectedDescriptorSetLayout::default();
-        for (index, set) in reflection.into_iter() {
-            layout.insert(
-                index as usize,
-                Self::reflect_descriptor(set, index == DYNAMIC_BINDING_SLOT as u32)?,
-            );
-        }
-        Ok(layout)
-    }
-
-    fn reflect_descriptor(
-        value: BTreeMap<u32, DescriptorInfo>,
-        dynamic: bool,
-    ) -> Result<ReflectedDescriptorSet, Error> {
-        let mut result = ReflectedDescriptorSet::new();
-        for (index, info) in value.into_iter() {
-            if info.binding_count != BindingCount::One {
-                return Err(Error::ArrayBindingsArentSupported);
-            }
-            let ty = match info.ty {
-                rspirv_reflect::DescriptorType::SAMPLER => BindType::Sampler,
-                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => BindType::SampledImage,
-
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
-                    BindType::DynamicStorage
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
-                    BindType::DynamicUniform
-                }
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER => BindType::Storage,
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER => BindType::Uniform,
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => BindType::DynamicUniform,
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => BindType::DynamicStorage,
-                rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    BindType::CombinedSampledImage
-                }
-                _ => panic!("Not supported {}", info.ty.0),
-            };
-            let count = match info.binding_count {
-                rspirv_reflect::BindingCount::One => 1,
-                rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
-                _ => unimplemented!("{:?}", info.binding_count),
-            };
-
-            result.insert(index as usize, (info.name, ty, count));
-        }
-        Ok(result)
-    }
 }
 
 /// Shader program similar to what we had in OpenGL.
@@ -389,7 +331,11 @@ pub(crate) struct Program {
 }
 
 impl Program {
-    pub fn new(context: &RenderDevice, shaders: &[ShaderDesc]) -> Result<Self, Error> {
+    pub fn new(
+        context: &RenderDevice,
+        shaders: &[ShaderDesc],
+        layout: &[BindGroupDesc<'static>],
+    ) -> Result<Self, Error> {
         let mut stages = ShaderStage::empty();
         let shaders = shaders
             .iter()
@@ -398,28 +344,9 @@ impl Program {
                 Shader::new(&context.device, desc).unwrap()
             })
             .collect::<Vec<_>>();
-        let layouts = shaders.iter().map(|x| &x.layout).collect::<Vec<_>>();
-        let layout = Self::merge_reflected_layouts(&layouts);
-        let mut layout = layout.into_iter().collect::<Vec<_>>();
-        layout.sort_by_key(|(index, _)| *index);
         let layouts = layout
             .iter()
-            .map(|(_, set)| {
-                let descs = set
-                    .iter()
-                    .map(|(index, desc)| BindGroupSlotDesc {
-                        name: &desc.0,
-                        slot: *index as u32,
-                        ty: desc.1,
-                        count: desc.2,
-                    })
-                    .collect::<Vec<_>>();
-                let desc = BindGroupDesc {
-                    stage: stages,
-                    set: &descs,
-                };
-                create_descriptor_set_layout(&context.device, &context.samplers, &desc).unwrap()
-            })
+            .map(|set| context.get_or_create_layout(set).unwrap())
             .collect::<Vec<_>>();
         let vk_layouts = layouts
             .iter()
@@ -435,35 +362,6 @@ impl Program {
         })
     }
 
-    fn merge_reflected_layouts(
-        layouts: &[&RelfectedDescriptorSetLayout],
-    ) -> RelfectedDescriptorSetLayout {
-        let mut result = RelfectedDescriptorSetLayout::new();
-        layouts
-            .iter()
-            .for_each(|x| Self::merge_reflected_layout_set(&mut result, x));
-        for i in 0..MAX_DESCRIPTOR_SETS {
-            result.entry(i).or_default();
-        }
-        result
-    }
-
-    fn merge_reflected_layout_set(
-        target: &mut RelfectedDescriptorSetLayout,
-        next: &RelfectedDescriptorSetLayout,
-    ) {
-        next.iter().for_each(|(index, set)| {
-            target
-                .entry(*index)
-                .and_modify(|existing| {
-                    set.iter().for_each(|(index, set)| {
-                        existing.insert(*index, set.clone());
-                    })
-                })
-                .or_insert(set.clone());
-        });
-    }
-
     pub fn pipeline_layout(&self) -> vk::PipelineLayout {
         self.pipeline_layout
     }
@@ -476,50 +374,15 @@ impl Program {
 }
 
 impl RenderDevice {
-    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let program = Program::new(self, shaders)?;
+    pub fn create_program(
+        &self,
+        shaders: &[ShaderDesc],
+        layout: &[BindGroupDesc<'static>],
+    ) -> Result<ProgramHandle, Error> {
+        let program = Program::new(self, shaders, layout)?;
         let mut programs = self.programs.write();
         let index = programs.len();
         programs.push(program);
         Ok(ProgramHandle(index as u32))
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::BindType;
-
-    use super::Program;
-
-    use super::{ReflectedDescriptorSet, RelfectedDescriptorSetLayout};
-
-    #[test]
-    fn merge_refected_layouts() {
-        let mut set1 = ReflectedDescriptorSet::new();
-        set1.insert(0, ("shared1".into(), BindType::SampledImage, 1));
-        set1.insert(1, ("shared2".into(), BindType::Uniform, 1));
-        let mut set2 = ReflectedDescriptorSet::new();
-        set2.insert(0, ("set_a".into(), BindType::Storage, 1));
-        let mut set3 = ReflectedDescriptorSet::new();
-        set3.insert(1, ("set_b".into(), BindType::DynamicStorage, 1));
-
-        let mut combined = ReflectedDescriptorSet::new();
-        combined.insert(0, ("set_a".into(), BindType::Storage, 1));
-        combined.insert(1, ("set_b".into(), BindType::DynamicStorage, 1));
-
-        let mut a = RelfectedDescriptorSetLayout::new();
-        a.insert(0, set1.clone());
-        a.insert(2, set2);
-        // a.insert(0, )
-        let mut b = RelfectedDescriptorSetLayout::new();
-        b.insert(0, set1.clone());
-        b.insert(2, set3);
-        let merged = Program::merge_reflected_layouts(&[&a, &b]);
-        let rset1 = merged.get(&0).unwrap();
-        let rset2 = merged.get(&2).unwrap();
-        assert!(merged.get(&1).unwrap().is_empty());
-        assert!(merged.get(&3).unwrap().is_empty());
-        assert_eq!(rset1, &set1);
-        assert_eq!(rset2, &combined);
     }
 }
