@@ -1,16 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, sync::Arc};
 
 use kiri::{run_game, GameClient};
+use kiri_assets::GltfSceneSource;
 use kiri_backend::{
-    ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
-    RenderTargetDesc, SubpassLayout,
+    ClearRenderTarget, Format, ImageLayout, RenderDevice, RenderPassHandle, RenderPassLayout,
+    RenderTarget, RenderTargetDesc, SubpassLayout,
 };
+use kiri_gfx::AssetCache;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Loop {
     render_pass: RenderPassHandle,
+    _cache: Arc<AssetCache>,
 }
 
 #[derive(Debug)]
@@ -24,7 +27,7 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(render_device: &kiri_backend::RenderDevice) -> Result<Self, kiri::GameError<LoopError>> {
+    fn new(render_device: &Arc<RenderDevice>) -> Result<Self, kiri::GameError<LoopError>> {
         let layout = RenderPassLayout {
             color_targets: &[RenderTargetDesc::new(Format::BGRA8_UNORM)
                 .clear_input()
@@ -39,8 +42,12 @@ impl GameClient<LoopError> for Loop {
                 color_reads: &[],
             }],
         };
+        let cache = AssetCache::new(render_device)?;
+        cache.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
+        cache.get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
         Ok(Self {
             render_pass: render_device.create_render_pass(layout)?,
+            _cache: cache,
         })
     }
     fn info() -> (&'static str, &'static str, &'static str) {

@@ -285,6 +285,7 @@ impl RenderDevice {
             &device,
             transfer_queue_index,
             universal_queue_index,
+            &pdevice,
             &mut memory_allocator,
         )?);
         let samplers = Self::generate_samplers(&device);

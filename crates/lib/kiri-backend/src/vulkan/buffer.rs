@@ -37,10 +37,10 @@ impl From<BufferUsage> for vk::BufferUsageFlags {
         if value.contains(BufferUsage::Uniform) {
             result |= vk::BufferUsageFlags::UNIFORM_BUFFER;
         }
-        if value.contains(BufferUsage::Destination) {
+        if value.contains(BufferUsage::TransferDestination) {
             result |= vk::BufferUsageFlags::TRANSFER_DST;
         }
-        if value.contains(BufferUsage::Source) {
+        if value.contains(BufferUsage::TransferSource) {
             result |= vk::BufferUsageFlags::TRANSFER_SRC;
         }
 
@@ -118,6 +118,36 @@ impl<'a> BufferCreateDesc<'a> {
             dedicated: true,
             name: None,
         }
+    }
+
+    pub fn index_buffer(mut self) -> Self {
+        self.usage |= BufferUsage::Index;
+        self
+    }
+
+    pub fn veretex_buffer(mut self) -> Self {
+        self.usage |= BufferUsage::Vertex;
+        self
+    }
+
+    pub fn storage_buffer(mut self) -> Self {
+        self.usage |= BufferUsage::Storage;
+        self
+    }
+
+    pub fn uniform_buffer(mut self) -> Self {
+        self.usage |= BufferUsage::Uniform;
+        self
+    }
+
+    pub fn transfer_destination(mut self) -> Self {
+        self.usage |= BufferUsage::TransferDestination;
+        self
+    }
+
+    pub fn transfer_source(mut self) -> Self {
+        self.usage |= BufferUsage::TransferSource;
+        self
     }
 
     pub fn usage(mut self, usage: BufferUsage) -> Self {

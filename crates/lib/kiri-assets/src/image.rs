@@ -46,14 +46,49 @@ pub enum ImageData {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ImageAssetType {
-    Rgba,
-    Rg,
+    Color,
+    NonColor,
+    Normal,
+    MetallicRoughness,
+    Occlusion,
+    Emissive,
+}
+
+impl ImageAssetType {
+    pub fn srgb(self) -> bool {
+        self == Self::Color
+    }
+
+    pub fn uncompressed_format(self) -> Format {
+        match self {
+            ImageAssetType::Color => Format::RGBA8_SRGB,
+            _ => Format::RGBA8_UNORM,
+        }
+    }
+
+    pub fn compressed_format(self) -> Format {
+        match self {
+            ImageAssetType::Color => Format::BC7_SRGB,
+            ImageAssetType::Normal => Format::BC5_UNORM,
+            _ => Format::BC7_UNORM,
+        }
+    }
+
+    pub fn default_values(self) -> [u8; 4] {
+        match self {
+            ImageAssetType::Color => [127, 127, 127, 255],
+            ImageAssetType::NonColor => [127, 127, 127, 255],
+            ImageAssetType::Normal => [0, 0, 255, 255],
+            ImageAssetType::MetallicRoughness => [0, 0, 0, 255],
+            ImageAssetType::Occlusion => [255, 0, 0, 255],
+            ImageAssetType::Emissive => [0, 0, 0, 255],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ImageAssetSource {
     pub ty: ImageAssetType,
-    pub srgb: bool,
     pub mips: bool,
     pub data: ImageData,
 }
@@ -61,8 +96,7 @@ pub struct ImageAssetSource {
 impl ImageAssetSource {
     pub fn from_file<P: AsRef<Path>>(p: P) -> Self {
         Self {
-            ty: ImageAssetType::Rgba,
-            srgb: true,
+            ty: ImageAssetType::Color,
             mips: true,
             data: ImageData::Path(p.as_ref().to_owned()),
         }
@@ -70,16 +104,10 @@ impl ImageAssetSource {
 
     pub fn from_color(color: [u8; 4]) -> Self {
         Self {
-            ty: ImageAssetType::Rgba,
-            srgb: true,
+            ty: ImageAssetType::Color,
             mips: false,
             data: ImageData::Color(color),
         }
-    }
-
-    pub fn srgb(mut self, value: bool) -> Self {
-        self.srgb = value;
-        self
     }
 
     pub fn mips(mut self, value: bool) -> Self {
@@ -128,7 +156,7 @@ impl ImportAsset<ImageAssetSource> for ImageAsset {
             ImageData::Color(color) => {
                 // Special case - just return 1x1 image with color
                 return Ok(Self {
-                    format: get_uncompressed_format(&source),
+                    format: source.ty.uncompressed_format(),
                     dims: [1, 1],
                     mips: vec![color.to_vec()],
                 });
@@ -142,8 +170,8 @@ impl ImportAsset<ImageAssetSource> for ImageAsset {
         if is_pow2 && source.mips {
             // Generate and compress mips
             let bc = match source.ty {
-                ImageAssetType::Rgba => BcMode::Bc7,
-                ImageAssetType::Rg => BcMode::Bc5,
+                ImageAssetType::Normal => BcMode::Bc5,
+                _ => BcMode::Bc7,
             };
 
             let mut current_dims = dims;
@@ -159,14 +187,14 @@ impl ImportAsset<ImageAssetSource> for ImageAsset {
                 current_dims = [current_dims[0] >> 1, current_dims[1] >> 1];
             }
             Ok(Self {
-                format: get_compressed_format(&source),
+                format: source.ty.compressed_format(),
                 dims,
                 mips,
             })
         } else {
             // Uncompressed image with single mip
             Ok(Self {
-                format: get_uncompressed_format(&source),
+                format: source.ty.uncompressed_format(),
                 dims,
                 mips: vec![image.to_rgba8().into_raw()],
             })
@@ -222,20 +250,4 @@ fn block_compress(image: ImageBuffer<image::Rgba<u8>, Vec<u8>>, bc: BcMode) -> V
     }
 
     compressed_bytes
-}
-
-fn get_compressed_format(data: &ImageAssetSource) -> Format {
-    match data.ty {
-        ImageAssetType::Rgba if data.srgb => Format::BC7_SRGB,
-        ImageAssetType::Rgba => Format::BC7_UNORM,
-        ImageAssetType::Rg => Format::BC5_UNORM,
-    }
-}
-
-fn get_uncompressed_format(source: &ImageAssetSource) -> Format {
-    match source.ty {
-        ImageAssetType::Rgba if source.srgb => Format::RGBA8_SRGB,
-        ImageAssetType::Rgba => Format::RGBA8_UNORM,
-        ImageAssetType::Rg => Format::RG8_UNORM,
-    }
 }

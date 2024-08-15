@@ -15,7 +15,7 @@
 
 mod runner;
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 use kiri_backend::{RenderContext, RenderDevice};
 use kiri_common::GameTime;
@@ -31,6 +31,7 @@ pub enum GameError<E: Error> {
     GameFailure(E),
     GraphicsFailure(kiri_backend::Error),
     LoopError(String),
+    GfxError(kiri_gfx::Error),
 }
 
 impl<E: Error> From<kiri_backend::Error> for GameError<E> {
@@ -45,8 +46,17 @@ impl<E: Error> From<String> for GameError<E> {
     }
 }
 
-pub trait GameClient<E: Error>: Default {
-    fn new(render_device: &RenderDevice) -> Result<Self, GameError<E>>;
+impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
+    fn from(value: kiri_gfx::Error) -> Self {
+        match value {
+            kiri_gfx::Error::BackendError(err) => Self::GraphicsFailure(err),
+            err => Self::GfxError(err),
+        }
+    }
+}
+
+pub trait GameClient<E: Error>: Sized + Send + Sync {
+    fn new(render_device: &Arc<RenderDevice>) -> Result<Self, GameError<E>>;
     fn info() -> (&'static str, &'static str, &'static str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;

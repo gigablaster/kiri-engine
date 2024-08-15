@@ -239,20 +239,22 @@ impl RingAllocator {
 pub struct BumpAllocator {
     top: AtomicUsize,
     size: usize,
+    aligment: usize,
 }
 
 impl BumpAllocator {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: usize, aligment: usize) -> Self {
         Self {
             size,
+            aligment,
             top: AtomicUsize::new(0),
         }
     }
 
-    pub fn allocate(&self, size: usize, aligment: usize) -> Option<usize> {
+    pub fn allocate(&self, size: usize) -> Option<usize> {
         self.top
             .fetch_update(Ordering::Release, Ordering::SeqCst, |x| {
-                let new_top = (x + size).align(aligment);
+                let new_top = (x + size).align(self.aligment);
                 if new_top <= self.size {
                     Some(new_top)
                 } else {
@@ -266,8 +268,8 @@ impl BumpAllocator {
         self.top.store(0, Ordering::SeqCst);
     }
 
-    pub fn validate(&self, size: usize, aligment: usize) -> usize {
-        let base = self.top.load(Ordering::SeqCst).align(aligment);
+    pub fn validate(&self, size: usize) -> usize {
+        let base = self.top.load(Ordering::SeqCst).align(self.aligment);
         min(size, self.size - base)
     }
 }
@@ -321,22 +323,22 @@ mod test {
 
     #[test]
     fn bump_allocator() {
-        let allocator = BumpAllocator::new(1024);
-        assert_eq!(Some(0), allocator.allocate(500, 64));
-        assert_eq!(Some(512), allocator.allocate(100, 64));
-        assert_eq!(Some(640), allocator.allocate(100, 64));
-        assert_eq!(None, allocator.allocate(500, 64));
+        let allocator = BumpAllocator::new(1024, 64);
+        assert_eq!(Some(0), allocator.allocate(500));
+        assert_eq!(Some(512), allocator.allocate(100));
+        assert_eq!(Some(640), allocator.allocate(100));
+        assert_eq!(None, allocator.allocate(500));
         allocator.reset();
-        assert_eq!(Some(0), allocator.allocate(500, 64));
-        assert_eq!(Some(512), allocator.allocate(100, 64));
-        assert_eq!(Some(640), allocator.allocate(100, 64));
-        assert_eq!(None, allocator.allocate(500, 64));
+        assert_eq!(Some(0), allocator.allocate(500));
+        assert_eq!(Some(512), allocator.allocate(100));
+        assert_eq!(Some(640), allocator.allocate(100));
+        assert_eq!(None, allocator.allocate(500));
     }
 
     #[test]
     fn bump_allocator_align() {
-        let allocator = BumpAllocator::new(1024);
-        assert_eq!(Some(0), allocator.allocate(10, 128));
-        assert_eq!(Some(128), allocator.allocate(10, 128));
+        let allocator = BumpAllocator::new(1024, 128);
+        assert_eq!(Some(0), allocator.allocate(10));
+        assert_eq!(Some(128), allocator.allocate(10));
     }
 }

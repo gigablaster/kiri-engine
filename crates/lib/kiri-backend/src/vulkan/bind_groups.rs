@@ -195,12 +195,17 @@ impl Uniforms {
 #[derive(Debug)]
 struct Binding<T: Copy> {
     slot: u32,
+    ty: vk::DescriptorType,
     data: Option<T>,
 }
 
 impl<T: Copy> Binding<T> {
-    pub fn new(slot: u32) -> Self {
-        Self { slot, data: None }
+    pub fn new(slot: u32, ty: vk::DescriptorType) -> Self {
+        Self {
+            slot,
+            ty,
+            data: None,
+        }
     }
 }
 
@@ -274,7 +279,7 @@ impl RenderDevice {
                 if *ty == vk::DescriptorType::SAMPLED_IMAGE
                     || *ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
                 {
-                    Some(ImageBinding::new(*slot as _))
+                    Some(ImageBinding::new(*slot as _, *ty))
                 } else {
                     None
                 }
@@ -285,7 +290,7 @@ impl RenderDevice {
             .iter()
             .filter_map(|(slot, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER {
-                    Some(UniformBufferBinding::new(*slot as _))
+                    Some(UniformBufferBinding::new(*slot as _, *ty))
                 } else {
                     None
                 }
@@ -296,7 +301,7 @@ impl RenderDevice {
             .iter()
             .filter_map(|(slot, ty)| {
                 if *ty == vk::DescriptorType::STORAGE_BUFFER {
-                    Some(StorageBufferBinding::new(*slot as _))
+                    Some(StorageBufferBinding::new(*slot as _, *ty))
                 } else {
                     None
                 }
@@ -307,7 +312,7 @@ impl RenderDevice {
             .iter()
             .filter_map(|(slot, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
-                    Some(DynamicBufferBinding::new(*slot as _))
+                    Some(DynamicBufferBinding::new(*slot as _, *ty))
                 } else {
                     None
                 }
@@ -318,7 +323,7 @@ impl RenderDevice {
             .iter()
             .filter_map(|(slot, ty)| {
                 if *ty == vk::DescriptorType::STORAGE_BUFFER_DYNAMIC {
-                    Some(DynamicBufferBinding::new(*slot as _))
+                    Some(DynamicBufferBinding::new(*slot as _, *ty))
                 } else {
                     None
                 }
@@ -447,7 +452,7 @@ impl RenderDevice {
                             ),
                         ))
                         .descriptor_count(1)
-                        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                        .descriptor_type(x.ty)
                         .dst_binding(x.slot)
                         .dst_set(descriptor),
                 );
@@ -471,7 +476,7 @@ impl RenderDevice {
                                 ),
                             ))
                             .descriptor_count(1)
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .descriptor_type(x.ty)
                             .dst_binding(x.slot)
                             .dst_set(descriptor),
                     );
@@ -498,7 +503,7 @@ impl RenderDevice {
                                 ),
                             ))
                             .descriptor_count(1)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_type(x.ty)
                             .dst_binding(x.slot)
                             .dst_set(descriptor),
                     );
@@ -521,7 +526,7 @@ impl RenderDevice {
                                 ),
                             ))
                             .descriptor_count(1)
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_type(x.ty)
                             .dst_binding(x.slot)
                             .dst_set(descriptor),
                     );
@@ -544,7 +549,7 @@ impl RenderDevice {
                                 ),
                             ))
                             .descriptor_count(1)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                            .descriptor_type(x.ty)
                             .dst_binding(x.slot)
                             .dst_set(descriptor),
                     );

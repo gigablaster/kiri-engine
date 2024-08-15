@@ -150,12 +150,12 @@ pub(crate) fn create_descriptor_set_layout(
     let layout = bindings.values().copied().collect::<Vec<_>>();
     let types = bindings
         .iter()
-        .map(|(index, binding)| (*index as usize, binding.descriptor_type))
+        .map(|(index, binding)| (*index, binding.descriptor_type))
         .collect::<HashMap<_, _>>();
     let names = set
         .set
         .iter()
-        .map(|x| (x.name.to_owned(), x.slot as usize))
+        .map(|x| (x.name.to_owned(), x.slot))
         .collect::<HashMap<_, _>>();
     let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout);
     let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
@@ -215,15 +215,13 @@ fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
             address_mode: vk::SamplerAddressMode::MIRRORED_REPEAT,
             anisotropy_level: 8, // TODO:: control anisotropy level
         }
-    } else if name.ends_with("_lr") {
+    } else {
         SamplerDesc {
             texel_filter: vk::Filter::LINEAR,
             mipmap_mode: vk::SamplerMipmapMode::LINEAR,
             address_mode: vk::SamplerAddressMode::REPEAT,
             anisotropy_level: 8, // TODO:: control anisotropy level
         }
-    } else {
-        panic!("Unkown sampler type {}", name)
     }
 }
 

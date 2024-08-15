@@ -28,7 +28,7 @@ use parking_lot::Mutex;
 
 use crate::{Error, RenderDevice};
 
-use super::{GpuAllocator, GpuMemory, Image, ImageSubresourceData};
+use super::{GpuAllocator, GpuMemory, Image, ImageSubresourceData, PhysicalDevice};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
@@ -87,6 +87,7 @@ impl Staging {
         device: &ash::Device,
         transfer_queue: u32,
         main_queue: u32,
+        pdevice: &PhysicalDevice,
         allocator: &mut GpuAllocator,
     ) -> Result<Self, Error> {
         let size = (PAGE_SIZE * PAGE_COUNT) as u64;
@@ -136,7 +137,10 @@ impl Staging {
         Ok(Self {
             command_pool,
             command_buffers: transfer_cbs,
-            allocator: BumpAllocator::new(PAGE_SIZE as _),
+            allocator: BumpAllocator::new(
+                PAGE_SIZE as _,
+                pdevice.properties.limits.buffer_image_granularity as _,
+            ),
             upload_buffers: HashMap::with_capacity(64),
             upload_images: HashMap::with_capacity(64),
             mapping,
@@ -153,7 +157,7 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        context: &RenderDevice,
+        device: &RenderDevice,
         target: vk::Buffer,
         offset: usize,
         data: &[T],
@@ -162,30 +166,29 @@ impl Staging {
         loop {
             let data_len = mem::size_of_val(data);
             let pushed = self.try_push_buffer(
-                context,
                 target,
                 offset + current_offset,
                 data_len - current_offset,
-                unsafe { (data.as_ptr() as *const u8).add(current_offset as usize) },
+                unsafe { (data.as_ptr() as *const u8).add(current_offset) },
             )?;
             current_offset += pushed;
             if current_offset == data_len {
                 return Ok(());
             } else {
-                self.upload_impl(context, false)?;
+                self.upload_impl(device, false)?;
             }
         }
     }
 
     pub fn upload_image(
         &mut self,
-        context: &RenderDevice,
+        device: &RenderDevice,
         target: &Image,
         data: &[ImageSubresourceData],
     ) -> Result<(), Error> {
         for (mip, data) in data.iter().enumerate() {
-            while !self.try_push_mip(context, target, mip as _, data)? {
-                self.upload_impl(context, false)?;
+            while !self.try_push_mip(target, mip as _, data)? {
+                self.upload_impl(device, false)?;
             }
         }
         Ok(())
@@ -193,7 +196,6 @@ impl Staging {
 
     fn try_push_mip(
         &mut self,
-        context: &RenderDevice,
         target: &Image,
         mip: u32,
         data: &ImageSubresourceData,
@@ -202,8 +204,7 @@ impl Staging {
         if size > PAGE_SIZE {
             return Err(Error::ImageTooBig);
         }
-        let aligment = context.pdevice.properties.limits.buffer_image_granularity;
-        if let Some(allocated_offset) = self.allocator.allocate(size, aligment as _) {
+        if let Some(allocated_offset) = self.allocator.allocate(size) {
             let buffer_offset = PAGE_SIZE * self.current + allocated_offset;
             unsafe {
                 copy_nonoverlapping(
@@ -247,19 +248,13 @@ impl Staging {
 
     fn try_push_buffer(
         &mut self,
-        context: &RenderDevice,
         target: vk::Buffer,
         offset: usize,
         bytes: usize,
         data: *const u8,
     ) -> Result<usize, Error> {
-        let aligment = context
-            .pdevice
-            .properties
-            .limits
-            .optimal_buffer_copy_offset_alignment;
-        let can_send = self.allocator.validate(bytes as _, aligment as _);
-        let allocated = self.allocator.allocate(bytes as _, aligment as _).unwrap(); // Already checked that allocator can allocate enough space
+        let can_send = self.allocator.validate(bytes as _);
+        let allocated = self.allocator.allocate(bytes as _).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = PAGE_SIZE * self.current + allocated;
         unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(src_offset), can_send) };
         let op = vk::BufferCopy::default()
@@ -273,37 +268,37 @@ impl Staging {
 
     pub fn upload(
         &mut self,
-        context: &RenderDevice,
+        device: &RenderDevice,
     ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
-        self.upload_impl(context, true)
+        self.upload_impl(device, true)
     }
 
     fn upload_impl(
         &mut self,
-        context: &RenderDevice,
+        device: &RenderDevice,
         client_will_wait: bool,
     ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
         puffin::profile_function!();
         let cb = &self.command_buffers[self.current];
 
         unsafe {
-            context.device.wait_for_fences(&[cb.1], true, u64::MAX)?;
-            context.device.reset_fences(&[cb.1])?;
-            context
+            device.device.wait_for_fences(&[cb.1], true, u64::MAX)?;
+            device.device.reset_fences(&[cb.1])?;
+            device
                 .device
                 .reset_command_buffer(cb.0, vk::CommandBufferResetFlags::empty())?;
         }
         {
             unsafe {
-                context
+                device
                     .device
                     .begin_command_buffer(cb.0, &vk::CommandBufferBeginInfo::default())
             }?;
-            self.barrier_before(&context.device, cb.0);
-            self.copy_buffers(&context.device, cb.0);
-            self.copy_images(&context.device, cb.0);
-            self.barrier_after(context, cb.0);
-            unsafe { context.device.end_command_buffer(cb.0) }?;
+            self.barrier_before(&device.device, cb.0);
+            self.copy_buffers(&device.device, cb.0);
+            self.copy_images(&device.device, cb.0);
+            self.barrier_after(device, cb.0);
+            unsafe { device.device.end_command_buffer(cb.0) }?;
         }
 
         let semaphore = self.semaphores[self.current];
@@ -316,13 +311,13 @@ impl Staging {
         }
 
         if let Some(last) = self.last {
-            context.submit_transfer(
+            device.submit_transfer(
                 self.command_buffers[self.current],
                 &[(self.semaphores[last], vk::PipelineStageFlags::TRANSFER)],
                 &triggers,
             )?;
         } else {
-            context.submit_transfer(self.command_buffers[self.current], &[], &triggers)?;
+            device.submit_transfer(self.command_buffers[self.current], &[], &triggers)?;
         }
 
         self.last = Some(self.current);
@@ -335,7 +330,7 @@ impl Staging {
         Ok((render_semaphore, vk::PipelineStageFlags::TRANSFER))
     }
 
-    pub fn execute_pending_barriers(&self, context: &RenderDevice, cb: vk::CommandBuffer) {
+    pub fn execute_pending_barriers(&self, device: &RenderDevice, cb: vk::CommandBuffer) {
         let mut pending_buffer_barriers = self.pending_buffer_barriers.lock();
         let mut pending_image_barriers = self.pending_image_barriers.lock();
 
@@ -347,8 +342,8 @@ impl Staging {
                     .dst_access_mask(vk::AccessFlags::SHADER_READ)
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_queue_family_index(context.transfer_queue_index)
-                    .dst_queue_family_index(context.universal_queue_index)
+                    .src_queue_family_index(device.transfer_queue_index)
+                    .dst_queue_family_index(device.universal_queue_index)
                     .image(x.0)
                     .subresource_range(x.1)
             })
@@ -358,8 +353,8 @@ impl Staging {
             .map(|x| {
                 vk::BufferMemoryBarrier::default()
                     .buffer(x.0)
-                    .src_queue_family_index(context.transfer_queue_index)
-                    .dst_queue_family_index(context.universal_queue_index)
+                    .src_queue_family_index(device.transfer_queue_index)
+                    .dst_queue_family_index(device.universal_queue_index)
                     .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .dst_access_mask(vk::AccessFlags::MEMORY_READ)
                     .offset(x.1)
@@ -367,7 +362,7 @@ impl Staging {
             })
             .collect::<Vec<_>>();
         unsafe {
-            context.device.cmd_pipeline_barrier(
+            device.device.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -376,7 +371,7 @@ impl Staging {
                 &[],
                 &image_barriers,
             );
-            context.device.cmd_pipeline_barrier(
+            device.device.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::VERTEX_SHADER,
@@ -434,7 +429,7 @@ impl Staging {
         }
     }
 
-    fn barrier_after(&self, context: &RenderDevice, cb: vk::CommandBuffer) {
+    fn barrier_after(&self, device: &RenderDevice, cb: vk::CommandBuffer) {
         let mut pending_buffer_barriers = self.pending_buffer_barriers.lock();
         let mut pending_image_barriers = self.pending_image_barriers.lock();
 
@@ -449,15 +444,15 @@ impl Staging {
             })
         });
 
-        if context.transfer_queue_index != context.universal_queue_index {
+        if device.transfer_queue_index != device.universal_queue_index {
             let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
             let mut buffer_barriers = Vec::with_capacity(size);
             self.upload_buffers.iter().for_each(|x| {
                 x.1.iter().for_each(|op| {
                     let barrier = vk::BufferMemoryBarrier::default()
                         .buffer(*x.0)
-                        .src_queue_family_index(context.transfer_queue_index)
-                        .dst_queue_family_index(context.universal_queue_index)
+                        .src_queue_family_index(device.transfer_queue_index)
+                        .dst_queue_family_index(device.universal_queue_index)
                         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                         .dst_access_mask(vk::AccessFlags::MEMORY_READ)
                         .offset(op.dst_offset)
@@ -471,18 +466,18 @@ impl Staging {
                 x.1.iter().for_each(|op| {
                     let barrier = vk::ImageMemoryBarrier::default()
                         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
                         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .src_queue_family_index(context.transfer_queue_index)
-                        .dst_queue_family_index(context.universal_queue_index)
+                        .src_queue_family_index(device.transfer_queue_index)
+                        .dst_queue_family_index(device.universal_queue_index)
                         .image(*x.0)
                         .subresource_range(op.1);
                     image_barriers.push(barrier);
                 })
             });
             unsafe {
-                context.device.cmd_pipeline_barrier(
+                device.device.cmd_pipeline_barrier(
                     cb,
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::TRANSFER,
@@ -491,7 +486,7 @@ impl Staging {
                     &[],
                     &image_barriers,
                 );
-                context.device.cmd_pipeline_barrier(
+                device.device.cmd_pipeline_barrier(
                     cb,
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::TRANSFER,
@@ -525,19 +520,19 @@ impl Staging {
         })
     }
 
-    pub(crate) fn free(&mut self, context: &RenderDevice) {
-        self.upload_impl(context, false).unwrap();
+    pub(crate) fn free(&mut self, device: &RenderDevice) {
+        self.upload_impl(device, false).unwrap();
         unsafe {
-            context.device.device_wait_idle().unwrap();
-            context.device.destroy_command_pool(self.command_pool, None);
+            device.device.device_wait_idle().unwrap();
+            device.device.destroy_command_pool(self.command_pool, None);
         }
 
         self.command_buffers
             .iter()
-            .for_each(|(_, fence)| unsafe { context.device.destroy_fence(*fence, None) });
+            .for_each(|(_, fence)| unsafe { device.device.destroy_fence(*fence, None) });
 
         if let Some(memory) = self.memory.take() {
-            context.with_drop_list(|drop_list| {
+            device.with_drop_list(|drop_list| {
                 drop_list.drop_buffer(self.buffer);
                 drop_list.drop_memory(memory);
             })
@@ -545,10 +540,10 @@ impl Staging {
 
         for index in 0..PAGE_COUNT {
             unsafe {
-                context
+                device
                     .device
                     .destroy_semaphore(self.semaphores[index], None);
-                context
+                device
                     .device
                     .destroy_semaphore(self.render_semaphores[index], None);
             }

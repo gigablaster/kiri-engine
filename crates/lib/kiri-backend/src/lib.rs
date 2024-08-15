@@ -194,8 +194,8 @@ bitflags! {
         const Index = 2;
         const Uniform = 4;
         const Storage = 8;
-        const Destination = 16;
-        const Source = 32;
+        const TransferDestination = 16;
+        const TransferSource = 32;
     }
 }
 

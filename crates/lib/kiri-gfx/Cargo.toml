@@ -1,0 +1,15 @@
+[package]
+name = "kiri-gfx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kiri-backend = { path = "../kiri-backend" }
+kiri-common = { path = "../kiri-common" }
+kiri-assets = { path = "../kiri-assets" }
+kiri-vfs = { path = "../kiri-vfs" }
+parking_lot = "0.12.3"
+bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
+thiserror = "1.0.61"
+log = "0.4.20"
+glam = "0.28.0"

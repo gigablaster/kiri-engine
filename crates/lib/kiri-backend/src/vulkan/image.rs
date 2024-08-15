@@ -277,6 +277,16 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
+    pub fn transfer_desitnation(mut self) -> Self {
+        self.usage |= ImageUsage::TransferDestination;
+        self
+    }
+
+    pub fn trasfer_source(mut self) -> Self {
+        self.usage |= ImageUsage::TransferSource;
+        self
+    }
+
     pub fn ty(mut self, value: ImageType) -> Self {
         self.ty = value;
         self

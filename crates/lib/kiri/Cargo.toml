@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
+kiri-gfx = { path = "../kiri-gfx" }
+kiri-assets = { path = "../kiri-assets" }
 thiserror = "1.0.61"
 directories = "5.0.1"
 raw-window-handle = "0.6.2"

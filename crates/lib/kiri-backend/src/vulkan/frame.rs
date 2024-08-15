@@ -33,7 +33,6 @@ use super::{DropList, GpuAllocator, GpuDescriptorAllocator, PhysicalDevice, Unif
 struct TempBuffer {
     offset: usize,
     allocator: BumpAllocator,
-    aligment: u64,
     memory: NonNull<u8>,
 }
 
@@ -41,11 +40,13 @@ impl TempBuffer {
     pub fn new(size: usize, offset: usize, pdevice: &PhysicalDevice, memory: NonNull<u8>) -> Self {
         Self {
             offset,
-            allocator: BumpAllocator::new(size as _),
-            aligment: pdevice
-                .properties
-                .limits
-                .min_storage_buffer_offset_alignment,
+            allocator: BumpAllocator::new(
+                size,
+                pdevice
+                    .properties
+                    .limits
+                    .min_storage_buffer_offset_alignment as _,
+            ),
             memory,
         }
     }
@@ -53,7 +54,7 @@ impl TempBuffer {
     pub fn push(&self, data: &[u8]) -> Result<u32, Error> {
         let offset = self
             .allocator
-            .allocate(data.len(), self.aligment as _)
+            .allocate(data.len())
             .ok_or(Error::OutOfTempMemory)?;
         unsafe {
             copy_nonoverlapping(

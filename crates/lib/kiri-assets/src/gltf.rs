@@ -147,8 +147,9 @@ impl BoneIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
+#[derive(Debug, Clone, Readable, Writable)]
 pub struct GltfBone {
+    pub name: String,
     pub parent: BoneIndex,
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
@@ -210,7 +211,6 @@ struct NodeProcessingContext<'a> {
 fn process_texture(
     context: &GltfProcessingContext,
     texture: &gltf::texture::Texture,
-    srgb: bool,
     ty: ImageAssetType,
 ) -> AssetReference {
     match texture.source().source() {
@@ -218,7 +218,7 @@ fn process_texture(
             let image_path = context.base_path.join(uri).normalize();
             context
                 .asset_importer
-                .import_image(ImageAssetSource::from_file(image_path).srgb(srgb).ty(ty))
+                .import_image(ImageAssetSource::from_file(image_path).ty(ty))
         }
         _ => panic!(),
     }
@@ -227,13 +227,10 @@ fn process_texture(
 fn process_placeholder(
     context: &GltfProcessingContext,
     color: [f32; 4],
-    srgb: bool,
     ty: ImageAssetType,
 ) -> AssetReference {
     context.asset_importer.import_image(
-        ImageAssetSource::from_color(color.map(|x| (x.clamp(0.0, 1.0) * 255.0) as u8))
-            .srgb(srgb)
-            .ty(ty),
+        ImageAssetSource::from_color(color.map(|x| (x.clamp(0.0, 1.0) * 255.0) as u8)).ty(ty),
     )
 }
 
@@ -252,20 +249,23 @@ fn process_material(
     material: gltf::Material,
 ) -> MeshMaterialAsset {
     let base_color = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
-        process_texture(context, &texture.texture(), true, ImageAssetType::Rgba)
+        process_texture(context, &texture.texture(), ImageAssetType::Color)
     } else {
         process_placeholder(
             context,
             material.pbr_metallic_roughness().base_color_factor(),
-            true,
-            ImageAssetType::Rgba,
+            ImageAssetType::Color,
         )
     };
     let metallic_roughness = if let Some(texture) = material
         .pbr_metallic_roughness()
         .metallic_roughness_texture()
     {
-        process_texture(context, &texture.texture(), false, ImageAssetType::Rgba)
+        process_texture(
+            context,
+            &texture.texture(),
+            ImageAssetType::MetallicRoughness,
+        )
     } else {
         process_placeholder(
             context,
@@ -275,29 +275,27 @@ fn process_material(
                 material.pbr_metallic_roughness().metallic_factor(),
                 1.0,
             ],
-            false,
-            ImageAssetType::Rgba,
+            ImageAssetType::MetallicRoughness,
         )
     };
     let normals = if let Some(texture) = material.normal_texture() {
-        process_texture(context, &texture.texture(), false, ImageAssetType::Rg)
+        process_texture(context, &texture.texture(), ImageAssetType::Normal)
     } else {
-        process_placeholder(context, [0.0, 0.0, 1.0, 1.0], false, ImageAssetType::Rg)
+        process_placeholder(context, [0.0, 0.0, 1.0, 1.0], ImageAssetType::Normal)
     };
     let occlusion = if let Some(texture) = material.occlusion_texture() {
-        process_texture(context, &texture.texture(), false, ImageAssetType::Rgba)
+        process_texture(context, &texture.texture(), ImageAssetType::Occlusion)
     } else {
-        process_placeholder(context, [1.0, 0.0, 0.0, 1.0], false, ImageAssetType::Rgba)
+        process_placeholder(context, [1.0, 0.0, 0.0, 1.0], ImageAssetType::Occlusion)
     };
     let emissive = if let Some(texture) = material.emissive_texture() {
-        process_texture(context, &texture.texture(), false, ImageAssetType::Rgba)
+        process_texture(context, &texture.texture(), ImageAssetType::Emissive)
     } else {
         let emissive_color = material.emissive_factor();
         process_placeholder(
             context,
             [emissive_color[0], emissive_color[1], emissive_color[2], 1.0],
-            false,
-            ImageAssetType::Rgba,
+            ImageAssetType::Emissive,
         )
     };
     MeshMaterialAsset {
@@ -377,6 +375,7 @@ fn process_node(
     let bone_index = context.bones.len() as u32;
     let (translation, rotation, scale) = node.transform().decomposed();
     context.bones.push(GltfBone {
+        name: name.to_owned(),
         parent: parent_index,
         translation,
         rotation,
