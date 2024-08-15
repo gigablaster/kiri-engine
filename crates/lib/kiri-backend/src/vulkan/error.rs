@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use crate::{BufferHandle, ImageHandle, ProgramHandle};
 
-use super::{BindGroupHandle, DrawStreamError, PipelineHandle};
+use super::{BindGroupHandle, DrawStreamError, PipelineHandle, RenderPassHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -58,6 +58,8 @@ pub enum Error {
     InvalidPipelineHandle(PipelineHandle),
     #[error("Bind group handle {0:?} isn't valid")]
     InvalidBindGroupHandle(BindGroupHandle),
+    #[error("Render pass handle {0:?} isn't valid")]
+    InvalidRenderPassHandle(RenderPassHandle),
     #[error("Image too big")]
     ImageTooBig,
     #[error("Memory isn't allocated")]

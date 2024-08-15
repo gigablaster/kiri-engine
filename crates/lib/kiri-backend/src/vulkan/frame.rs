@@ -15,12 +15,15 @@
 
 use core::slice;
 use std::{
+    collections::HashMap,
     mem,
     ptr::{copy_nonoverlapping, NonNull},
+    thread::{self, ThreadId},
 };
 
 use ash::vk::{self};
 use kiri_common::BumpAllocator;
+use parking_lot::Mutex;
 
 use crate::Error;
 
@@ -67,6 +70,55 @@ impl TempBuffer {
     }
 }
 
+#[derive(Debug, Default)]
+struct SecondaryCommandBufferPool {
+    pool: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
+    free: Vec<vk::CommandBuffer>,
+}
+
+const ALLOCATE_PER_CALL: u32 = 8;
+
+impl SecondaryCommandBufferPool {
+    pub fn new(device: &ash::Device) -> Result<Self, Error> {
+        let create_info =
+            vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT);
+        let pool = unsafe { device.create_command_pool(&create_info, None) }?;
+        Ok(Self {
+            pool,
+            command_buffers: Vec::default(),
+            free: Vec::default(),
+        })
+    }
+
+    pub fn get(&mut self, device: &ash::Device) -> Result<vk::CommandBuffer, Error> {
+        if self.free.is_empty() {
+            let create_info = vk::CommandBufferAllocateInfo::default()
+                .command_pool(self.pool)
+                .command_buffer_count(ALLOCATE_PER_CALL)
+                .level(vk::CommandBufferLevel::SECONDARY);
+            let cbs = unsafe { device.allocate_command_buffers(&create_info)? };
+            for cb in cbs {
+                self.command_buffers.push(cb);
+                self.free.push(cb);
+            }
+        }
+        Ok(self.free.pop().unwrap())
+    }
+
+    pub fn recycle(&mut self, device: &ash::Device) -> Result<(), Error> {
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+        self.free.clear();
+        for cb in &self.command_buffers {
+            self.free.push(*cb);
+        }
+        Ok(())
+    }
+
+    pub fn free(&self, device: &ash::Device) {
+        unsafe { device.destroy_command_pool(self.pool, None) }
+    }
+}
 #[derive(Debug)]
 pub(crate) struct Frame {
     pool: vk::CommandPool,
@@ -75,6 +127,7 @@ pub(crate) struct Frame {
     pub finished: vk::Semaphore,
     drop_list: DropList,
     temp: TempBuffer,
+    per_thread_pools: Mutex<HashMap<ThreadId, SecondaryCommandBufferPool>>,
 }
 
 unsafe impl Send for Frame {}
@@ -121,6 +174,7 @@ impl Frame {
                     pdevice,
                     temp_memory.add(temp_memory_offset as _),
                 ),
+                per_thread_pools: Default::default(),
             })
         }
     }
@@ -140,6 +194,10 @@ impl Frame {
             device.reset_fences(&[self.fence])?;
         }
         self.temp.reset();
+        self.per_thread_pools
+            .lock()
+            .iter_mut()
+            .try_for_each(|(_, x)| x.recycle(device))?;
 
         Ok(())
     }
@@ -158,6 +216,10 @@ impl Frame {
         }
         self.drop_list
             .purge(device, memory_allocator, descriptor_allocator, uniforms);
+        self.per_thread_pools
+            .lock()
+            .drain()
+            .for_each(|(_, x)| x.free(device))
     }
 
     pub fn assign_drop_list(&mut self, drop_list: DropList) {
@@ -168,5 +230,18 @@ impl Frame {
         let data =
             unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, mem::size_of_val(data)) };
         self.temp.push(data)
+    }
+
+    pub fn secondary_buffer(&self, device: &ash::Device) -> Result<vk::CommandBuffer, Error> {
+        let therad_id = thread::current().id();
+        let mut pools = self.per_thread_pools.lock();
+        if let Some(pool) = pools.get_mut(&therad_id) {
+            Ok(pool.get(device)?)
+        } else {
+            let mut pool = SecondaryCommandBufferPool::new(device)?;
+            let cb = pool.get(device)?;
+            pools.insert(therad_id, pool);
+            Ok(cb)
+        }
     }
 }

@@ -169,12 +169,14 @@ impl From<ImageMultisampling> for vk::SampleCountFlags {
 impl From<ImageLayout> for vk::ImageLayout {
     fn from(value: ImageLayout) -> Self {
         match value {
+            ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
             ImageLayout::ShaderRead => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ImageLayout::ColorTarget => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilTarget => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilRead => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
             ImageLayout::TransferDestination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             ImageLayout::TransferSource => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ImageLayout::Present => vk::ImageLayout::PRESENT_SRC_KHR,
         }
     }
 }
@@ -418,15 +420,6 @@ impl Image {
             .for_each(|(_, view)| drop_list.drop_view(view))
     }
 
-    pub(crate) fn subresource(&self, aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
-        vk::ImageSubresourceRange::default()
-            .aspect_mask(aspect)
-            .base_array_layer(0)
-            .base_mip_level(0)
-            .layer_count(self.desc.array_elements)
-            .level_count(self.desc.mip_levels)
-    }
-
     pub(crate) fn view(
         &self,
         device: &ash::Device,
@@ -453,7 +446,7 @@ impl Image {
     }
 }
 
-impl<'game> RenderDevice<'game> {
+impl RenderDevice {
     pub fn create_image(
         &self,
         desc: ImageCreateDesc,

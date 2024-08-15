@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
@@ -57,8 +60,8 @@ impl Drop for Surface {
     }
 }
 
-pub struct Swapchain<'a> {
-    device: &'a RenderDevice<'a>,
+pub struct Swapchain {
+    device: Arc<RenderDevice>,
     pub raw: vk::SwapchainKHR,
     images: ArrayVec<ImageHandle, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
@@ -69,7 +72,7 @@ pub struct Swapchain<'a> {
 }
 
 pub(crate) struct SwapchainImage<'a> {
-    pub swapchain: &'a Swapchain<'a>,
+    pub swapchain: &'a Swapchain,
     pub image: ImageHandle,
     pub image_index: u32,
     pub acquire_semaphore: vk::Semaphore,
@@ -81,9 +84,9 @@ pub(crate) enum AcquiredSurface<'a> {
     Image(SwapchainImage<'a>),
 }
 
-impl<'a> Swapchain<'a> {
+impl Swapchain {
     pub fn new(
-        device: &'a RenderDevice,
+        device: &Arc<RenderDevice>,
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, Error> {
@@ -210,7 +213,7 @@ impl<'a> Swapchain<'a> {
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
         Ok(Self {
-            device,
+            device: device.clone(),
             raw: swapchain,
             images,
             acquire_semaphores,
@@ -290,7 +293,7 @@ impl<'a> Swapchain<'a> {
     }
 }
 
-impl<'a> Drop for Swapchain<'a> {
+impl Drop for Swapchain {
     fn drop(&mut self) {
         unsafe {
             self.device.device.device_wait_idle().unwrap();

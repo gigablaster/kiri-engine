@@ -13,12 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GameTime {
     pub delta_time: f32,
-    pub raw_delta_time: f32,
     pub frame_number: u32,
     pub total_time: f32,
 }
@@ -27,8 +26,8 @@ impl Display for GameTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "(dt: {} raw: {} frame: {} total: {})",
-            self.delta_time, self.raw_delta_time, self.frame_number, self.total_time
+            "(dt: {} frame: {} total: {})",
+            self.delta_time, self.frame_number, self.total_time
         )
     }
 }
@@ -59,11 +58,15 @@ impl TimeFilter {
         }
     }
 
-    pub fn sample(&mut self, dt: f64) -> GameTime {
+    pub fn sample(&mut self, dt: Duration) {
+        let dt = dt.as_secs_f64();
         self.raw[self.cursor] = dt;
         self.cursor += 1;
         self.cursor %= SAMPLES;
         self.total += dt;
+    }
+
+    pub fn game_time(&self) -> GameTime {
         let mut sorted = self.raw;
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut average = 0.0;
@@ -74,7 +77,6 @@ impl TimeFilter {
 
         GameTime {
             delta_time: average as f32,
-            raw_delta_time: dt as f32,
             frame_number: self.count,
             total_time: self.total as f32,
         }

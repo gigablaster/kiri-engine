@@ -77,7 +77,7 @@ pub struct BindGroupSlotDesc<'a> {
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct BindGroupDesc<'a> {
-    pub stage: vk::ShaderStageFlags,
+    pub stage: ShaderStage,
     pub set: &'a [BindGroupSlotDesc<'a>],
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn create_descriptor_set_layout(
             .binding(*slot as _)
             .descriptor_count(*count as _)
             .descriptor_type((*ty).into())
-            .stage_flags(*stage)
+            .stage_flags((*stage).into())
             .immutable_samplers(slice::from_ref(sampler));
         bindings.insert(*slot, layout_biding);
     }
@@ -187,14 +187,14 @@ pub(crate) fn create_descriptor_set_layout(
 }
 
 fn create_binding<'a>(
-    stage: vk::ShaderStageFlags,
+    stage: ShaderStage,
     binding: &'a BindGroupSlotDesc,
 ) -> vk::DescriptorSetLayoutBinding<'a> {
     vk::DescriptorSetLayoutBinding::default()
         .binding(binding.slot as _)
         .descriptor_type(binding.ty.into())
         .descriptor_count(binding.count)
-        .stage_flags(stage)
+        .stage_flags(stage.into())
 }
 
 fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
@@ -390,11 +390,11 @@ pub(crate) struct Program {
 
 impl Program {
     pub fn new(context: &RenderDevice, shaders: &[ShaderDesc]) -> Result<Self, Error> {
-        let mut stages = vk::ShaderStageFlags::empty();
+        let mut stages = ShaderStage::empty();
         let shaders = shaders
             .iter()
             .map(|desc| {
-                stages |= desc.stage.into();
+                stages |= desc.stage;
                 Shader::new(&context.device, desc).unwrap()
             })
             .collect::<Vec<_>>();
@@ -475,7 +475,7 @@ impl Program {
     }
 }
 
-impl<'game> RenderDevice<'game> {
+impl RenderDevice {
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
         let program = Program::new(self, shaders)?;
         let mut programs = self.programs.write();

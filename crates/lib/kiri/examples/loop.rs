@@ -3,10 +3,15 @@
 use std::{error::Error, fmt::Display};
 
 use kiri::{run_game, GameClient};
-use kiri_backend::{ClearRenderTarget, ImageBarrier, ImageBarrierType, RenderPass, RenderTarget};
+use kiri_backend::{
+    ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
+    RenderTargetDesc, SubpassLayout,
+};
 
 #[derive(Debug, Default)]
-struct Loop {}
+struct Loop {
+    render_pass: RenderPassHandle,
+}
 
 #[derive(Debug)]
 enum LoopError {}
@@ -19,8 +24,27 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn info(&self) -> (&str, &str, &str) {
-        ("com", "gigablasterca", "kiri-demo-loop")
+    fn new(render_device: &kiri_backend::RenderDevice) -> Result<Self, kiri::GameError<LoopError>> {
+        let layout = RenderPassLayout {
+            color_targets: &[RenderTargetDesc::new(Format::BGRA8_UNORM)
+                .clear_input()
+                .store_output()
+                .initial_layout(ImageLayout::Undefined)
+                .final_layout(ImageLayout::Present)],
+            depth_target: None,
+            subpasses: &[SubpassLayout {
+                depth_write: false,
+                depth_read: false,
+                color_writes: &[0],
+                color_reads: &[],
+            }],
+        };
+        Ok(Self {
+            render_pass: render_device.create_render_pass(layout)?,
+        })
+    }
+    fn info() -> (&'static str, &'static str, &'static str) {
+        ("com", "gigablaster", "kiri-demo-loop")
     }
 
     fn title(&self) -> &str {
@@ -34,22 +58,16 @@ impl GameClient<LoopError> for Loop {
     fn draw(
         &self,
         _time: kiri_common::GameTime,
-        context: &kiri_backend::FrameRecorder,
+        context: &kiri_backend::RenderContext,
     ) -> Result<(), kiri_backend::Error> {
-        let pass = RenderPass::default().color(
-            RenderTarget::color(context.backbuffer)
-                .clear(ClearRenderTarget::Color([1.0, 0.0, 0.0, 1.0])),
-        );
-        let recorder = context.record(pass);
-        recorder.barriers(&[ImageBarrier::new(
-            context.backbuffer,
-            ImageBarrierType::DiscardRenderTarget,
-        )]);
+        let targets = [RenderTarget::color(context.backbuffer)
+            .clear(ClearRenderTarget::Color([0.25, 0.25, 0.75, 1.0]))];
+        let recorder = context.record(self.render_pass, 0, &targets);
         recorder.finish();
         Ok(())
     }
 }
 fn main() {
     simple_logger::init().unwrap();
-    run_game(Loop::default()).unwrap();
+    run_game::<LoopError, Loop>().unwrap();
 }

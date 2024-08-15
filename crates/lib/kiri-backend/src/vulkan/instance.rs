@@ -13,15 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::ffi::{c_void, CStr, CString};
+use std::{
+    ffi::{c_void, CStr, CString},
+    sync::Arc,
+};
 
 use ash::vk::{self, Bool32, DebugUtilsMessengerEXT};
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use crate::{Error, PhysicalDeviceType, Surface};
-
-use super::{FindSuitableDevice, RenderDevice};
+use crate::Error;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -32,6 +33,8 @@ pub struct Instance {
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
 
+unsafe impl Send for Instance {}
+unsafe impl Sync for Instance {}
 #[derive(Debug)]
 pub struct InstanceBuilder {
     pub extensions: Vec<&'static CStr>,
@@ -66,8 +69,8 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Instance, Error> {
-        Instance::new(self)
+    pub fn build(self) -> Result<Arc<Instance>, Error> {
+        Ok(Arc::new(Instance::new(self)?))
     }
 }
 
@@ -104,7 +107,7 @@ impl Instance {
     }
 
     pub(crate) fn vulkan_version() -> u32 {
-        vk::make_api_version(0, 1, 3, 0)
+        vk::make_api_version(0, 1, 1, 0)
     }
 
     fn new(builder: InstanceBuilder) -> Result<Self, Error> {
@@ -163,18 +166,6 @@ impl Instance {
             display_handle: builder.display_handle,
             title: builder.title,
         })
-    }
-
-    pub fn create_context(
-        &self,
-        surface: &Surface,
-        preferences: &[PhysicalDeviceType],
-    ) -> Result<RenderDevice, Error> {
-        let physical_devices = self.enumerate_physical_devices()?;
-        let optimal = physical_devices
-            .find_suitable_device(surface, preferences)
-            .ok_or(Error::NoSuitableDevice)?;
-        RenderDevice::new(self, optimal)
     }
 
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {

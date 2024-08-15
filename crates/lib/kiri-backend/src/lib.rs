@@ -148,12 +148,14 @@ bitflags! {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ImageLayout {
+    Undefined,
     ShaderRead,
     ColorTarget,
     DepthStencilTarget,
     DepthStencilRead,
     TransferDestination,
     TransferSource,
+    Present,
 }
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
@@ -282,10 +284,10 @@ use speedy::{Readable, Writable};
 pub use vulkan::Error;
 pub use vulkan::{
     BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
-    BufferHandle, ClearRenderTarget, DrawStream, FrameRecorder, FrameState, ImageBarrier,
-    ImageBarrierType, ImageCreateDesc, ImageDesc, ImageHandle, InputVertexStreamAttrubute,
-    InputVertexStreamDesc, Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType,
-    PipelineHandle, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPass,
-    RenderPassLayout, RenderTarget, SkipMissingSlots, Surface, Swapchain, DYNAMIC_BINDING_SLOT,
+    BufferHandle, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc, ImageDesc,
+    ImageHandle, InputVertexStreamAttrubute, InputVertexStreamDesc, Instance, InstanceBuilder,
+    PhysicalDevice, PhysicalDeviceType, PipelineHandle, ProgramHandle, RasterPipelineCreateDesc,
+    RenderContext, RenderDevice, RenderPassHandle, RenderPassLayout, RenderTarget,
+    RenderTargetDesc, SkipMissingSlots, SubpassLayout, Surface, Swapchain, DYNAMIC_BINDING_SLOT,
     FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };

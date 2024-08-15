@@ -20,41 +20,18 @@ use std::{
     slice,
 };
 
-use arrayvec::ArrayVec;
-use ash::vk::{self, CompareOp};
+use ash::vk::{self};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    BlendFactor, BlendOp, CullMode, DepthCompareOp, Error, Format, ImageAspect, ImageHandle,
-    ImageLayout, PhysicalDevice, PipelineHandle, ProgramHandle, RenderDevice, RenderTargetLoadOp,
-    RenderTargetStoreOp,
+    BlendFactor, BlendOp, CullMode, DepthCompareOp, Error, Format, PhysicalDevice, PipelineHandle,
+    ProgramHandle, RenderDevice, RenderTargetLoadOp, RenderTargetStoreOp,
 };
 
-use super::{ImagePool, ImageViewDesc, PipelineCompilationContext};
-
-#[derive(Debug, Clone, Copy)]
-pub enum ClearRenderTarget {
-    None,
-    Color([f32; 4]),
-    DepthStencil(f32, u32),
-}
-
-impl From<ClearRenderTarget> for vk::ClearValue {
-    fn from(value: ClearRenderTarget) -> Self {
-        match value {
-            ClearRenderTarget::Color(color) => vk::ClearValue {
-                color: vk::ClearColorValue { float32: color },
-            },
-            ClearRenderTarget::DepthStencil(depth, stencil) => vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
-            },
-            ClearRenderTarget::None => vk::ClearValue::default(),
-        }
-    }
-}
+use super::{PipelineCompilationContext, RenderPassHandle};
 
 impl From<BlendFactor> for vk::BlendFactor {
     fn from(value: BlendFactor) -> Self {
@@ -129,134 +106,6 @@ impl From<RenderTargetStoreOp> for vk::AttachmentStoreOp {
     }
 }
 
-pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
-pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
-
-#[derive(Debug, Clone, Copy)]
-pub struct RenderTarget {
-    pub image: ImageHandle,
-    pub layout: ImageLayout,
-    pub load: RenderTargetLoadOp,
-    pub store: RenderTargetStoreOp,
-    pub clear: ClearRenderTarget,
-}
-
-impl RenderTarget {
-    pub fn color(image: ImageHandle) -> Self {
-        Self {
-            image,
-            layout: ImageLayout::ColorTarget,
-            load: RenderTargetLoadOp::Discard,
-            store: RenderTargetStoreOp::Store,
-            clear: ClearRenderTarget::None,
-        }
-    }
-
-    pub fn depth(image: ImageHandle) -> Self {
-        Self {
-            image,
-            layout: ImageLayout::DepthStencilTarget,
-            load: RenderTargetLoadOp::Discard,
-            store: RenderTargetStoreOp::Discard,
-            clear: ClearRenderTarget::None,
-        }
-    }
-
-    pub fn discard(mut self) -> Self {
-        self.store = RenderTargetStoreOp::Discard;
-        self
-    }
-
-    pub fn clear(mut self, color: ClearRenderTarget) -> Self {
-        self.load = RenderTargetLoadOp::Clear;
-        self.clear = color;
-        self
-    }
-
-    pub fn load(mut self) -> Self {
-        self.load = RenderTargetLoadOp::Load;
-        self
-    }
-
-    pub fn store(mut self) -> Self {
-        self.store = RenderTargetStoreOp::Store;
-        self
-    }
-
-    pub(crate) fn build(
-        &self,
-        device: &ash::Device,
-        images: &ImagePool,
-        aspect: ImageAspect,
-    ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let view = images
-            .get_cold(self.image)
-            .ok_or(Error::InvalidImageHandle(self.image))?
-            .view(device, ImageViewDesc::new(aspect))?;
-        let info = vk::RenderingAttachmentInfo::default()
-            .image_view(view)
-            .image_layout(self.layout.into())
-            .load_op(self.load.into())
-            .store_op(self.store.into())
-            .clear_value(self.clear.into());
-        Ok(info)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct RenderPassLayout<'a> {
-    pub color: &'a [Format],
-    pub depth: Option<Format>,
-}
-
-struct RenderPassLayoutInner {
-    pub color: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
-    pub depth: Option<vk::Format>,
-}
-
-impl<'a> From<RenderPassLayout<'a>> for RenderPassLayoutInner {
-    fn from(value: RenderPassLayout<'a>) -> Self {
-        RenderPassLayoutInner {
-            color: value
-                .color
-                .iter()
-                .map(|x| (*x).into())
-                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
-            depth: value.depth.map(|x| x.into()),
-        }
-    }
-}
-
-impl RenderPassLayoutInner {
-    fn build(&self) -> vk::PipelineRenderingCreateInfo {
-        let mut info =
-            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&self.color);
-        if let Some(depth) = self.depth {
-            info.depth_attachment_format = depth;
-        }
-        info
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct RenderPass {
-    // pub layout: &'a RenderPassLayout<'a>,
-    pub depth: Option<RenderTarget>,
-    pub color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-}
-
-impl RenderPass {
-    pub fn depth(mut self, depth: RenderTarget) -> Self {
-        self.depth = Some(depth);
-        self
-    }
-
-    pub fn color(mut self, color: RenderTarget) -> Self {
-        self.color.push(color);
-        self
-    }
-}
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PipelineBlendDesc {
     pub src: vk::BlendFactor,
@@ -274,8 +123,7 @@ impl PipelineBlendDesc {
 ///
 /// Contains all data to create new pipeline.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct RasterPipelineCreateDesc<'a> {
-    pub streams: &'a [InputVertexStreamDesc<'a>],
+pub struct RasterPipelineCreateDesc {
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
     /// Culling
@@ -309,16 +157,16 @@ impl<'a> InputVertexStreamDesc<'a> {
     }
 }
 
-impl<'a> RasterPipelineCreateDesc<'a> {
-    pub fn new(streams: &'a [InputVertexStreamDesc<'a>]) -> Self {
-        Self {
-            streams,
-            blend: None,
-            cull: None,
-            depth_test: Some(CompareOp::LESS),
-            depth_write: true,
-        }
-    }
+impl RasterPipelineCreateDesc {
+    // pub fn new(streams: &'a [InputVertexStreamDesc<'a>]) -> Self {
+    //     Self {
+    //         streams,
+    //         blend: None,
+    //         cull: None,
+    //         depth_test: Some(CompareOp::LESS),
+    //         depth_write: true,
+    //     }
+    // }
 
     pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
         self.blend = Some((color, alpha));
@@ -393,16 +241,26 @@ impl<'a> RasterPipelineCreateDesc<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CompilePipelineData {
+    pub program: ProgramHandle,
+    pub pass: RenderPassHandle,
+    pub subpass: u32,
+    pub streams: &'static [InputVertexStreamDesc<'static>],
+    pub desc: RasterPipelineCreateDesc,
+}
+
 fn compile_raster_pipeline(
     context: &PipelineCompilationContext,
-    program: ProgramHandle,
-    render_pass_layout: &RenderPassLayout,
-    desc: &RasterPipelineCreateDesc,
+    data: CompilePipelineData,
     cache: vk::PipelineCache,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
     let program = context
-        .resolve_program(program)
-        .ok_or(Error::InvalidProgramHandle(program))?;
+        .resolve_program(data.program)
+        .ok_or(Error::InvalidProgramHandle(data.program))?;
+    let render_pass = context
+        .resolve_render_pass(data.pass)
+        .ok_or(Error::InvalidRenderPassHandle(data.pass))?;
     let shader_create_info = program
         .shaders
         .iter()
@@ -418,7 +276,7 @@ fn compile_raster_pipeline(
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
-    let streams = desc
+    let streams = data
         .streams
         .iter()
         .enumerate()
@@ -463,7 +321,7 @@ fn compile_raster_pipeline(
         .line_width(1.0)
         .depth_bias_clamp(0.0)
         .depth_bias_slope_factor(0.0)
-        .cull_mode(desc.cull.unwrap_or(vk::CullModeFlags::NONE))
+        .cull_mode(data.desc.cull.unwrap_or(vk::CullModeFlags::NONE))
         .front_face(vk::FrontFace::CLOCKWISE);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
@@ -475,9 +333,9 @@ fn compile_raster_pipeline(
 
     let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
         .stencil_test_enable(false)
-        .depth_write_enable(desc.depth_write);
+        .depth_write_enable(data.desc.depth_write);
 
-    if let Some(depth_compare) = desc.depth_test {
+    if let Some(depth_compare) = data.desc.depth_test {
         depthstencil_state = depthstencil_state
             .depth_test_enable(true)
             .depth_compare_op(depth_compare);
@@ -486,7 +344,7 @@ fn compile_raster_pipeline(
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
         .color_write_mask(vk::ColorComponentFlags::RGBA);
 
-    let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
+    let color_blend_attachment = if let Some((color, alpha)) = data.desc.blend {
         color_blend_attachment
             .blend_enable(true)
             .src_color_blend_factor(color.src)
@@ -502,9 +360,6 @@ fn compile_raster_pipeline(
         .attachments(slice::from_ref(&color_blend_attachment))
         .logic_op_enable(false);
 
-    let render_pass_layout: RenderPassLayoutInner = (*render_pass_layout).into();
-    let mut rendering_info = render_pass_layout.build();
-
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .layout(program.pipeline_layout)
         .stages(&shader_create_info)
@@ -516,7 +371,8 @@ fn compile_raster_pipeline(
         .input_assembly_state(&assembly_state_create_info)
         .rasterization_state(&rasterizer_state)
         .depth_stencil_state(&depthstencil_state)
-        .push_next(&mut rendering_info);
+        .render_pass(render_pass.raw)
+        .subpass(data.subpass);
 
     let pipeline = unsafe {
         context.device.create_graphics_pipelines(
@@ -529,15 +385,17 @@ fn compile_raster_pipeline(
     Ok((pipeline, program.pipeline_layout()))
 }
 
-impl<'game> RenderDevice<'game> {
+impl RenderDevice {
     /// Create pipeline
     ///
     /// Pipeline will be compiled right before next frame
     pub fn create_pipeline(
         &self,
         program: ProgramHandle,
-        pass_layout: &RenderPassLayout<'static>,
-        desc: &RasterPipelineCreateDesc<'static>,
+        pass: RenderPassHandle,
+        subpass: u32,
+        streams: &'static [InputVertexStreamDesc<'static>],
+        desc: &RasterPipelineCreateDesc,
     ) -> PipelineHandle {
         let handle = {
             let mut pipelines = self.pipelines.write();
@@ -545,41 +403,44 @@ impl<'game> RenderDevice<'game> {
             pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()));
             PipelineHandle(index)
         };
-        self.pipelines_to_compile
-            .lock()
-            .insert(handle, (program, *pass_layout, *desc));
+        self.pipelines_to_compile.lock().insert(
+            handle,
+            CompilePipelineData {
+                program,
+                pass,
+                subpass,
+                streams,
+                desc: *desc,
+            },
+        );
         handle
     }
 
     pub(crate) async fn compile_pipeline<'a>(
         context: &PipelineCompilationContext<'a>,
         handle: PipelineHandle,
-        program: ProgramHandle,
-        pass: &RenderPassLayout<'static>,
-        desc: &RasterPipelineCreateDesc<'static>,
+        data: CompilePipelineData,
         cache: vk::PipelineCache,
     ) -> Result<(PipelineHandle, vk::Pipeline, vk::PipelineLayout), Error> {
-        let (pipeline, layout) = compile_raster_pipeline(context, program, pass, desc, cache)?;
+        let (pipeline, layout) = compile_raster_pipeline(context, data, cache)?;
         Ok((handle, pipeline, layout))
     }
 
     pub(crate) async fn compile_all_pipelines(&self) -> Result<(), Error> {
         puffin::profile_function!();
         let programs = self.programs.read();
+        let render_passes = self.render_passes.read();
         let context = PipelineCompilationContext {
             device: &self.device,
             programs: &programs,
+            render_passes: &render_passes,
         };
         let to_compile = self.pipelines_to_compile.lock().drain().collect::<Vec<_>>();
 
         let compiled = ComputeTaskPool::get().scope(|s| {
-            to_compile
-                .iter()
-                .for_each(|(handle, (program, pass, desc))| {
-                    s.spawn(Self::compile_pipeline(
-                        &context, *handle, *program, pass, desc, self.cache,
-                    ))
-                })
+            to_compile.iter().for_each(|(handle, data)| {
+                s.spawn(Self::compile_pipeline(&context, *handle, *data, self.cache))
+            })
         });
         let mut pipelines = self.pipelines.write();
         for result in compiled {

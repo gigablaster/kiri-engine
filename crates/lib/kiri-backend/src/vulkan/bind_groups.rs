@@ -100,6 +100,9 @@ pub struct Uniforms {
     min: u32,
 }
 
+unsafe impl Send for Uniforms {}
+unsafe impl Sync for Uniforms {}
+
 impl Uniforms {
     pub fn new(
         device: &ash::Device,
@@ -235,7 +238,7 @@ pub(crate) struct BindGroupData {
     dynamic_storages: Vec<DynamicBufferBinding>,
 }
 
-impl<'game> RenderDevice<'game> {
+impl RenderDevice {
     pub fn create_bind_group(
         &self,
         layout: &BindGroupDesc<'static>,

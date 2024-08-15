@@ -14,14 +14,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
-use ash::vk::{self};
+use ash::vk::{self, Rect2D};
 use parking_lot::Mutex;
 
-use crate::{vulkan::DYNAMIC_BINDING_SLOT, PipelineHandle, RenderPass};
+use crate::{vulkan::DYNAMIC_BINDING_SLOT, PipelineHandle};
 
 use super::{
-    barrier::ImageBarrier, BindGroupHandle, BindGroupPool, BufferHandle, BufferPool, BufferSlice,
-    Error, Frame, ImageHandle, PipelinePool, MAX_DESCRIPTOR_SETS,
+    BindGroupHandle, BindGroupPool, BufferHandle, BufferPool, BufferSlice, Error, Frame,
+    ImageHandle, PipelinePool, RenderPassHandle, RenderTarget, MAX_ATTACHMENTS,
+    MAX_DESCRIPTOR_SETS,
 };
 
 const MAX_VERTEX_STREAMS: usize = 2;
@@ -265,16 +266,48 @@ impl Default for DrawState {
 
 pub(crate) struct DrawStreamExecuteContext<'a> {
     pub device: &'a ash::Device,
-    pub cb: vk::CommandBuffer,
+    pub frame: &'a Frame,
     pub pipelines: &'a PipelinePool,
     pub bind_groups: &'a BindGroupPool,
     pub buffers: &'a BufferPool,
     pub empty: vk::DescriptorSet,
+    pub fbo: vk::Framebuffer,
+    pub pass: vk::RenderPass,
+    pub subpass: u32,
+    pub render_area: Rect2D,
 }
 
 impl DrawStream {
-    pub(crate) fn execute(&self, context: DrawStreamExecuteContext) -> Result<(), Error> {
+    pub(crate) fn execute(
+        &self,
+        context: DrawStreamExecuteContext,
+    ) -> Result<vk::CommandBuffer, Error> {
         puffin::profile_function!();
+        let cb = context.frame.secondary_buffer(context.device)?;
+        let inheritence = vk::CommandBufferInheritanceInfo::default()
+            .framebuffer(context.fbo)
+            .render_pass(context.pass)
+            .subpass(context.subpass);
+
+        let begin_info = vk::CommandBufferBeginInfo::default()
+            .inheritance_info(&inheritence)
+            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE);
+
+        unsafe {
+            context.device.begin_command_buffer(cb, &begin_info)?;
+            context.device.cmd_set_viewport(
+                cb,
+                0,
+                &[vk::Viewport::default()
+                    .width(context.render_area.extent.width as _)
+                    .height(context.render_area.extent.height as _)
+                    .max_depth(0.0)
+                    .max_depth(1.0)],
+            );
+            context
+                .device
+                .cmd_set_scissor(cb, 0, &[context.render_area]);
+        }
         let mut reader = DrawStreamReader::new(&self.stream);
         let mut first_index = 0;
         let mut index_count = 0;
@@ -295,11 +328,9 @@ impl DrawStream {
                 )?;
                 pipeline_layout = layout;
                 unsafe {
-                    context.device.cmd_bind_pipeline(
-                        context.cb,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    );
+                    context
+                        .device
+                        .cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 }
                 rebind_all = true;
             }
@@ -320,7 +351,7 @@ impl DrawStream {
                     };
                     unsafe {
                         context.device.cmd_bind_vertex_buffers(
-                            context.cb,
+                            cb,
                             i as _,
                             &[buffer],
                             &[offset as u64],
@@ -340,7 +371,7 @@ impl DrawStream {
                 );
                 unsafe {
                     context.device.cmd_bind_index_buffer(
-                        context.cb,
+                        cb,
                         buffer,
                         offset as _,
                         vk::IndexType::UINT16,
@@ -364,7 +395,7 @@ impl DrawStream {
                             .ok_or(Error::InvalidBindGroupHandle(bind_group))?;
                         unsafe {
                             context.device.cmd_bind_descriptor_sets(
-                                context.cb,
+                                cb,
                                 vk::PipelineBindPoint::GRAPHICS,
                                 pipeline_layout,
                                 i as _,
@@ -425,7 +456,7 @@ impl DrawStream {
                     .collect::<ArrayVec<_, MAX_DYNAMIC_OFFSETS>>();
                 unsafe {
                     context.device.cmd_bind_descriptor_sets(
-                        context.cb,
+                        cb,
                         vk::PipelineBindPoint::GRAPHICS,
                         pipeline_layout,
                         0,
@@ -450,7 +481,7 @@ impl DrawStream {
                     .collect::<ArrayVec<_, MAX_DYNAMIC_OFFSETS>>();
                 unsafe {
                     context.device.cmd_bind_descriptor_sets(
-                        context.cb,
+                        cb,
                         vk::PipelineBindPoint::GRAPHICS,
                         pipeline_layout,
                         DYNAMIC_BINDING_SLOT as _,
@@ -462,7 +493,7 @@ impl DrawStream {
             }
             unsafe {
                 context.device.cmd_draw_indexed(
-                    context.cb,
+                    cb,
                     index_count,
                     instance_count,
                     first_index,
@@ -471,44 +502,53 @@ impl DrawStream {
                 );
             }
         }
-        Ok(())
+        unsafe { context.device.end_command_buffer(cb) }?;
+        Ok(cb)
     }
 }
 
 #[derive(Debug)]
 pub struct RenderPassRecorder<'a> {
-    context: &'a FrameRecorder<'a>,
-    pass: RenderPass,
+    context: &'a RenderContext<'a>,
+    pub targets: &'a [RenderTarget],
+    pass: RenderPassHandle,
+    subpass: u32,
     streams: Mutex<Vec<DrawStream>>,
-    image_barriers: Mutex<Vec<ImageBarrier>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct RecordedRenderPass {
-    pub pass: RenderPass,
+    pub targets: ArrayVec<RenderTarget, MAX_ATTACHMENTS>,
+    pub pass: RenderPassHandle,
+    pub subpass: u32,
     pub streams: Vec<DrawStream>,
-    pub image_barriers: Vec<ImageBarrier>,
 }
 
 #[derive(Debug)]
-pub struct FrameRecorder<'a> {
+pub struct RenderContext<'a> {
     pub(crate) frame: &'a Frame,
     pub(crate) passes: Mutex<Vec<RecordedRenderPass>>,
     pub backbuffer: ImageHandle,
     pub(crate) temp_buffer: BufferHandle,
 }
 
-impl<'a> FrameRecorder<'a> {
+impl<'a> RenderContext<'a> {
     pub(crate) fn finish(self) -> Vec<RecordedRenderPass> {
         self.passes.into_inner()
     }
 
-    pub fn record(&'a self, pass: RenderPass) -> RenderPassRecorder<'a> {
+    pub fn record(
+        &'a self,
+        pass: RenderPassHandle,
+        subpass: u32,
+        targets: &'a [RenderTarget],
+    ) -> RenderPassRecorder<'a> {
         RenderPassRecorder {
             context: self,
+            targets,
             pass,
+            subpass,
             streams: Default::default(),
-            image_barriers: Default::default(),
         }
     }
 
@@ -530,19 +570,26 @@ impl<'a> RenderPassRecorder<'a> {
     pub fn finish(self) {
         self.context.passes.lock().push(RecordedRenderPass {
             pass: self.pass,
+            targets: self
+                .targets
+                .iter()
+                .copied()
+                .collect::<ArrayVec<_, MAX_ATTACHMENTS>>(),
+            subpass: self.subpass,
             streams: self.streams.into_inner(),
-            image_barriers: self.image_barriers.into_inner(),
         });
-    }
-
-    pub fn barriers(&self, barriers: &[ImageBarrier]) {
-        let mut target = self.image_barriers.lock();
-        barriers.iter().for_each(|x| target.push(*x));
     }
 }
 
 impl RecordedRenderPass {
-    pub(crate) fn consume(self) -> (RenderPass, Vec<DrawStream>, Vec<ImageBarrier>) {
-        (self.pass, self.streams, self.image_barriers)
+    pub(crate) fn consume(
+        self,
+    ) -> (
+        RenderPassHandle,
+        u32,
+        Vec<DrawStream>,
+        ArrayVec<RenderTarget, MAX_ATTACHMENTS>,
+    ) {
+        (self.pass, self.subpass, self.streams, self.targets)
     }
 }

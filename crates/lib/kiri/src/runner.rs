@@ -13,112 +13,184 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::error::Error;
+use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
-use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPoolBuilder};
-use kiri_backend::{FrameState, InstanceBuilder, PhysicalDeviceType, Surface, Swapchain};
+use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
+use kiri_backend::{
+    FrameState, InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain,
+};
 use kiri_common::TimeFilter;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
-use sdl2::{
-    event::Event,
-    keyboard::{Keycode, Mod},
-    video::{FullscreenType, WindowBuildError},
+use winit::{
+    application::ApplicationHandler,
+    dpi::PhysicalSize,
+    error::{EventLoopError, OsError},
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-use crate::{GameClient, GameTickState};
+use crate::{GameClient, GameError, GameTickState};
 
-#[derive(Debug, thiserror::Error)]
-pub enum GameError<E: Error> {
-    GameFailure(E),
-    GraphicsFailure(kiri_backend::Error),
-    SdlError(String),
-}
-
-impl<E: Error> From<kiri_backend::Error> for GameError<E> {
-    fn from(value: kiri_backend::Error) -> Self {
-        Self::GraphicsFailure(value)
-    }
-}
-
-impl<E: Error> From<String> for GameError<E> {
-    fn from(value: String) -> Self {
-        Self::SdlError(value)
-    }
-}
-
-impl<E: Error> From<WindowBuildError> for GameError<E> {
-    fn from(value: WindowBuildError) -> Self {
-        Self::SdlError(value.to_string())
-    }
+struct InnerData<E: Error, G: GameClient<E>> {
+    window: Window,
+    swapchain: Option<Swapchain>,
+    surface: Surface,
+    device: Arc<RenderDevice>,
+    _marker1: PhantomData<E>,
+    _marker2: PhantomData<G>,
 }
 
 impl<E: Error> From<HandleError> for GameError<E> {
     fn from(value: HandleError) -> Self {
-        Self::SdlError(value.to_string())
+        Self::LoopError(value.to_string())
     }
 }
 
-pub fn run_game<E: Error, G: GameClient<E>>(game: G) -> Result<(), GameError<E>> {
-    let mut game = game;
-    let sdl = sdl2::init()?;
-    let video = sdl.video()?;
-    let mut window = video
-        .window(game.title(), 1280, 720)
-        .allow_highdpi()
-        .position_centered()
-        .vulkan()
-        .build()?;
-    let instance = InstanceBuilder::new(window.display_handle()?.as_raw(), game.info());
-    #[cfg(debug_assertions)]
-    let instance = instance.debug(true);
-    let instance = instance.build()?;
-    let surface = Surface::new(&instance, window.window_handle()?.as_raw())?;
-    let var_name = [PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated];
-    let context = instance.create_context(&surface, &var_name)?;
-    let timer = sdl.timer()?;
-    let last_time = timer.performance_counter();
-    let mut swapchain = None;
-    let mut pump = sdl.event_pump()?;
-    let mut game_time = TimeFilter::default();
-    ComputeTaskPool::get_or_init(|| TaskPoolBuilder::new().build());
-    AsyncComputeTaskPool::get_or_init(|| TaskPoolBuilder::new().build());
-    IoTaskPool::get_or_init(|| TaskPoolBuilder::new().build());
-    'main: loop {
-        for event in pump.poll_iter() {
+impl<E: Error> From<OsError> for GameError<E> {
+    fn from(value: OsError) -> Self {
+        Self::LoopError(value.to_string())
+    }
+}
+
+impl<E: Error> From<EventLoopError> for GameError<E> {
+    fn from(value: EventLoopError) -> Self {
+        Self::LoopError(value.to_string())
+    }
+}
+
+impl<E: Error, G: GameClient<E>> Drop for InnerData<E, G> {
+    fn drop(&mut self) {
+        self.swapchain = None;
+    }
+}
+
+impl<E: Error, G: GameClient<E>> InnerData<E, G> {
+    fn new(event_loop: &ActiveEventLoop) -> Result<Self, GameError<E>> {
+        let window = event_loop.create_window(
+            WindowAttributes::default()
+                .with_inner_size(PhysicalSize::new(1280, 720))
+                .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE),
+        )?;
+        let instance =
+            InstanceBuilder::new(window.display_handle()?.display_handle()?.into(), G::info())
+                .debug(true)
+                .build()?;
+        let surface = Surface::new(&instance, window.window_handle()?.window_handle()?.into())?;
+        let device = RenderDevice::new(
+            &instance,
+            &surface,
+            &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
+        )?;
+        Ok(Self {
+            window,
+            device,
+            surface,
+            swapchain: None,
+            _marker1: PhantomData,
+            _marker2: PhantomData,
+        })
+    }
+}
+
+struct GameApp<E: Error, G: GameClient<E>> {
+    game: Option<G>,
+    inner: Option<InnerData<E, G>>,
+    last_time: Instant,
+    game_time: TimeFilter,
+    _marker: PhantomData<E>,
+}
+
+impl<E: Error, G: GameClient<E>> Default for GameApp<E, G> {
+    fn default() -> Self {
+        Self {
+            game: None,
+            inner: None,
+            last_time: Instant::now(),
+            game_time: Default::default(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let internal = self
+            .inner
+            .get_or_insert(InnerData::new(event_loop).unwrap());
+        let game = self.game.get_or_insert(G::new(&internal.device).unwrap());
+        game.resumed().unwrap();
+        internal.window.set_title(game.title());
+        self.last_time = Instant::now();
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(game) = self.game.as_mut() {
+            game.suspended().unwrap();
+        }
+        if let Some(inner) = self.inner.as_mut() {
+            inner.swapchain = None;
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if let Some(inner) = &mut self.inner {
             match event {
-                Event::Quit { .. } => break 'main,
-                Event::KeyDown {
-                    keycode: Some(Keycode::RETURN),
-                    keymod: Mod::LALTMOD,
-                    ..
-                } => {
-                    if window.fullscreen_state() == FullscreenType::Desktop {
-                        window.set_fullscreen(FullscreenType::Off)?;
+                WindowEvent::CloseRequested => {
+                    event_loop.exit();
+                    self.inner = None;
+                }
+                WindowEvent::Resized(_) => inner.swapchain = None,
+                WindowEvent::RedrawRequested => {
+                    let dims = [
+                        inner.window.inner_size().width,
+                        inner.window.inner_size().height,
+                    ];
+                    let game = self.game.as_mut().unwrap();
+                    if dims[0] > 0 && dims[1] > 0 {
+                        if inner.swapchain.is_none() {
+                            inner.swapchain =
+                                Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap())
+                        }
+                        let swapchain = inner.swapchain.as_ref().unwrap();
+                        if let FrameState::NeedRecreateSwapchain = inner
+                            .device
+                            .frame(swapchain, |context| {
+                                game.draw(self.game_time.game_time(), context)
+                            })
+                            .unwrap()
+                        {
+                            inner.swapchain = None;
+                        }
+                        let now = Instant::now();
+                        self.game_time.sample(self.last_time - now);
+                        if let GameTickState::Exit =
+                            game.update(self.game_time.game_time()).unwrap()
+                        {
+                            event_loop.exit();
+                        }
+                        inner.window.request_redraw();
                     } else {
-                        window.set_fullscreen(FullscreenType::Desktop)?;
+                        self.last_time = Instant::now();
                     }
                 }
                 _ => {}
             }
         }
-        let new_time = timer.performance_counter();
-        let dt =
-            game_time.sample((new_time - last_time) as f64 / timer.performance_frequency() as f64);
-        if let GameTickState::Exit = game.update(dt).map_err(|e| GameError::GameFailure(e))? {
-            break 'main;
-        }
-        let size = window.vulkan_drawable_size();
-        if size.0 > 0 && size.1 > 0 {
-            if let Some(swapchain_frame) = &swapchain {
-                if let FrameState::NeedRecreateSwapchain =
-                    context.frame(swapchain_frame, |context| game.draw(dt, context))?
-                {
-                    swapchain = None
-                }
-            } else {
-                swapchain = Some(Swapchain::new(&context, &surface, [size.0, size.1])?);
-            }
-        }
     }
-    Ok(())
+}
+
+pub fn run_game<E: Error, G: GameClient<E>>() -> Result<(), GameError<E>> {
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    ComputeTaskPool::get_or_init(TaskPool::new);
+    AsyncComputeTaskPool::get_or_init(TaskPool::new);
+    IoTaskPool::get_or_init(TaskPool::new);
+    let mut app = GameApp::<E, G>::default();
+    Ok(event_loop.run_app(&mut app)?)
 }

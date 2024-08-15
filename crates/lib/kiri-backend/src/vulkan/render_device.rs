@@ -23,7 +23,8 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::vk::{self};
+use ash::vk::{self, RenderPassBeginInfo};
+use bevy_tasks::ComputeTaskPool;
 use directories::ProjectDirs;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
@@ -34,20 +35,17 @@ use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
 
 use crate::{
-    vulkan::{
-        barrier::{image_barrier, ImageBarrier, ImageBarrierType},
-        AcquiredSurface, Buffer, DrawStreamExecuteContext, FrameRecorder, MAX_ATTACHMENTS,
-        MAX_COLOR_ATTACHMENTS,
-    },
-    Error, ImageAspect, Instance, RasterPipelineCreateDesc, Swapchain,
+    vulkan::{AcquiredSurface, Buffer, DrawStreamExecuteContext, RenderContext, MAX_ATTACHMENTS},
+    Error, Instance, ShaderStage, Swapchain,
 };
 
 use super::{
     create_descriptor_set_layout, drop_list::DropList, frame::Frame, image::Image,
     load_or_create_pipeline_cache, physical_device::PhysicalDevice, save_pipeline_cache,
-    staging::Staging, BindGroupData, BindGroupDesc, DescriptorSetLayout, GpuAllocator,
-    GpuDescriptor, GpuDescriptorAllocator, GpuMemory, Program, RenderPassLayout, SwapchainImage,
-    Uniforms, TEMP_BUFFER_SIZE, UNIFORM_BUFFER_SIZE,
+    staging::Staging, BindGroupData, BindGroupDesc, CompilePipelineData, DescriptorSetLayout,
+    DrawStream, FindSuitableDevice, GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory,
+    PhysicalDeviceType, Program, RenderPass, Surface, SwapchainImage, Uniforms, TEMP_BUFFER_SIZE,
+    UNIFORM_BUFFER_SIZE,
 };
 
 pub type ImageHandle = Handle<vk::Image>;
@@ -59,6 +57,15 @@ pub struct BufferSlice(pub BufferHandle, pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RenderPassHandle(pub(crate) u32);
+
+impl Default for RenderPassHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PipelineHandle(pub(crate) u32);
@@ -75,6 +82,7 @@ pub(crate) type ProgramPool = Vec<Program>;
 pub(crate) type PipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
 pub(crate) type BindGroupPool =
     HotColdPool<vk::DescriptorSet, BindGroupData, SentinelPoolStrategy<vk::DescriptorSet>>;
+pub(crate) type RenderPassPool = Vec<RenderPass>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -90,12 +98,12 @@ pub enum FrameState {
 }
 
 const EMPTY_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-    stage: vk::ShaderStageFlags::ALL_GRAPHICS,
+    stage: ShaderStage::Graphics,
     set: &[],
 };
 
-pub struct RenderDevice<'game> {
-    pub(crate) instance: &'game Instance,
+pub struct RenderDevice {
+    pub(crate) instance: Arc<Instance>,
     pub(crate) pdevice: PhysicalDevice,
     pub(crate) device: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
@@ -105,17 +113,9 @@ pub struct RenderDevice<'game> {
     pub(crate) images: RwLock<ImagePool>,
     pub(crate) buffers: RwLock<BufferPool>,
     pub(crate) programs: RwLock<ProgramPool>,
+    pub(crate) render_passes: RwLock<RenderPassPool>,
     pub(crate) pipelines: RwLock<PipelinePool>,
-    pub(crate) pipelines_to_compile: Mutex<
-        HashMap<
-            PipelineHandle,
-            (
-                ProgramHandle,
-                RenderPassLayout<'static>,
-                RasterPipelineCreateDesc<'static>,
-            ),
-        >,
-    >,
+    pub(crate) pipelines_to_compile: Mutex<HashMap<PipelineHandle, CompilePipelineData>>,
     frames: [Mutex<Arc<Frame>>; 2],
     pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
@@ -133,14 +133,23 @@ pub struct RenderDevice<'game> {
     empty: Option<GpuDescriptor>,
 }
 
-impl<'game> Debug for RenderDevice<'game> {
+impl Debug for RenderDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
     }
 }
 
-impl<'game> RenderDevice<'game> {
-    pub(crate) fn new(instance: &'game Instance, pdevice: PhysicalDevice) -> Result<Self, Error> {
+impl RenderDevice {
+    pub fn new(
+        instance: &Arc<Instance>,
+        surface: &Surface,
+        preferences: &[PhysicalDeviceType],
+    ) -> Result<Arc<Self>, Error> {
+        let physical_devices = instance.enumerate_physical_devices()?;
+        let pdevice = physical_devices
+            .find_suitable_device(surface, preferences)
+            .ok_or(Error::NoSuitableDevice)?;
+
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(Error::NoSuitableDevice);
         };
@@ -185,18 +194,7 @@ impl<'game> RenderDevice<'game> {
             )
         }
 
-        let mut dynamic_rendering =
-            vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
-        let mut synchronization2 =
-            vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
-        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
-        let mut buffer_device_address =
-            vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
         let mut features = vk::PhysicalDeviceFeatures2::default()
-            .push_next(&mut dynamic_rendering)
-            .push_next(&mut synchronization2)
-            .push_next(&mut maintenance4)
-            .push_next(&mut buffer_device_address)
             .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
@@ -321,9 +319,9 @@ impl<'game> RenderDevice<'game> {
             )
         }?
         .remove(0);
-        Ok(Self {
+        Ok(Arc::new(Self {
             staging,
-            instance,
+            instance: instance.clone(),
             samplers,
             pdevice,
             memory_allocator: Mutex::new(memory_allocator),
@@ -339,6 +337,7 @@ impl<'game> RenderDevice<'game> {
             images: Default::default(),
             buffers: RwLock::new(buffers),
             programs: Default::default(),
+            render_passes: Default::default(),
             pipelines: Default::default(),
             pipelines_to_compile: Default::default(),
             cache,
@@ -349,7 +348,7 @@ impl<'game> RenderDevice<'game> {
             layouts: Mutex::new(layouts),
             uniforms: Mutex::new(uniforms),
             empty: Some(empty),
-        })
+        }))
     }
 
     fn get_pipelines_path(instance: &Instance) -> Option<PathBuf> {
@@ -472,8 +471,8 @@ impl<'game> RenderDevice<'game> {
     pub fn submit_graphics(
         &self,
         cb: (vk::CommandBuffer, vk::Fence),
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
-        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
     ) -> Result<(), Error> {
         self.submit(*self.universal_queue.lock(), cb.0, cb.1, wait, triggers)
     }
@@ -481,8 +480,8 @@ impl<'game> RenderDevice<'game> {
     pub fn submit_transfer(
         &self,
         cb: (vk::CommandBuffer, vk::Fence),
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
-        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
     ) -> Result<(), Error> {
         self.submit(*self.transfer_queue.lock(), cb.0, cb.1, wait, triggers)
     }
@@ -492,33 +491,19 @@ impl<'game> RenderDevice<'game> {
         queue: vk::Queue,
         cb: vk::CommandBuffer,
         fence: vk::Fence,
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
-        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
     ) -> Result<(), Error> {
         puffin::profile_function!();
-        // let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
-        let wait = wait
-            .iter()
-            .map(|x| {
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(x.0)
-                    .stage_mask(x.1)
-            })
-            .collect::<ArrayVec<_, 16>>();
-        let signal = triggers
-            .iter()
-            .map(|x| {
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(x.0)
-                    .stage_mask(x.1)
-            })
-            .collect::<ArrayVec<_, 16>>();
-        let command_bufers = [vk::CommandBufferSubmitInfo::default().command_buffer(cb)];
-        let info = vk::SubmitInfo2::default()
-            .command_buffer_infos(&command_bufers)
-            .wait_semaphore_infos(&wait)
-            .signal_semaphore_infos(&signal);
-        unsafe { self.device.queue_submit2(queue, &[info], fence) }?;
+        let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
+        let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
+        let command_bufers = [cb];
+        let info = vk::SubmitInfo::default()
+            .command_buffers(&command_bufers)
+            .wait_semaphores(&wait_semaphores)
+            .signal_semaphores(triggers)
+            .wait_dst_stage_mask(&wait_stages);
+        unsafe { self.device.queue_submit(queue, &[info], fence) }?;
         Ok(())
     }
 
@@ -552,7 +537,7 @@ impl<'game> RenderDevice<'game> {
         mem::swap(frame, next_frame);
     }
 
-    pub fn frame<F: FnOnce(&mut FrameRecorder) -> Result<(), Error>>(
+    pub fn frame<F: FnOnce(&mut RenderContext) -> Result<(), Error>>(
         &self,
         target: &Swapchain,
         f: F,
@@ -567,7 +552,7 @@ impl<'game> RenderDevice<'game> {
 
         let passes = {
             puffin::profile_scope!("Generate frame");
-            let mut context = FrameRecorder {
+            let mut context = RenderContext {
                 frame: &frame,
                 passes: Default::default(),
                 backbuffer: target.image,
@@ -577,43 +562,29 @@ impl<'game> RenderDevice<'game> {
             context.finish()
         };
         self.update_descriptors()?;
+        bevy_tasks::block_on(compile_pipelines)?;
         {
+            puffin::profile_scope!("Execute frame");
             let mut staging = self.staging.lock();
             let upload = staging.upload(self)?;
             let images = self.images.read();
             let bind_groups = self.bind_groups.lock();
             let buffers = self.buffers.read();
-            bevy_tasks::block_on(compile_pipelines)?;
+            let render_passes = self.render_passes.read();
+            let pipelines = self.pipelines.read();
+
             unsafe {
                 self.device
                     .begin_command_buffer(frame.cb, &vk::CommandBufferBeginInfo::default())
             }?;
+
             staging.execute_pending_barriers(self, frame.cb);
-            let pipelines = self.pipelines.read();
             for pass in passes {
-                let (pass, streams, image_barriers) = pass.consume();
-                let sizes = pass
-                    .color
-                    .iter()
-                    .map(|x| images.get_cold(x.image).unwrap().desc.dims)
-                    .chain(
-                        pass.depth
-                            .map(|x| images.get_cold(x.image).unwrap().desc.dims),
-                    )
-                    .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-                assert!(!sizes.is_empty());
-                let size = sizes[0];
-                assert!(sizes.iter().all(|x| *x == size));
-                let color_attachments = pass
-                    .color
-                    .iter()
-                    .map(|x| x.build(&self.device, &images, ImageAspect::Color).unwrap())
-                    .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-                let depth_attachment = pass
-                    .depth
-                    .iter()
-                    .map(|x| x.build(&self.device, &images, ImageAspect::Depth).unwrap())
-                    .next();
+                let (pass, subpass, streams, targets) = pass.consume();
+                let pass = render_passes
+                    .get(pass.0 as usize)
+                    .ok_or(Error::InvalidRenderPassHandle(pass))?;
+                let (fbo, size) = pass.framebuffer(&self.device, &images, &targets)?;
                 let render_area = vk::Rect2D {
                     offset: vk::Offset2D::default(),
                     extent: vk::Extent2D {
@@ -621,62 +592,76 @@ impl<'game> RenderDevice<'game> {
                         height: size[1],
                     },
                 };
-                let mut rendering_info = vk::RenderingInfo::default()
-                    .color_attachments(&color_attachments)
-                    .layer_count(1)
+                let clear_values = targets
+                    .iter()
+                    .copied()
+                    .map(|x| x.clear.into())
+                    .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+                let begin_info = RenderPassBeginInfo::default()
+                    .clear_values(&clear_values)
+                    .framebuffer(fbo)
+                    .render_pass(pass.raw)
                     .render_area(render_area);
-                if let Some(depth) = &depth_attachment {
-                    rendering_info = rendering_info.depth_attachment(depth);
-                }
-                image_barrier(&self.device, frame.cb, &images, &image_barriers);
                 unsafe {
-                    self.device.cmd_begin_rendering(frame.cb, &rendering_info);
-                    self.device.cmd_set_viewport(
+                    self.device.cmd_begin_render_pass(
                         frame.cb,
-                        0,
-                        &[vk::Viewport::default()
-                            .width(size[0] as _)
-                            .height(size[1] as _)
-                            .max_depth(0.0)
-                            .max_depth(1.0)],
+                        &begin_info,
+                        vk::SubpassContents::SECONDARY_COMMAND_BUFFERS,
                     );
-                    self.device.cmd_set_scissor(frame.cb, 0, &[render_area]);
                 }
-                streams.into_iter().try_for_each(|x| {
-                    x.execute(DrawStreamExecuteContext {
-                        device: &self.device,
-                        cb: frame.cb,
-                        pipelines: &pipelines,
-                        empty: *self.empty.as_ref().unwrap().raw(),
-                        bind_groups: &bind_groups,
-                        buffers: &buffers,
+
+                let executed = ComputeTaskPool::get().scope(|s| {
+                    streams.into_iter().for_each(|stream| {
+                        s.spawn(Self::execute_single_stream(
+                            stream,
+                            DrawStreamExecuteContext {
+                                device: &self.device,
+                                frame: &frame,
+                                pipelines: &pipelines,
+                                bind_groups: &bind_groups,
+                                buffers: &buffers,
+                                empty: *self.empty.as_ref().unwrap().raw(),
+                                fbo,
+                                pass: pass.raw,
+                                subpass,
+                                render_area,
+                            },
+                        ))
                     })
-                })?;
-                unsafe { self.device.cmd_end_rendering(frame.cb) };
+                });
+                let mut cbs = Vec::with_capacity(executed.len());
+                for cb in executed {
+                    cbs.push(cb?);
+                }
+                unsafe {
+                    if !cbs.is_empty() {
+                        self.device.cmd_execute_commands(frame.cb, &cbs);
+                    }
+                    self.device.cmd_end_render_pass(frame.cb);
+                }
             }
-            image_barrier(
-                &self.device,
-                frame.cb,
-                &images,
-                &[ImageBarrier::new(target.image, ImageBarrierType::ToPresent)],
-            );
             unsafe { self.device.end_command_buffer(frame.cb) }?;
             let wait = [
                 upload,
                 (
                     target.acquire_semaphore,
-                    vk::PipelineStageFlags2::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 ),
             ];
-            let trigger = [(
-                target.rendering_finished,
-                vk::PipelineStageFlags2::ALL_GRAPHICS,
-            )];
+            let trigger = [target.rendering_finished];
             self.submit_graphics((frame.cb, frame.fence), &wait, &trigger)?;
             self.end_frame(frame);
         }
         self.present(target);
         Ok(FrameState::Rendered)
+    }
+
+    #[allow(clippy::needless_lifetimes)]
+    async fn execute_single_stream<'a>(
+        stream: DrawStream,
+        context: DrawStreamExecuteContext<'a>,
+    ) -> Result<vk::CommandBuffer, Error> {
+        stream.execute(context)
     }
 
     fn present(&self, image: SwapchainImage) {
@@ -700,7 +685,7 @@ impl<'game> RenderDevice<'game> {
     }
 }
 
-impl<'game> Drop for RenderDevice<'game> {
+impl Drop for RenderDevice {
     fn drop(&mut self) {
         unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         self.staging.lock().free(self);
@@ -759,8 +744,12 @@ impl<'game> Drop for RenderDevice<'game> {
         self.samplers
             .drain()
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
+        self.render_passes
+            .write()
+            .drain(..)
+            .for_each(|x| x.free(&self.device));
         if self.cache != vk::PipelineCache::null() {
-            if let Some(path) = Self::get_pipelines_path(self.instance) {
+            if let Some(path) = Self::get_pipelines_path(&self.instance) {
                 if let Err(err) = save_pipeline_cache(&self.device, &self.pdevice, self.cache, path)
                 {
                     error!("Failed to save pipeline cache: {}", err);
@@ -791,10 +780,15 @@ impl<'game> Drop for RenderDevice<'game> {
 pub(crate) struct PipelineCompilationContext<'a> {
     pub device: &'a ash::Device,
     pub programs: &'a ProgramPool,
+    pub render_passes: &'a RenderPassPool,
 }
 
 impl<'a> PipelineCompilationContext<'a> {
     pub fn resolve_program(&self, handle: ProgramHandle) -> Option<&Program> {
         self.programs.get(handle.0 as usize)
+    }
+
+    pub fn resolve_render_pass(&self, handle: RenderPassHandle) -> Option<&RenderPass> {
+        self.render_passes.get(handle.0 as usize)
     }
 }

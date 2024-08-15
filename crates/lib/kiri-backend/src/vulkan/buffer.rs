@@ -147,7 +147,7 @@ impl<'a> BufferCreateDesc<'a> {
     }
 }
 
-impl<'game> RenderDevice<'game> {
+impl RenderDevice {
     pub fn create_buffer(
         &self,
         desc: BufferCreateDesc,

@@ -17,7 +17,7 @@ mod runner;
 
 use std::error::Error;
 
-use kiri_backend::FrameRecorder;
+use kiri_backend::{RenderContext, RenderDevice};
 use kiri_common::GameTime;
 pub use runner::*;
 
@@ -26,9 +26,35 @@ pub enum GameTickState {
     Exit,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum GameError<E: Error> {
+    GameFailure(E),
+    GraphicsFailure(kiri_backend::Error),
+    LoopError(String),
+}
+
+impl<E: Error> From<kiri_backend::Error> for GameError<E> {
+    fn from(value: kiri_backend::Error) -> Self {
+        Self::GraphicsFailure(value)
+    }
+}
+
+impl<E: Error> From<String> for GameError<E> {
+    fn from(value: String) -> Self {
+        Self::LoopError(value)
+    }
+}
+
 pub trait GameClient<E: Error>: Default {
-    fn info(&self) -> (&str, &str, &str);
+    fn new(render_device: &RenderDevice) -> Result<Self, GameError<E>>;
+    fn info() -> (&'static str, &'static str, &'static str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw(&self, time: GameTime, context: &FrameRecorder) -> Result<(), kiri_backend::Error>;
+    fn draw(&self, time: GameTime, context: &RenderContext) -> Result<(), kiri_backend::Error>;
+    fn resumed(&mut self) -> Result<(), GameError<E>> {
+        Ok(())
+    }
+    fn suspended(&mut self) -> Result<(), GameError<E>> {
+        Ok(())
+    }
 }

@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod barrier;
 mod bind_groups;
 mod buffer;
 mod draw_stream;
@@ -26,11 +25,11 @@ mod physical_device;
 mod pipeline;
 mod program;
 mod render_device;
+mod render_pass;
 mod staging;
 mod swapchain;
 
 use ash::vk;
-pub use barrier::*;
 pub use bind_groups::*;
 pub use buffer::*;
 pub use draw_stream::*;
@@ -43,6 +42,7 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
 pub use render_device::*;
+pub use render_pass::*;
 pub use swapchain::*;
 
 use crate::Format;
