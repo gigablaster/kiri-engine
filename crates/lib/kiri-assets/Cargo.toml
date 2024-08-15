@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
-speedy = { version = "0.8.7", features = ["speedy-derive", "uuid"] }
+kiri-vfs = { path = "../kiri-vfs" }
+speedy = { version = "0.8.7", features = ["speedy-derive"] }
 bytes = "1.7.1"
 siphasher = "1.0.1"
 image = { version = "0.25.2", default-features = false, features = [

@@ -1,0 +1,15 @@
+[package]
+name = "kiri-vfs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kiri-common = { path = "../kiri-common" }
+thiserror = "1.0.61"
+speedy = { version = "0.8.7", features = ["speedy-derive"] }
+bytes = "1.7.1"
+byteorder = "1.5.0"
+lazy_static = "1.5.0"
+parking_lot = "0.12.3"
+zstd = "0.13.2"
+memmap2 = "0.9.4"

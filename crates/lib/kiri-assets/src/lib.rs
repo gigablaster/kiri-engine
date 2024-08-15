@@ -16,26 +16,8 @@ mod gltf;
 mod image;
 mod mesh_builder;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
-pub struct AssetReference(u64);
-
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
-
-impl From<u64> for AssetReference {
-    fn from(value: u64) -> Self {
-        Self(value)
-    }
-}
-
-impl Display for AssetReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:8.8x}", self.0)
-    }
-}
-
-unsafe impl Send for AssetReference {}
-unsafe impl Sync for AssetReference {}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -74,9 +56,7 @@ pub trait AssetImportContext: Send + Sync {
 }
 
 use std::{
-    env,
-    fmt::Display,
-    fs,
+    env, fs,
     io::{self, Read},
     path::{Path, PathBuf},
     time::SystemTime,
@@ -85,8 +65,8 @@ use std::{
 use bytes::Bytes;
 pub use gltf::*;
 pub use image::*;
+pub use kiri_vfs::AssetReference;
 pub use mesh_builder::*;
-use speedy::{Readable, Writable};
 use thiserror::Error;
 
 pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
