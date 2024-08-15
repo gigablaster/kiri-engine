@@ -285,9 +285,10 @@ pub use vulkan::Error;
 pub use vulkan::{
     BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
     BufferHandle, BufferSlice, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc,
-    ImageDesc, ImageHandle, InputVertexStreamAttrubute, InputVertexStreamDesc, Instance,
-    InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, ProgramHandle,
-    RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle, RenderPassLayout,
-    RenderTarget, RenderTargetDesc, SkipMissingSlots, SubpassLayout, Surface, Swapchain,
-    DYNAMIC_BINDING_SLOT, FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
+    ImageDesc, ImageHandle, ImageSubresourceData, InputVertexStreamAttrubute,
+    InputVertexStreamDesc, Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType,
+    PipelineHandle, ProgramHandle, RasterPipelineCreateDesc, RenderContext, RenderDevice,
+    RenderPassHandle, RenderPassLayout, RenderTarget, RenderTargetDesc, SkipMissingSlots,
+    SubpassLayout, Surface, Swapchain, DYNAMIC_BINDING_SLOT, FRAME_BINDING_SLOT,
+    MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };
