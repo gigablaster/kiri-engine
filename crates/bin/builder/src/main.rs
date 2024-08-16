@@ -10,25 +10,83 @@ use std::{
 };
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
+use bytes::Bytes;
 use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_cached_asset_path, Asset, AssetImportContext, AssetReference, AssetSource, Error,
     GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset,
     MeshAssetBuilder, ROOT_DATA_PATH,
 };
+use kiri_vfs::PackageBuilder;
 use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
-#[derive(Debug, Default)]
 struct ContentProcessor {
     images: Mutex<HashMap<AssetReference, ImageAssetSource>>,
     meshes: Mutex<HashMap<AssetReference, (GltfMeshSource, MeshAssetBuilder)>>,
     scenes: Mutex<HashMap<AssetReference, GltfSceneSource>>,
+    packer: Mutex<Box<dyn Packer>>,
 }
 
 unsafe impl Send for ContentProcessor {}
 unsafe impl Sync for ContentProcessor {}
+
+trait Packer: Send + Sync {
+    fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool;
+    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()>;
+    fn finish(&mut self) -> io::Result<()>;
+}
+
+#[derive(Default)]
+struct LocalCachePacker {}
+
+struct ArchivePacker {
+    packer: PackageBuilder,
+}
+
+impl ArchivePacker {
+    pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        Ok(Self {
+            packer: PackageBuilder::new(path)?,
+        })
+    }
+}
+
+impl Packer for ArchivePacker {
+    fn asset_need_rebuild(&self, _asset: &dyn AssetSource) -> bool {
+        true
+    }
+
+    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()> {
+        self.packer.pack(reference, data)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        self.packer.finish()
+    }
+}
+
+impl Packer for LocalCachePacker {
+    fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool {
+        let reference = asset.reference();
+        if let Some(last_update) = get_cached_asset_change_time(reference) {
+            asset.changed(last_update)
+        } else {
+            true
+        }
+    }
+
+    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()> {
+        let mut file = File::create(get_cached_asset_path(reference))?;
+        file.write_all(&data)?;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 impl AssetImportContext for ContentProcessor {
     fn import_image(&self, source: ImageAssetSource) -> AssetReference {
@@ -65,16 +123,16 @@ fn get_cached_asset_change_time(reference: AssetReference) -> Option<SystemTime>
     None
 }
 
-fn asset_need_rebuild<T: AssetSource>(asset: &T) -> bool {
-    let reference = asset.reference();
-    if let Some(last_update) = get_cached_asset_change_time(reference) {
-        asset.changed(last_update)
-    } else {
-        true
-    }
-}
-
 impl ContentProcessor {
+    pub fn new(packer: Box<dyn Packer>) -> Self {
+        Self {
+            images: Default::default(),
+            meshes: Default::default(),
+            scenes: Default::default(),
+            packer: Mutex::new(packer),
+        }
+    }
+
     async fn build_scene(&self, scene: GltfSceneSource) {
         info!("Building scene {:?}", scene);
         if let Err(err) = self.build_asset::<GltfAsset, GltfSceneSource>(scene.clone()) {
@@ -97,10 +155,10 @@ impl ContentProcessor {
         }
     }
 
-    pub fn process(&self) {
+    pub fn process(self) -> io::Result<()> {
         AsyncComputeTaskPool::get().scope(|s| {
             for (_, scene) in self.scenes.lock().iter() {
-                if asset_need_rebuild(scene) {
+                if self.asset_need_rebuild(scene) {
                     s.spawn(self.build_scene(scene.clone()))
                 }
             }
@@ -114,11 +172,12 @@ impl ContentProcessor {
 
         AsyncComputeTaskPool::get().scope(|s| {
             for (_, image) in self.images.lock().iter() {
-                if asset_need_rebuild(image) {
+                if self.asset_need_rebuild(image) {
                     s.spawn(self.build_image(image.clone()));
                 }
             }
         });
+        self.packer.lock().finish()
     }
 
     fn build_asset<T: ImportAsset<U>, U: AssetSource>(&self, source: U) -> Result<(), Error> {
@@ -127,9 +186,12 @@ impl ContentProcessor {
     }
 
     fn write_asset<T: Asset>(&self, reference: AssetReference, asset: T) -> io::Result<()> {
-        let mut file = File::create(get_cached_asset_path(reference))?;
-        file.write_all(&asset.save()?)?;
+        self.packer.lock().save_asset(reference, asset.save()?)?;
         Ok(())
+    }
+
+    fn asset_need_rebuild<T: AssetSource>(&self, asset: &T) -> bool {
+        self.packer.lock().asset_need_rebuild(asset)
     }
 }
 
@@ -169,11 +231,26 @@ fn main() {
                 .required(false)
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("bundle")
+                .long("bundle")
+                .required(false)
+                .action(ArgAction::SetTrue)
+                .conflicts_with("watch"),
+        )
         .get_matches();
     AsyncComputeTaskPool::get_or_init(TaskPool::new);
-    let processor = ContentProcessor::default();
+
+    let processor = if args.get_flag("bundle") {
+        ContentProcessor::new(Box::new(ArchivePacker::new("data.bin").unwrap()))
+    } else {
+        ContentProcessor::new(Box::new(LocalCachePacker::default()))
+    };
     collect(&processor, Path::new(ROOT_DATA_PATH)).unwrap();
-    processor.process();
+    if let Err(err) = processor.process() {
+        error!("Failed to build assets: {:?}", err);
+        return;
+    }
     let need_reimport = Arc::new(AtomicBool::new(false));
 
     if args.get_flag("watch") {
@@ -189,9 +266,11 @@ fn main() {
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
             if need_reimport.load(Ordering::Acquire) {
-                let processor = ContentProcessor::default();
+                let processor = ContentProcessor::new(Box::new(LocalCachePacker::default()));
                 collect(&processor, Path::new(ROOT_DATA_PATH)).unwrap();
-                processor.process();
+                if let Err(err) = processor.process() {
+                    error!("Failed to build assets: {:?}", err);
+                }
                 need_reimport.store(false, Ordering::Release);
             }
         }

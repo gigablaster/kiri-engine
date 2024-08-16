@@ -266,9 +266,11 @@ name = "builder"
 version = "0.1.0"
 dependencies = [
  "bevy_tasks",
+ "bytes",
  "clap",
  "env_logger",
  "kiri-assets",
+ "kiri-vfs",
  "log",
  "notify",
  "parking_lot",

@@ -123,7 +123,7 @@ impl PackageBuilder {
         Ok(())
     }
 
-    pub fn finish(mut self) -> io::Result<()> {
+    pub fn finish(&mut self) -> io::Result<()> {
         let offset = self.align_file()?;
         let bytes = self.directory.write_to_vec()?;
         self.file.write_all(&bytes)?;

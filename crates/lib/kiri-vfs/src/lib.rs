@@ -25,7 +25,7 @@ use std::{
 
 use bytes::Bytes;
 use lazy_static::lazy_static;
-use packed::PackedArchive;
+pub use packed::*;
 use parking_lot::RwLock;
 use speedy::{Readable, Writable};
 
