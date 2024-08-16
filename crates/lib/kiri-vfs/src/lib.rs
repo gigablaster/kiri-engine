@@ -19,7 +19,6 @@ use std::{
     fmt::Display,
     fs::File,
     io::{self, Read, Write},
-    os::windows::fs::MetadataExt,
     path::PathBuf,
 };
 
@@ -85,7 +84,7 @@ impl Archive for LocalCache {
     fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
         let path = PathBuf::from(LOCAL_CACHE_PATH).join(format!("{}.bin", reference));
         let mut file = File::open(path)?;
-        let size = file.metadata()?.file_size() as usize;
+        let size = file.metadata()?.len() as usize;
         let size = if size == 0 { 1 } else { size };
         let mut data = vec![0u8; size];
         file.read_exact(&mut data)?;
