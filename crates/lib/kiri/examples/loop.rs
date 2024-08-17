@@ -28,20 +28,15 @@ impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
     fn new(render_device: &Arc<RenderDevice>) -> Result<Self, kiri::GameError<LoopError>> {
-        let layout = RenderPassLayout {
-            color_targets: &[RenderTargetDesc::new(Format::BGRA8_UNORM)
-                .clear_input()
-                .store_output()
-                .initial_layout(ImageLayout::Undefined)
-                .final_layout(ImageLayout::Present)],
-            depth_target: None,
-            subpasses: &[SubpassLayout {
-                depth_write: false,
-                depth_read: false,
-                color_writes: &[0],
-                color_reads: &[],
-            }],
-        };
+        let layout = RenderPassLayout::default()
+            .color_target(
+                RenderTargetDesc::new(Format::BGRA8_UNORM)
+                    .clear_input()
+                    .store_output()
+                    .initial_layout(ImageLayout::Undefined)
+                    .final_layout(ImageLayout::Present),
+            )
+            .subpass(SubpassLayout::default().color_write(&[0]));
         let cache = AssetCache::new(render_device)?;
         cache.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
         cache.get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;

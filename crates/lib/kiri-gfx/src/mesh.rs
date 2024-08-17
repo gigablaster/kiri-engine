@@ -16,10 +16,7 @@
 use std::collections::HashMap;
 
 use kiri_assets::BoneIndex;
-use kiri_backend::{
-    BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindType, BufferSlice, ImageHandle,
-    ShaderStage,
-};
+use kiri_backend::{BindGroupHandle, BufferSlice, ImageHandle};
 
 use crate::StaticMeshHandle;
 
@@ -45,50 +42,50 @@ pub(crate) struct PbrMaterialShaderData {
     pub alpha_cutoff: f32,
 }
 
-pub(crate) const STATIC_MESH_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-    stage: ShaderStage::Graphics,
-    set: &[BindGroupSlotDesc {
-        name: "object",
-        slot: 0,
-        ty: BindType::Uniform,
-    }],
-};
+// pub(crate) const STATIC_MESH_BIND_GROUP: BindGroupDesc = BindGroupDesc {
+//     stage: ShaderStage::Graphics,
+//     set: &[BindGroupSlotDesc {
+//         name: "object",
+//         slot: 0,
+//         ty: BindType::Uniform,
+//     }],
+// };
 
-pub(crate) const PBR_MATERIAL_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-    stage: ShaderStage::Graphics,
-    set: &[
-        BindGroupSlotDesc {
-            name: "material",
-            slot: 0,
-            ty: BindType::Uniform,
-        },
-        BindGroupSlotDesc {
-            name: "base_color",
-            slot: 1,
-            ty: BindType::CombinedSampledImage,
-        },
-        BindGroupSlotDesc {
-            name: "normals",
-            slot: 2,
-            ty: BindType::CombinedSampledImage,
-        },
-        BindGroupSlotDesc {
-            name: "metallic_roughness",
-            slot: 3,
-            ty: BindType::CombinedSampledImage,
-        },
-        BindGroupSlotDesc {
-            name: "occlusion",
-            slot: 4,
-            ty: BindType::CombinedSampledImage,
-        },
-        BindGroupSlotDesc {
-            name: "emissive",
-            slot: 5,
-            ty: BindType::CombinedSampledImage,
-        },
-    ],
-};
+// pub(crate) const PBR_MATERIAL_BIND_GROUP: BindGroupDesc = BindGroupDesc {
+//     stage: ShaderStage::Graphics,
+//     set: &[
+//         BindGroupSlotDesc {
+//             name: "material",
+//             slot: 0,
+//             ty: BindType::Uniform,
+//         },
+//         BindGroupSlotDesc {
+//             name: "base_color",
+//             slot: 1,
+//             ty: BindType::CombinedSampledImage,
+//         },
+//         BindGroupSlotDesc {
+//             name: "normals",
+//             slot: 2,
+//             ty: BindType::CombinedSampledImage,
+//         },
+//         BindGroupSlotDesc {
+//             name: "metallic_roughness",
+//             slot: 3,
+//             ty: BindType::CombinedSampledImage,
+//         },
+//         BindGroupSlotDesc {
+//             name: "occlusion",
+//             slot: 4,
+//             ty: BindType::CombinedSampledImage,
+//         },
+//         BindGroupSlotDesc {
+//             name: "emissive",
+//             slot: 5,
+//             ty: BindType::CombinedSampledImage,
+//         },
+//     ],
+// };
 
 #[derive(Debug)]
 pub struct RenderMeshMaterial {

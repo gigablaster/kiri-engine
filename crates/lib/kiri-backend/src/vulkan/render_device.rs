@@ -36,7 +36,7 @@ use std::fmt::Debug;
 
 use crate::{
     vulkan::{AcquiredSurface, Buffer, DrawStreamExecuteContext, RenderContext, MAX_ATTACHMENTS},
-    Error, Instance, RenderDeviceProperties, ShaderStage, Swapchain,
+    Error, Instance, RenderDeviceProperties, Swapchain,
 };
 
 use super::{
@@ -103,11 +103,6 @@ pub enum FrameState {
     NeedRecreateSwapchain,
 }
 
-pub const EMPTY_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-    stage: ShaderStage::Graphics,
-    set: &[],
-};
-
 pub struct RenderDevice {
     pub(crate) instance: Arc<Instance>,
     pub(crate) pdevice: PhysicalDevice,
@@ -135,7 +130,7 @@ pub struct RenderDevice {
     pub(crate) bind_groups: Mutex<BindGroupPool>,
     pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
     pub(crate) uniforms: Mutex<Uniforms>,
-    pub(crate) layouts: Mutex<HashMap<BindGroupDesc<'static>, Arc<DescriptorSetLayout>>>,
+    pub(crate) layouts: Mutex<HashMap<BindGroupDesc, Arc<DescriptorSetLayout>>>,
     empty: Option<GpuDescriptor>,
 }
 
@@ -313,9 +308,10 @@ impl RenderDevice {
             &mut memory_allocator,
             &pdevice,
         )?;
-        let empty_layout = create_descriptor_set_layout(&device, &samplers, &EMPTY_BIND_GROUP)?;
+        let empty_layout_desc = BindGroupDesc::graphics();
+        let empty_layout = create_descriptor_set_layout(&device, &samplers, &empty_layout_desc)?;
         let mut layouts = HashMap::default();
-        layouts.insert(EMPTY_BIND_GROUP, empty_layout.clone());
+        layouts.insert(empty_layout_desc, empty_layout.clone());
         let empty = unsafe {
             descriptor_allocator.allocate(
                 AshDescriptorDevice::wrap(&device),

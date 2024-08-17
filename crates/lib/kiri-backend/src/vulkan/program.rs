@@ -66,17 +66,39 @@ impl From<ShaderStage> for vk::ShaderStageFlags {
     }
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct BindGroupSlotDesc<'a> {
-    pub name: &'a str,
-    pub slot: usize,
-    pub ty: BindType,
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+struct BindGroupSlotDesc {
+    name: String,
+    slot: usize,
+    ty: BindType,
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct BindGroupDesc<'a> {
-    pub stage: ShaderStage,
-    pub set: &'a [BindGroupSlotDesc<'a>],
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+pub struct BindGroupDesc {
+    stage: ShaderStage,
+    set: Vec<BindGroupSlotDesc>,
+}
+
+impl BindGroupDesc {
+    pub fn graphics() -> Self {
+        Self {
+            stage: ShaderStage::Graphics,
+            set: Default::default(),
+        }
+    }
+
+    pub fn slot(mut self, slot: usize, name: &str, ty: BindType) -> Self {
+        self.add_slot(slot, name, ty);
+        self
+    }
+
+    pub fn add_slot(&mut self, slot: usize, name: &str, ty: BindType) {
+        self.set.push(BindGroupSlotDesc {
+            name: name.to_owned(),
+            slot,
+            ty,
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -111,7 +133,7 @@ pub(crate) fn create_descriptor_set_layout(
             }
             BindType::CombinedSampledImage | BindType::Sampler => {
                 let sampler = immutable_samplers
-                    .get(&get_suitable_sampler_desc(binding.name))
+                    .get(&get_suitable_sampler_desc(&binding.name))
                     .unwrap();
                 samplers.push((sampler, binding.slot, 1, binding.ty, set.stage));
                 if binding.ty == BindType::CombinedSampledImage {
@@ -168,10 +190,10 @@ pub(crate) fn create_descriptor_set_layout(
     }))
 }
 
-fn create_binding<'a>(
+fn create_binding(
     stage: ShaderStage,
-    binding: &'a BindGroupSlotDesc,
-) -> vk::DescriptorSetLayoutBinding<'a> {
+    binding: &BindGroupSlotDesc,
+) -> vk::DescriptorSetLayoutBinding {
     vk::DescriptorSetLayoutBinding::default()
         .binding(binding.slot as _)
         .descriptor_type(binding.ty.into())
@@ -318,7 +340,7 @@ impl Program {
     pub fn new(
         context: &RenderDevice,
         shaders: &[ShaderDesc],
-        layout: &[BindGroupDesc<'static>],
+        layout: &[BindGroupDesc],
     ) -> Result<Self, Error> {
         let mut stages = ShaderStage::empty();
         let shaders = shaders
@@ -361,7 +383,7 @@ impl RenderDevice {
     pub fn create_program(
         &self,
         shaders: &[ShaderDesc],
-        layout: &[BindGroupDesc<'static>],
+        layout: &[BindGroupDesc],
     ) -> Result<ProgramHandle, Error> {
         let program = Program::new(self, shaders, layout)?;
         let mut programs = self.programs.write();

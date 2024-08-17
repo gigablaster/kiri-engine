@@ -136,15 +136,33 @@ pub struct RasterPipelineCreateDesc {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexAttrubute {
-    pub format: Format,
-    pub offset: usize,
+struct InputVertexAttrubute {
+    format: Format,
+    offset: usize,
 }
 
 #[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct InputVertexStreamLayout<'a>(pub &'a [InputVertexAttrubute]);
+pub struct InputVertexStreamLayout(Vec<InputVertexAttrubute>);
 
-impl<'a> InputVertexStreamLayout<'a> {
+pub trait PipelineVertex {
+    fn layout() -> impl Iterator<Item = InputVertexStreamLayout>;
+}
+
+impl InputVertexStreamLayout {
+    pub fn attribute(mut self, format: Format) -> Self {
+        self.add_attribute(format);
+        self
+    }
+
+    pub fn add_attribute(&mut self, format: Format) {
+        let offset = self
+            .0
+            .iter()
+            .map(|x| x.format.size_in_bytes().align(4))
+            .sum();
+        self.0.push(InputVertexAttrubute { format, offset });
+    }
+
     fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let stride = self
             .0
@@ -253,12 +271,12 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct CompilePipelineData {
     pub program: ProgramHandle,
     pub pass: RenderPassHandle,
     pub subpass: u32,
-    pub streams: &'static [InputVertexStreamLayout<'static>],
+    pub streams: Vec<InputVertexStreamLayout>,
     pub desc: RasterPipelineCreateDesc,
 }
 
@@ -406,7 +424,7 @@ impl RenderDevice {
         program: ProgramHandle,
         pass: RenderPassHandle,
         subpass: u32,
-        streams: &'static [InputVertexStreamLayout<'static>],
+        streams: &[InputVertexStreamLayout],
         desc: &RasterPipelineCreateDesc,
     ) -> PipelineHandle {
         let handle = {
@@ -421,7 +439,7 @@ impl RenderDevice {
                 program,
                 pass,
                 subpass,
-                streams,
+                streams: streams.to_vec(),
                 desc: *desc,
             },
         );
@@ -447,12 +465,14 @@ impl RenderDevice {
             programs: &programs,
             render_passes: &render_passes,
         };
-        let to_compile = self.pipelines_to_compile.lock().drain().collect::<Vec<_>>();
 
         let compiled = ComputeTaskPool::get().scope(|s| {
-            to_compile.iter().for_each(|(handle, data)| {
-                s.spawn(Self::compile_pipeline(&context, *handle, *data, self.cache))
-            })
+            self.pipelines_to_compile
+                .lock()
+                .drain()
+                .for_each(|(handle, data)| {
+                    s.spawn(Self::compile_pipeline(&context, handle, data, self.cache))
+                })
         });
         let mut pipelines = self.pipelines.write();
         for result in compiled {

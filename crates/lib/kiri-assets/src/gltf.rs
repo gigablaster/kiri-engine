@@ -21,7 +21,7 @@ use std::{
 };
 
 use gltf::mesh::Mode;
-use kiri_backend::{Format, InputVertexAttrubute, InputVertexStreamLayout};
+use kiri_backend::{Format, InputVertexStreamLayout, PipelineVertex};
 use normalize_path::NormalizePath;
 use siphasher::sip::SipHasher;
 use speedy::{Readable, Writable};
@@ -83,28 +83,17 @@ pub struct StaticMeshVertex {
     pub uv2: [u16; 2],
 }
 
-pub const STATIC_MESH_INPUT_LAYOUT: &[InputVertexStreamLayout] = &[InputVertexStreamLayout(&[
-    InputVertexAttrubute {
-        format: Format::RGB16_UNORM,
-        offset: 0,
-    },
-    InputVertexAttrubute {
-        format: Format::RG16_UNORM,
-        offset: 8,
-    },
-    InputVertexAttrubute {
-        format: Format::RG16_UNORM,
-        offset: 12,
-    },
-    InputVertexAttrubute {
-        format: Format::RG16_UNORM,
-        offset: 16,
-    },
-    InputVertexAttrubute {
-        format: Format::RG16_UNORM,
-        offset: 20,
-    },
-])];
+impl PipelineVertex for StaticMeshVertex {
+    fn layout() -> impl Iterator<Item = InputVertexStreamLayout> {
+        let layout: InputVertexStreamLayout = InputVertexStreamLayout::default()
+            .attribute(Format::RGB16_UNORM)
+            .attribute(Format::RG16_UNORM)
+            .attribute(Format::RG16_UNORM)
+            .attribute(Format::RG16_UNORM)
+            .attribute(Format::RG16_UNORM);
+        Some(layout).into_iter()
+    }
+}
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 pub enum MeshMaterialBlend {

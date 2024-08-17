@@ -31,9 +31,10 @@ use kiri_assets::{
     ImageAssetSource, ImageAssetType, MeshMaterialBlend, ShaderAssetSource, StaticMeshAsset,
 };
 use kiri_backend::{
-    BindGroupDesc, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect, ImageCreateDesc,
-    ImageHandle, ImageSubresourceData, InputVertexStreamLayout, PipelineHandle, ProgramHandle,
-    RasterPipelineCreateDesc, RenderDevice, RenderPassHandle, ShaderDesc,
+    BindGroupDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect,
+    ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayout, PipelineHandle,
+    PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPassHandle,
+    ShaderDesc,
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -42,8 +43,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
     Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshShaderData, RenderMeshSurface,
-    RenderScene, RenderSceneGroup, StaticRenderMesh, PBR_MATERIAL_BIND_GROUP,
-    STATIC_MESH_BIND_GROUP,
+    RenderScene, RenderSceneGroup, StaticRenderMesh,
 };
 
 pub type StaticMeshHandle = Handle<StaticRenderMesh>;
@@ -89,25 +89,22 @@ impl<T: Hash + Eq + PartialEq> AssetLifetimeTracker<T> {
 pub struct RasterPipelineDesc {
     pub vertex_shader: Option<String>,
     pub fragment_shader: Option<String>,
-    pub layout: &'static [BindGroupDesc<'static>],
-    pub streams: &'static [InputVertexStreamLayout<'static>],
+    pub layout: Vec<BindGroupDesc>,
+    pub streams: Vec<InputVertexStreamLayout>,
     pub pass: RenderPassHandle,
     pub subpass: u32,
     pub desc: RasterPipelineCreateDesc,
 }
 
 impl RasterPipelineDesc {
-    pub fn new(
-        layout: &'static [BindGroupDesc<'static>],
-        streams: &'static [InputVertexStreamLayout<'static>],
-    ) -> Self {
+    pub fn new<T: PipelineVertex>(layout: &[BindGroupDesc]) -> Self {
         Self {
             vertex_shader: None,
             fragment_shader: None,
-            layout,
+            layout: layout.to_vec(),
             pass: Default::default(),
             subpass: 0,
-            streams,
+            streams: T::layout().collect(),
             desc: Default::default(),
         }
     }
@@ -137,7 +134,7 @@ impl RasterPipelineDesc {
 struct ProgramKey {
     vertex_shader: Option<String>,
     fragment_shader: Option<String>,
-    layout: &'static [BindGroupDesc<'static>],
+    layout: Vec<BindGroupDesc>,
 }
 
 #[derive(Debug)]
@@ -372,13 +369,23 @@ impl AssetCache {
             .update_buffer(self.mesh_pool, vertex_offset, &asset.vertices)?;
         self.device
             .update_buffer(self.mesh_pool, index_offset, &asset.indices)?;
-        let object_bind_group = self.device.create_bind_group(&STATIC_MESH_BIND_GROUP)?;
+        let object_bind_group = self
+            .device
+            .create_bind_group(BindGroupDesc::graphics().slot(0, "object", BindType::Uniform))?;
         let mut surfaces = Vec::with_capacity(asset.surfaces.len());
         let mut materials = Vec::with_capacity(asset.materials.len());
         for material in &asset.materials {
             materials.push((
                 material.clone(),
-                self.device.create_bind_group(&PBR_MATERIAL_BIND_GROUP)?,
+                self.device.create_bind_group(
+                    BindGroupDesc::graphics()
+                        .slot(0, "material", BindType::Uniform)
+                        .slot(1, "base_color", BindType::CombinedSampledImage)
+                        .slot(2, "normals", BindType::CombinedSampledImage)
+                        .slot(3, "metallic_roughness", BindType::CombinedSampledImage)
+                        .slot(4, "occlusion", BindType::CombinedSampledImage)
+                        .slot(5, "emissive", BindType::CombinedSampledImage),
+                )?,
             ));
         }
         for surface in &asset.surfaces {
@@ -521,12 +528,12 @@ impl AssetCache {
         &self,
         vertex_shader: Option<String>,
         fragment_shader: Option<String>,
-        layout: &'static [BindGroupDesc<'static>],
+        layout: &[BindGroupDesc],
     ) -> Result<ProgramHandle, Error> {
         let key = ProgramKey {
             vertex_shader: vertex_shader.clone(),
             fragment_shader: fragment_shader.clone(),
-            layout,
+            layout: layout.to_vec(),
         };
         let programs = self.programs.upgradable_read();
 
@@ -595,13 +602,13 @@ impl AssetCache {
                 let program = self.get_or_load_program(
                     desc.vertex_shader.clone(),
                     desc.fragment_shader.clone(),
-                    desc.layout,
+                    &desc.layout,
                 )?;
                 let pipeline = self.device.create_pipeline(
                     program,
                     desc.pass,
                     desc.subpass,
-                    desc.streams,
+                    &desc.streams,
                     &desc.desc,
                 );
                 pipelines.insert(desc, pipeline);
