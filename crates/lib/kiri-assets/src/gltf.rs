@@ -89,13 +89,9 @@ pub enum MeshMaterialBlend {
     AlphaTest(f32),
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
+#[derive(Debug, Clone, Readable, Writable)]
 pub struct MeshMaterialAsset {
-    pub base_color: AssetReference,
-    pub normals: AssetReference,
-    pub metallic_roughness: AssetReference,
-    pub occlusion: AssetReference,
-    pub emissive: AssetReference,
+    pub images: HashMap<String, AssetReference>,
     pub emissive_power: f32,
     pub blend: MeshMaterialBlend,
 }
@@ -305,11 +301,14 @@ fn process_material(
         )
     };
     MeshMaterialAsset {
-        base_color,
-        normals,
-        metallic_roughness,
-        occlusion,
-        emissive,
+        images: [
+            ("base_color".into(), base_color),
+            ("normals".into(), normals),
+            ("metallic_roughness".into(), metallic_roughness),
+            ("occlusion".into(), occlusion),
+            ("emissive".into(), emissive),
+        ]
+        .into(),
         emissive_power: material.emissive_strength().unwrap_or(1.0),
         blend: process_blend(&material),
     }
