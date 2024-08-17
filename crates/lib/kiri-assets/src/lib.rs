@@ -15,6 +15,7 @@
 mod gltf;
 mod image;
 mod mesh_builder;
+mod shader;
 
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
@@ -52,7 +53,6 @@ pub trait ImportAsset<T: AssetSource>: Asset + Send + Sync {
 pub trait AssetImportContext: Send + Sync {
     fn import_image(&self, source: ImageAssetSource) -> AssetReference;
     fn import_static_mesh(&self, source: GltfMeshSource, data: MeshAssetBuilder) -> AssetReference;
-    fn import_scene(&self, source: GltfSceneSource) -> AssetReference;
 }
 
 use std::{
@@ -67,6 +67,8 @@ pub use gltf::*;
 pub use image::*;
 pub use kiri_vfs::AssetReference;
 pub use mesh_builder::*;
+pub use shader::*;
+
 use thiserror::Error;
 
 pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {

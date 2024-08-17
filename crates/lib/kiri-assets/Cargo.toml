@@ -31,3 +31,4 @@ glam = "0.28.0"
 meshopt = "0.3.0"
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 thiserror = "1.0.61"
+shader-prepper = "0.3.0-pre.3"

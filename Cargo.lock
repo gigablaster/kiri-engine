@@ -1080,6 +1080,7 @@ dependencies = [
  "mikktspace",
  "normalize-path",
  "numquant",
+ "shader-prepper",
  "siphasher",
  "speedy",
  "thiserror",
@@ -1984,6 +1985,15 @@ dependencies = [
  "memchr",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "shader-prepper"
+version = "0.3.0-pre.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f4c8898380bb21a998144ddb2a532b1c533b43c643fb75628fee2b01a9c041"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]

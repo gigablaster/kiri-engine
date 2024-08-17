@@ -15,7 +15,7 @@ use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_cached_asset_path, Asset, AssetImportContext, AssetReference, AssetSource, Error,
     GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset,
-    MeshAssetBuilder, ROOT_DATA_PATH,
+    MeshAssetBuilder, ShaderAsset, ShaderAssetSource, ROOT_DATA_PATH,
 };
 use kiri_vfs::PackageBuilder;
 use log::{error, info};
@@ -26,6 +26,7 @@ struct ContentProcessor {
     images: Mutex<HashMap<AssetReference, ImageAssetSource>>,
     meshes: Mutex<HashMap<AssetReference, (GltfMeshSource, MeshAssetBuilder)>>,
     scenes: Mutex<HashMap<AssetReference, GltfSceneSource>>,
+    shaders: Mutex<HashMap<AssetReference, ShaderAssetSource>>,
     packer: Mutex<Box<dyn Packer>>,
 }
 
@@ -100,12 +101,6 @@ impl AssetImportContext for ContentProcessor {
         self.meshes.lock().entry(referene).or_insert((source, data));
         referene
     }
-
-    fn import_scene(&self, source: GltfSceneSource) -> AssetReference {
-        let reference = source.reference();
-        self.scenes.lock().entry(reference).or_insert(source);
-        reference
-    }
 }
 
 fn get_cached_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
@@ -129,8 +124,21 @@ impl ContentProcessor {
             images: Default::default(),
             meshes: Default::default(),
             scenes: Default::default(),
+            shaders: Default::default(),
             packer: Mutex::new(packer),
         }
+    }
+
+    fn import_scene(&self, source: GltfSceneSource) -> AssetReference {
+        let reference = source.reference();
+        self.scenes.lock().entry(reference).or_insert(source);
+        reference
+    }
+
+    fn import_shader(&self, source: ShaderAssetSource) -> AssetReference {
+        let reference = source.reference();
+        self.shaders.lock().entry(reference).or_insert(source);
+        reference
     }
 
     async fn build_scene(&self, scene: GltfSceneSource) {
@@ -152,6 +160,13 @@ impl ContentProcessor {
         info!("Building image {:?}", image);
         if let Err(err) = self.build_asset::<ImageAsset, ImageAssetSource>(image.clone()) {
             error!("Failed to build image {:?}: {}", image, err);
+        }
+    }
+
+    async fn build_shader(&self, shader: ShaderAssetSource) {
+        info!("Compile shader {:?}", shader);
+        if let Err(err) = self.build_asset::<ShaderAsset, ShaderAssetSource>(shader.clone()) {
+            error!("Failed to compiled shader {:?}:\n{}", shader, err);
         }
     }
 
@@ -177,6 +192,15 @@ impl ContentProcessor {
                 }
             }
         });
+
+        AsyncComputeTaskPool::get().scope(|s| {
+            for (_, shader) in self.shaders.lock().iter() {
+                if self.asset_need_rebuild(shader) {
+                    s.spawn(self.build_shader(shader.clone()));
+                }
+            }
+        });
+
         self.packer.lock().finish()
     }
 
@@ -205,14 +229,11 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
             let path_str = path.to_str().unwrap().replace('\\', "/");
             if path_str.ends_with(".gltf") {
                 processor.import_scene(GltfSceneSource::new(path_str));
+            } else if path_str.ends_with(".vert") {
+                processor.import_shader(ShaderAssetSource::vertex(&path_str));
+            } else if path_str.ends_with(".frag") {
+                processor.import_shader(ShaderAssetSource::fragment(&path_str));
             }
-            // else if path_str.ends_with("_ps.hlsl") {
-            //     processor.import(Box::new(ShaderSource::fragment(path_str)));
-            // } else if path_str.ends_with("_vs.hlsl") {
-            //     processor.import(Box::new(ShaderSource::vertex(path_str)));
-            // } else if path_str.ends_with("_cs.hlsl") {
-            //     processor.import(Box::new(ShaderSource::compute(path_str)));
-            // }
         }
     }
 
