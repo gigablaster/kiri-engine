@@ -69,9 +69,9 @@ impl From<ShaderStage> for vk::ShaderStageFlags {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct BindGroupSlotDesc<'a> {
     pub name: &'a str,
-    pub slot: u32,
+    pub slot: usize,
     pub ty: BindType,
-    pub count: u32,
+    pub count: usize,
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
@@ -81,13 +81,13 @@ pub struct BindGroupDesc<'a> {
 }
 
 impl<'a> BindGroupDesc<'a> {
-    pub fn to_pool_size(self, count: u32) -> Vec<vk::DescriptorPoolSize> {
+    pub fn to_pool_size(self, count: usize) -> Vec<vk::DescriptorPoolSize> {
         self.set
             .iter()
             .map(|x| {
                 vk::DescriptorPoolSize::default()
                     .ty(x.ty.into())
-                    .descriptor_count(x.count * count)
+                    .descriptor_count((x.count * count) as _)
             })
             .collect::<Vec<_>>()
     }
@@ -189,7 +189,7 @@ fn create_binding<'a>(
     vk::DescriptorSetLayoutBinding::default()
         .binding(binding.slot as _)
         .descriptor_type(binding.ty.into())
-        .descriptor_count(binding.count)
+        .descriptor_count(binding.count as _)
         .stage_flags(stage.into())
 }
 
