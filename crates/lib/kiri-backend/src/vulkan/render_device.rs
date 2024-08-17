@@ -97,7 +97,7 @@ pub enum FrameState {
     NeedRecreateSwapchain,
 }
 
-const EMPTY_BIND_GROUP: BindGroupDesc = BindGroupDesc {
+pub const EMPTY_BIND_GROUP: BindGroupDesc = BindGroupDesc {
     stage: ShaderStage::Graphics,
     set: &[],
 };
