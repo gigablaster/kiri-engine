@@ -31,14 +31,14 @@ use super::{DropList, GpuAllocator, GpuDescriptorAllocator, PhysicalDevice, Unif
 
 #[derive(Debug)]
 struct TempBuffer {
-    offset: u32,
+    offset: usize,
     allocator: BumpAllocator,
     aligment: u64,
     memory: NonNull<u8>,
 }
 
 impl TempBuffer {
-    pub fn new(size: u32, offset: u32, pdevice: &PhysicalDevice, memory: NonNull<u8>) -> Self {
+    pub fn new(size: usize, offset: usize, pdevice: &PhysicalDevice, memory: NonNull<u8>) -> Self {
         Self {
             offset,
             allocator: BumpAllocator::new(size as _),
@@ -54,15 +54,15 @@ impl TempBuffer {
         let offset = self
             .allocator
             .allocate(data.len(), self.aligment as _)
-            .ok_or(Error::OutOfTempMemory)? as u32;
+            .ok_or(Error::OutOfTempMemory)?;
         unsafe {
             copy_nonoverlapping(
                 data.as_ptr(),
-                self.memory.byte_add(offset as _).as_ptr(),
+                self.memory.byte_add(offset).as_ptr(),
                 data.len(),
             )
         }
-        Ok(self.offset + offset)
+        Ok((self.offset + offset) as u32)
     }
 
     pub fn reset(&self) {
@@ -133,7 +133,7 @@ pub(crate) struct Frame {
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
-pub(crate) const TEMP_BUFFER_SIZE: u32 = 16 * 1024 * 1024;
+pub(crate) const TEMP_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
 impl Frame {
     pub fn new(
@@ -141,7 +141,7 @@ impl Frame {
         pdevice: &PhysicalDevice,
         queue_family_index: u32,
         temp_memory: NonNull<u8>,
-        temp_memory_offset: u32,
+        temp_memory_offset: usize,
     ) -> Result<Self, Error> {
         unsafe {
             let pool = device.create_command_pool(

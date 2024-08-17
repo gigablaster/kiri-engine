@@ -155,12 +155,12 @@ impl Staging {
         &mut self,
         context: &RenderDevice,
         target: vk::Buffer,
-        offset: u32,
+        offset: usize,
         data: &[T],
     ) -> Result<(), Error> {
         let mut current_offset = 0;
         loop {
-            let data_len = mem::size_of_val(data) as u32;
+            let data_len = mem::size_of_val(data);
             let pushed = self.try_push_buffer(
                 context,
                 target,
@@ -249,10 +249,10 @@ impl Staging {
         &mut self,
         context: &RenderDevice,
         target: vk::Buffer,
-        offset: u32,
-        bytes: u32,
+        offset: usize,
+        bytes: usize,
         data: *const u8,
-    ) -> Result<u32, Error> {
+    ) -> Result<usize, Error> {
         let aligment = context
             .pdevice
             .properties
@@ -268,7 +268,7 @@ impl Staging {
             .size(can_send as _);
         self.upload_buffers.entry(target).or_default().push(op);
 
-        Ok(can_send as u32)
+        Ok(can_send)
     }
 
     pub fn upload(

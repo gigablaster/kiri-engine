@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::ptr::NonNull;
+use std::{mem, ptr::NonNull, slice};
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
@@ -51,7 +51,7 @@ impl From<BufferUsage> for vk::BufferUsageFlags {
 #[derive(Debug)]
 pub(crate) struct Buffer {
     pub raw: vk::Buffer,
-    pub size: u32,
+    pub size: usize,
     pub memory: Option<GpuMemory>,
 }
 
@@ -66,7 +66,7 @@ impl Buffer {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
-    pub size: u32,
+    pub size: usize,
     pub usage: BufferUsage,
     pub alignment: Option<u64>,
     pub dedicated: bool,
@@ -75,7 +75,7 @@ pub struct BufferCreateDesc<'a> {
 }
 
 impl<'a> BufferCreateDesc<'a> {
-    pub fn gpu(size: u32) -> Self {
+    pub fn gpu(size: usize) -> Self {
         Self {
             size,
             usage: BufferUsage::empty(),
@@ -86,7 +86,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn host(size: u32) -> Self {
+    pub fn host(size: usize) -> Self {
         Self {
             size,
             usage: BufferUsage::empty(),
@@ -97,7 +97,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn upload(size: u32) -> Self {
+    pub fn upload(size: usize) -> Self {
         Self {
             size,
             usage: BufferUsage::empty(),
@@ -108,7 +108,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: u32) -> Self {
+    pub fn shared(size: usize) -> Self {
         Self {
             size,
             usage: BufferUsage::empty(),
@@ -177,12 +177,14 @@ impl RenderDevice {
         Ok(handle)
     }
 
-    pub fn update_buffer(
+    pub fn update_buffer<T: Copy + Sized>(
         &self,
         handle: BufferHandle,
-        offset: u32,
-        data: &[u8],
+        offset: usize,
+        data: &[T],
     ) -> Result<(), Error> {
+        let ptr = data.as_ptr() as *const u8;
+        let data = unsafe { slice::from_raw_parts(ptr, mem::size_of_val(data)) };
         let buffer = self
             .buffers
             .read()
