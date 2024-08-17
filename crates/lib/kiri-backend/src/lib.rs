@@ -281,6 +281,11 @@ pub enum BindType {
 use bitflags::bitflags;
 use speedy::{Readable, Writable};
 
+#[derive(Debug, Clone, Copy)]
+pub struct RenderDeviceProperties {
+    pub buffer_allocation_granularity: usize,
+}
+
 pub use vulkan::Error;
 pub use vulkan::{
     BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,

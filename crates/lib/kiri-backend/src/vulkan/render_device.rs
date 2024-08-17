@@ -36,7 +36,7 @@ use std::fmt::Debug;
 
 use crate::{
     vulkan::{AcquiredSurface, Buffer, DrawStreamExecuteContext, RenderContext, MAX_ATTACHMENTS},
-    Error, Instance, ShaderStage, Swapchain,
+    Error, Instance, RenderDeviceProperties, ShaderStage, Swapchain,
 };
 
 use super::{
@@ -681,6 +681,17 @@ impl RenderDevice {
             Ok(_) => (),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
             Err(err) => panic!("Can't present image: {}", err),
+        }
+    }
+
+    pub fn properties(&self) -> RenderDeviceProperties {
+        RenderDeviceProperties {
+            buffer_allocation_granularity: self
+                .pdevice
+                .properties
+                .limits
+                .min_storage_buffer_offset_alignment
+                as usize,
         }
     }
 }
