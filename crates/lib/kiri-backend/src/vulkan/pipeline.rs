@@ -23,6 +23,7 @@ use std::{
 use ash::vk::{self, CompareOp};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use kiri_common::Align;
 use log::{info, warn};
 use uuid::Uuid;
 
@@ -134,13 +135,23 @@ pub struct RasterPipelineCreateDesc {
     pub depth_write: bool,
 }
 
-pub type InputVertexStreamAttrubute = (Format, u32, u32);
-#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct InputVertexStreamDesc<'a>(pub &'a [InputVertexStreamAttrubute]);
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexAttrubute {
+    pub format: Format,
+    pub offset: usize,
+}
 
-impl<'a> InputVertexStreamDesc<'a> {
+#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct InputVertexStreamLayout<'a>(pub &'a [InputVertexAttrubute]);
+
+impl<'a> InputVertexStreamLayout<'a> {
     fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
-        let stride = self.0.iter().map(|x| x.1 + x.2).max().unwrap();
+        let stride = self
+            .0
+            .iter()
+            .map(|x| x.offset + x.format.size_in_bytes().align(4))
+            .max()
+            .unwrap();
         let attributes = self
             .0
             .iter()
@@ -148,12 +159,12 @@ impl<'a> InputVertexStreamDesc<'a> {
             .map(|(index, attr)| vk::VertexInputAttributeDescription {
                 location: index as u32,
                 binding: binding as u32,
-                format: attr.0.into(),
-                offset: attr.1,
+                format: attr.format.into(),
+                offset: attr.offset as u32,
             })
             .collect();
 
-        (stride, attributes)
+        (stride as u32, attributes)
     }
 }
 
@@ -247,7 +258,7 @@ pub(crate) struct CompilePipelineData {
     pub program: ProgramHandle,
     pub pass: RenderPassHandle,
     pub subpass: u32,
-    pub streams: &'static [InputVertexStreamDesc<'static>],
+    pub streams: &'static [InputVertexStreamLayout<'static>],
     pub desc: RasterPipelineCreateDesc,
 }
 
@@ -395,7 +406,7 @@ impl RenderDevice {
         program: ProgramHandle,
         pass: RenderPassHandle,
         subpass: u32,
-        streams: &'static [InputVertexStreamDesc<'static>],
+        streams: &'static [InputVertexStreamLayout<'static>],
         desc: &RasterPipelineCreateDesc,
     ) -> PipelineHandle {
         let handle = {

@@ -32,8 +32,8 @@ use kiri_assets::{
 };
 use kiri_backend::{
     BindGroupDesc, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect, ImageCreateDesc,
-    ImageHandle, ImageSubresourceData, InputVertexStreamDesc, PipelineHandle, ProgramHandle,
-    RasterPipelineCreateDesc, RenderDevice, RenderPassHandle, ShaderDesc, ShaderStage,
+    ImageHandle, ImageSubresourceData, InputVertexStreamLayout, PipelineHandle, ProgramHandle,
+    RasterPipelineCreateDesc, RenderDevice, RenderPassHandle, ShaderDesc,
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -90,7 +90,7 @@ pub struct RasterPipelineDesc {
     pub vertex_shader: Option<String>,
     pub fragment_shader: Option<String>,
     pub layout: &'static [BindGroupDesc<'static>],
-    pub streams: &'static [InputVertexStreamDesc<'static>],
+    pub streams: &'static [InputVertexStreamLayout<'static>],
     pub pass: RenderPassHandle,
     pub subpass: u32,
     pub desc: RasterPipelineCreateDesc,
@@ -99,7 +99,7 @@ pub struct RasterPipelineDesc {
 impl RasterPipelineDesc {
     pub fn new(
         layout: &'static [BindGroupDesc<'static>],
-        streams: &'static [InputVertexStreamDesc<'static>],
+        streams: &'static [InputVertexStreamLayout<'static>],
     ) -> Self {
         Self {
             vertex_shader: None,

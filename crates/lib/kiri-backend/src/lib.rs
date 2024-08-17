@@ -125,6 +125,99 @@ pub enum Format {
     BC7_SRGB,
 }
 
+impl Format {
+    pub fn size_in_bytes(self) -> usize {
+        match self {
+            Format::INVALID => panic!("Can't get size fo INVALID format"),
+            Format::R8_UNORM
+            | Format::R8_SNORM
+            | Format::R8_USCALED
+            | Format::R8_SSCALED
+            | Format::R8_UINT
+            | Format::R8_SINT
+            | Format::R8_SRGB => 1,
+            Format::RG8_UNORM
+            | Format::RG8_SNORM
+            | Format::RG8_USCALED
+            | Format::RG8_SSCALED
+            | Format::RG8_UINT
+            | Format::RG8_SINT
+            | Format::RG8_SRGB
+            | Format::R16_UNORM
+            | Format::R16_SNORM
+            | Format::R16_USCALED
+            | Format::R16_SSCALED
+            | Format::R16_UINT
+            | Format::R16_SINT
+            | Format::R16_SFLOAT
+            | Format::D16 => 2,
+            Format::RGB8_UNORM
+            | Format::RGB8_SNORM
+            | Format::RGB8_USCALED
+            | Format::RGB8_SSCALED
+            | Format::RGB8_UINT
+            | Format::RGB8_SINT
+            | Format::BGR8_UNORM
+            | Format::BGR8_SNORM
+            | Format::BGR8_USCALED
+            | Format::BGR8_SSCALED
+            | Format::BGR8_UINT
+            | Format::BGR8_SINT
+            | Format::BGR8_SRGB
+            | Format::RGB8_SRGB
+            | Format::D24
+            | Format::D16_S8 => 3,
+            Format::RGBA8_UNORM
+            | Format::RGBA8_SNORM
+            | Format::RGBA8_USCALED
+            | Format::RGBA8_SSCALED
+            | Format::RGBA8_UINT
+            | Format::RGBA8_SINT
+            | Format::RGBA8_SRGB
+            | Format::BGRA8_UNORM
+            | Format::BGRA8_SNORM
+            | Format::BGRA8_USCALED
+            | Format::BGRA8_SSCALED
+            | Format::BGRA8_UINT
+            | Format::BGRA8_SINT
+            | Format::BGRA8_SRGB
+            | Format::RG16_UNORM
+            | Format::RG16_SNORM
+            | Format::RG16_USCALED
+            | Format::RG16_SSCALED
+            | Format::RG16_UINT
+            | Format::RG16_SINT
+            | Format::RG16_SFLOAT
+            | Format::R32_UINT
+            | Format::R32_SINT
+            | Format::R32_SFLOAT
+            | Format::D32
+            | Format::D24_S8 => 4,
+
+            Format::RGB16_UNORM
+            | Format::RGB16_SNORM
+            | Format::RGB16_USCALED
+            | Format::RGB16_SSCALED
+            | Format::RGB16_UINT
+            | Format::RGB16_SINT
+            | Format::RGB16_SFLOAT => 6,
+            Format::RGBA16_UNORM
+            | Format::RGBA16_SNORM
+            | Format::RGBA16_USCALED
+            | Format::RGBA16_SSCALED
+            | Format::RGBA16_UINT
+            | Format::RGBA16_SINT
+            | Format::RGBA16_SFLOAT
+            | Format::RG32_UINT
+            | Format::RG32_SINT
+            | Format::RG32_SFLOAT => 8,
+            Format::RGB32_UINT | Format::RGB32_SINT | Format::RGB32_SFLOAT => 12,
+            Format::RGBA32_UINT | Format::RGBA32_SINT | Format::RGBA32_SFLOAT => 16,
+            fmt => panic!("Can't get size for packed format {:?}", fmt),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
 pub enum ImageType {
     Type1D,
@@ -290,10 +383,10 @@ pub use vulkan::Error;
 pub use vulkan::{
     BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
     BufferHandle, BufferSlice, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc,
-    ImageDesc, ImageHandle, ImageSubresourceData, InputVertexStreamAttrubute,
-    InputVertexStreamDesc, Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType,
-    PipelineHandle, ProgramHandle, RasterPipelineCreateDesc, RenderContext, RenderDevice,
-    RenderPassHandle, RenderPassLayout, RenderTarget, RenderTargetDesc, ShaderDesc,
-    SkipMissingSlots, SubpassLayout, Surface, Swapchain, DYNAMIC_BINDING_SLOT, EMPTY_BIND_GROUP,
-    FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
+    ImageDesc, ImageHandle, ImageSubresourceData, InputVertexAttrubute, InputVertexStreamLayout,
+    Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, ProgramHandle,
+    RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle, RenderPassLayout,
+    RenderTarget, RenderTargetDesc, ShaderDesc, SkipMissingSlots, SubpassLayout, Surface,
+    Swapchain, DYNAMIC_BINDING_SLOT, EMPTY_BIND_GROUP, FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT,
+    OBJECT_BINDING_SLOT,
 };
