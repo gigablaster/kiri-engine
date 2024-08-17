@@ -23,14 +23,17 @@ use std::{
     },
 };
 
+use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
+use bytes::Bytes;
 use kiri_assets::{
     Asset, AssetReference, AssetSource, GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset,
-    ImageAssetSource, ImageAssetType, MeshMaterialBlend, StaticMeshAsset,
+    ImageAssetSource, ImageAssetType, MeshMaterialBlend, ShaderAssetSource, StaticMeshAsset,
 };
 use kiri_backend::{
-    BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect, ImageCreateDesc, ImageHandle,
-    ImageSubresourceData, RenderDevice,
+    BindGroupDesc, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect, ImageCreateDesc,
+    ImageHandle, ImageSubresourceData, InputVertexStreamDesc, PipelineHandle, ProgramHandle,
+    RasterPipelineCreateDesc, RenderDevice, RenderPassHandle, ShaderDesc, ShaderStage,
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -82,6 +85,61 @@ impl<T: Hash + Eq + PartialEq> AssetLifetimeTracker<T> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RasterPipelineDesc {
+    pub vertex_shader: Option<String>,
+    pub fragment_shader: Option<String>,
+    pub layout: &'static [BindGroupDesc<'static>],
+    pub streams: &'static [InputVertexStreamDesc<'static>],
+    pub pass: RenderPassHandle,
+    pub subpass: u32,
+    pub desc: RasterPipelineCreateDesc,
+}
+
+impl RasterPipelineDesc {
+    pub fn new(
+        layout: &'static [BindGroupDesc<'static>],
+        streams: &'static [InputVertexStreamDesc<'static>],
+    ) -> Self {
+        Self {
+            vertex_shader: None,
+            fragment_shader: None,
+            layout,
+            pass: Default::default(),
+            subpass: 0,
+            streams,
+            desc: Default::default(),
+        }
+    }
+
+    pub fn vertex_shader(mut self, name: &str) -> Self {
+        self.vertex_shader = Some(name.to_owned());
+        self
+    }
+
+    pub fn fragment_shader(mut self, name: &str) -> Self {
+        self.fragment_shader = Some(name.to_owned());
+        self
+    }
+
+    pub fn pass(mut self, pass: RenderPassHandle, subpass: usize) -> Self {
+        self.pass = pass;
+        self.subpass = subpass as u32;
+        self
+    }
+
+    pub fn desc(&mut self) -> &mut RasterPipelineCreateDesc {
+        &mut self.desc
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ProgramKey {
+    vertex_shader: Option<String>,
+    fragment_shader: Option<String>,
+    layout: &'static [BindGroupDesc<'static>],
+}
+
 #[derive(Debug)]
 pub struct AssetCache {
     device: Arc<RenderDevice>,
@@ -96,6 +154,9 @@ pub struct AssetCache {
     image_tracking: AssetLifetimeTracker<ImageHandle>,
     static_mesh_tracking: AssetLifetimeTracker<StaticMeshHandle>,
     scene_tracking: AssetLifetimeTracker<SceneHandle>,
+    programs: RwLock<HashMap<ProgramKey, ProgramHandle>>,
+    shaders: RwLock<HashMap<AssetReference, Bytes>>,
+    pipelines: RwLock<HashMap<RasterPipelineDesc, PipelineHandle>>,
 }
 
 const MESH_POOL_SIZE: usize = 256 * 1024 * 1024;
@@ -144,6 +205,9 @@ impl AssetCache {
             image_tracking: Default::default(),
             static_mesh_tracking: Default::default(),
             scene_tracking: Default::default(),
+            programs: Default::default(),
+            shaders: Default::default(),
+            pipelines: Default::default(),
         }))
     }
 
@@ -451,5 +515,98 @@ impl AssetCache {
         let scene = RenderSceneGroup { scenes };
         let handle = self.scenes.write().push(scene);
         Ok(handle)
+    }
+
+    fn get_or_load_program(
+        &self,
+        vertex_shader: Option<String>,
+        fragment_shader: Option<String>,
+        layout: &'static [BindGroupDesc<'static>],
+    ) -> Result<ProgramHandle, Error> {
+        let key = ProgramKey {
+            vertex_shader: vertex_shader.clone(),
+            fragment_shader: fragment_shader.clone(),
+            layout,
+        };
+        let programs = self.programs.upgradable_read();
+
+        if let Some(program) = programs.get(&key) {
+            Ok(*program)
+        } else {
+            let mut programs = RwLockUpgradableReadGuard::upgrade(programs);
+            if let Some(program) = programs.get(&key) {
+                Ok(*program)
+            } else {
+                let vertex_shader_code = if let Some(vertex_shader) = vertex_shader {
+                    Some(self.get_or_load_shader(ShaderAssetSource::vertex(&vertex_shader))?)
+                } else {
+                    None
+                };
+                let fragment_shader_code = if let Some(fragment_sahder) = fragment_shader {
+                    Some(self.get_or_load_shader(ShaderAssetSource::fragment(&fragment_sahder))?)
+                } else {
+                    None
+                };
+                let mut shaders = ArrayVec::<_, 2>::new();
+                if let Some(vertex_shader) = &vertex_shader_code {
+                    shaders.push(ShaderDesc::vertex(vertex_shader));
+                }
+                if let Some(fragment_shader) = &fragment_shader_code {
+                    shaders.push(ShaderDesc::fragment(fragment_shader));
+                }
+                debug_assert!(!shaders.is_empty(), "Need at least one shader");
+                let program = self.device.create_program(&shaders, layout)?;
+                programs.insert(key, program);
+                Ok(program)
+            }
+        }
+    }
+
+    fn get_or_load_shader(&self, source: ShaderAssetSource) -> Result<Bytes, Error> {
+        let reference = source.reference();
+        let shaders = self.shaders.upgradable_read();
+        if let Some(shader) = shaders.get(&reference) {
+            Ok(shader.clone())
+        } else {
+            let mut shaders = RwLockUpgradableReadGuard::upgrade(shaders);
+            if let Some(shader) = shaders.get(&reference) {
+                Ok(shader.clone())
+            } else {
+                let data = vfs_load(reference)?;
+                shaders.insert(reference, data.clone());
+                Ok(data)
+            }
+        }
+    }
+
+    pub fn get_or_create_pipeline(
+        &self,
+        desc: RasterPipelineDesc,
+    ) -> Result<PipelineHandle, Error> {
+        let pipelines = self.pipelines.upgradable_read();
+        if let Some(pipeline) = pipelines.get(&desc) {
+            Ok(*pipeline)
+        } else {
+            let mut pipelines = RwLockUpgradableReadGuard::upgrade(pipelines);
+            if let Some(pipeline) = pipelines.get(&desc) {
+                Ok(*pipeline)
+            } else {
+                debug!("Create pipeline {:?}", desc);
+                let program = self.get_or_load_program(
+                    desc.vertex_shader.clone(),
+                    desc.fragment_shader.clone(),
+                    desc.layout,
+                )?;
+                let pipeline = self.device.create_pipeline(
+                    program,
+                    desc.pass,
+                    desc.subpass,
+                    desc.streams,
+                    &desc.desc,
+                );
+                pipelines.insert(desc, pipeline);
+                Ok(pipeline)
+            }
+        }
     }
 }

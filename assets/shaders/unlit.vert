@@ -1,4 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive: require
+
+#include "common/shared.glsl"
 
 layout(location = 0) out vec3 fragColor;
 

@@ -1125,7 +1125,9 @@ dependencies = [
 name = "kiri-gfx"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "bevy_tasks",
+ "bytes",
  "glam",
  "kiri-assets",
  "kiri-backend",

@@ -20,6 +20,7 @@ use std::{
     process::{Command, Stdio},
 };
 
+use kiri_backend::ShaderStage;
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
@@ -95,6 +96,15 @@ impl ShaderType {
         match self {
             ShaderType::Vertex => "-fshader-stage=vertex",
             ShaderType::Fragment => "-fshader-stage=fragment",
+        }
+    }
+}
+
+impl From<ShaderType> for ShaderStage {
+    fn from(value: ShaderType) -> Self {
+        match value {
+            ShaderType::Vertex => Self::Vertex,
+            ShaderType::Fragment => Self::Fragment,
         }
     }
 }

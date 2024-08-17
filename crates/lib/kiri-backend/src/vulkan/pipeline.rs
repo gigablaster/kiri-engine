@@ -20,7 +20,7 @@ use std::{
     slice,
 };
 
-use ash::vk::{self};
+use ash::vk::{self, CompareOp};
 use bevy_tasks::ComputeTaskPool;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
@@ -157,17 +157,18 @@ impl<'a> InputVertexStreamDesc<'a> {
     }
 }
 
-impl RasterPipelineCreateDesc {
-    // pub fn new(streams: &'a [InputVertexStreamDesc<'a>]) -> Self {
-    //     Self {
-    //         streams,
-    //         blend: None,
-    //         cull: None,
-    //         depth_test: Some(CompareOp::LESS),
-    //         depth_write: true,
-    //     }
-    // }
+impl Default for RasterPipelineCreateDesc {
+    fn default() -> Self {
+        Self {
+            blend: None,
+            cull: None,
+            depth_test: Some(CompareOp::LESS_OR_EQUAL),
+            depth_write: true,
+        }
+    }
+}
 
+impl RasterPipelineCreateDesc {
     pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
         self.blend = Some((color, alpha));
 

@@ -13,3 +13,5 @@ bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
 thiserror = "1.0.61"
 log = "0.4.20"
 glam = "0.28.0"
+bytes = "1.6.0"
+arrayvec = "0.7.4"

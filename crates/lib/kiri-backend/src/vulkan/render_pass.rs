@@ -59,7 +59,7 @@ pub struct RenderTargetDesc {
     pub final_layout: Option<ImageLayout>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct SubpassLayout<'a> {
     pub depth_write: bool,
     pub depth_read: bool,
@@ -67,7 +67,7 @@ pub struct SubpassLayout<'a> {
     pub color_reads: &'a [usize],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RenderPassLayout<'a> {
     pub color_targets: &'a [RenderTargetDesc],
     pub depth_target: Option<RenderTargetDesc>,
