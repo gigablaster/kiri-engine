@@ -55,6 +55,12 @@ pub type BindGroupHandle = Handle<vk::DescriptorSet>;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice(pub BufferHandle, pub u32);
 
+impl BufferSlice {
+    pub fn new(buffer: BufferHandle, offset: usize) -> BufferSlice {
+        Self(buffer, offset as u32)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(pub(crate) u32);
 
