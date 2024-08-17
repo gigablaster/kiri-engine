@@ -29,7 +29,7 @@ use directories::ProjectDirs;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use kiri_common::{Handle, HotColdPool, SentinelPoolStrategy};
+use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use log::error;
 use parking_lot::{Mutex, RwLock};
 use std::fmt::Debug;
@@ -51,7 +51,9 @@ use super::{
 pub type ImageHandle = Handle<vk::Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type BindGroupHandle = Handle<vk::DescriptorSet>;
-
+pub type ProgramHandle = Handle<Program>;
+pub type RenderPassHandle = Handle<RenderPass>;
+pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice(pub BufferHandle, pub u32);
 
@@ -61,34 +63,16 @@ impl BufferSlice {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ProgramHandle(pub(crate) u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RenderPassHandle(pub(crate) u32);
-
-impl Default for RenderPassHandle {
-    fn default() -> Self {
-        Self(u32::MAX)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PipelineHandle(pub(crate) u32);
-
-impl Default for PipelineHandle {
-    fn default() -> Self {
-        Self(u32::MAX)
-    }
-}
-
 pub(crate) type ImagePool = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;
 pub(crate) type BufferPool = HotColdPool<vk::Buffer, Buffer, SentinelPoolStrategy<vk::Buffer>>;
-pub(crate) type ProgramPool = Vec<Program>;
-pub(crate) type PipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
+pub(crate) type ProgramPool = Pool<Program>;
+pub(crate) type PipelinePool = Pool<
+    (vk::Pipeline, vk::PipelineLayout),
+    SentinelPoolStrategy<(vk::Pipeline, vk::PipelineLayout)>,
+>;
 pub(crate) type BindGroupPool =
     HotColdPool<vk::DescriptorSet, BindGroupData, SentinelPoolStrategy<vk::DescriptorSet>>;
-pub(crate) type RenderPassPool = Vec<RenderPass>;
+pub(crate) type RenderPassPool = Pool<RenderPass>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -585,7 +569,7 @@ impl RenderDevice {
             for pass in passes {
                 let (pass, subpass, streams, targets) = pass.consume();
                 let pass = render_passes
-                    .get(pass.0 as usize)
+                    .get(pass)
                     .ok_or(Error::InvalidRenderPassHandle(pass))?;
                 let (fbo, size) = pass.framebuffer(&self.device, &images, &targets)?;
                 let render_area = vk::Rect2D {
@@ -736,13 +720,13 @@ impl Drop for RenderDevice {
         });
         self.pipelines
             .write()
-            .drain(..)
+            .drain()
             .for_each(|(pipeline, _)| unsafe {
                 self.device.destroy_pipeline(pipeline, None);
             });
         self.programs
             .write()
-            .drain(..)
+            .drain()
             .for_each(|x| x.free(&self.device));
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
@@ -760,7 +744,7 @@ impl Drop for RenderDevice {
             .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
         self.render_passes
             .write()
-            .drain(..)
+            .drain()
             .for_each(|x| x.free(&self.device));
         if self.cache != vk::PipelineCache::null() {
             if let Some(path) = Self::get_pipelines_path(&self.instance) {
@@ -799,10 +783,10 @@ pub(crate) struct PipelineCompilationContext<'a> {
 
 impl<'a> PipelineCompilationContext<'a> {
     pub fn resolve_program(&self, handle: ProgramHandle) -> Option<&Program> {
-        self.programs.get(handle.0 as usize)
+        self.programs.get(handle)
     }
 
     pub fn resolve_render_pass(&self, handle: RenderPassHandle) -> Option<&RenderPass> {
-        self.render_passes.get(handle.0 as usize)
+        self.render_passes.get(handle)
     }
 }

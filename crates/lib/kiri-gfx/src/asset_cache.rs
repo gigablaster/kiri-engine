@@ -172,6 +172,14 @@ impl Drop for AssetCache {
             .drain()
             .for_each(|(_, handle)| self.device.destroy_image(handle));
         self.device.destroy_buffer(self.mesh_pool);
+        self.pipelines
+            .write()
+            .drain()
+            .for_each(|(_, handle)| self.device.destory_pipeline(handle));
+        self.programs
+            .write()
+            .drain()
+            .for_each(|(_, handle)| self.device.destroy_program(handle));
     }
 }
 

@@ -429,9 +429,7 @@ impl RenderDevice {
     ) -> PipelineHandle {
         let handle = {
             let mut pipelines = self.pipelines.write();
-            let index = pipelines.len() as u32;
-            pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()));
-            PipelineHandle(index)
+            pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()))
         };
         self.pipelines_to_compile.lock().insert(
             handle,
@@ -444,6 +442,12 @@ impl RenderDevice {
             },
         );
         handle
+    }
+
+    pub fn destory_pipeline(&self, handle: PipelineHandle) {
+        if let Some(pipeline) = self.pipelines.write().remove(handle) {
+            unsafe { self.device.destroy_pipeline(pipeline.0, None) }
+        }
     }
 
     pub(crate) async fn compile_pipeline<'a>(
@@ -477,7 +481,11 @@ impl RenderDevice {
         let mut pipelines = self.pipelines.write();
         for result in compiled {
             let (handle, pipeline, layout) = result?;
-            pipelines[handle.0 as usize] = (pipeline, layout);
+            if let Some(target) = pipelines.get_mut(handle) {
+                *target = (pipeline, layout);
+            } else {
+                unsafe { self.device.destroy_pipeline(pipeline, None) };
+            }
         }
         Ok(())
     }

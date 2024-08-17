@@ -230,8 +230,8 @@ impl FramebufferDesc {
 }
 
 #[derive(Debug)]
-pub(crate) struct RenderPass {
-    pub raw: vk::RenderPass,
+pub struct RenderPass {
+    pub(crate) raw: vk::RenderPass,
     framebuffers: Mutex<HashMap<FramebufferDesc, vk::Framebuffer>>,
 }
 
@@ -394,12 +394,16 @@ impl RenderDevice {
         let render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }?;
 
         let mut render_passes = self.render_passes.write();
-        let handle = RenderPassHandle(render_passes.len() as u32);
-        render_passes.push(RenderPass {
+        Ok(render_passes.push(RenderPass {
             raw: render_pass,
             framebuffers: Mutex::default(),
-        });
-        Ok(handle)
+        }))
+    }
+
+    pub fn destroy_render_pass(&self, handle: RenderPassHandle) {
+        if let Some(pass) = self.render_passes.write().remove(handle) {
+            pass.free(&self.device);
+        }
     }
 }
 

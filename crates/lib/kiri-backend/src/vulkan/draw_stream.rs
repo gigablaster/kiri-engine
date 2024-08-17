@@ -209,7 +209,7 @@ impl DrawStreamRecorder {
         }
         self.stream.push(self.mask);
         if self.mask & PIPELINE_MASK == PIPELINE_MASK {
-            self.write_u32(self.current.pipeline.0);
+            self.write_u32(self.current.pipeline.into());
         }
         for i in 0..MAX_VERTEX_STREAMS {
             if self.mask & (VERTEX_STREAM_MASK << i) == (VERTEX_STREAM_MASK << i) {
@@ -322,10 +322,11 @@ impl DrawStream {
 
         while let Ok(mask) = reader.read() {
             if mask & PIPELINE_MASK == PIPELINE_MASK {
-                let index = reader.read_u32()?;
-                let (pipeline, layout) = *context.pipelines.get(index as usize).ok_or(
-                    DrawStreamError::InvalidPipelineHandle(PipelineHandle(index)),
-                )?;
+                let handle = reader.read_u32()?.into();
+                let (pipeline, layout) = *context
+                    .pipelines
+                    .get(handle)
+                    .ok_or(DrawStreamError::InvalidPipelineHandle(handle))?;
                 pipeline_layout = layout;
                 unsafe {
                     context

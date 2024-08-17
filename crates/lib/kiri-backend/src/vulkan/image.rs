@@ -363,9 +363,9 @@ pub struct ImageSubresourceData<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Image {
-    pub raw: vk::Image,
-    pub desc: ImageDesc,
+pub struct Image {
+    pub(crate) raw: vk::Image,
+    pub(crate) desc: ImageDesc,
     memory: Option<GpuMemory>,
     views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
 }

@@ -330,7 +330,7 @@ impl Shader {
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.
 #[derive(Debug)]
-pub(crate) struct Program {
+pub struct Program {
     pub(crate) shaders: Vec<Shader>,
     pub(crate) layouts: Vec<Arc<DescriptorSetLayout>>,
     pub(crate) pipeline_layout: vk::PipelineLayout,
@@ -387,8 +387,29 @@ impl RenderDevice {
     ) -> Result<ProgramHandle, Error> {
         let program = Program::new(self, shaders, layout)?;
         let mut programs = self.programs.write();
-        let index = programs.len();
-        programs.push(program);
-        Ok(ProgramHandle(index as u32))
+        Ok(programs.push(program))
+    }
+
+    pub fn destroy_program(&self, handle: ProgramHandle) {
+        if let Some(program) = self.programs.write().remove(handle) {
+            // Destory all pipeliens that use same pipeline layout
+            let mut pipelines = self.pipelines.write();
+            let mut to_destroy = pipelines
+                .enumerate()
+                .filter_map(|(handle, (_, layout))| {
+                    if *layout == program.pipeline_layout {
+                        Some(handle)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            to_destroy.drain(..).for_each(|handle| {
+                if let Some((pipeline, _)) = pipelines.remove(handle) {
+                    unsafe { self.device.destroy_pipeline(pipeline, None) };
+                }
+            });
+            program.free(&self.device);
+        }
     }
 }

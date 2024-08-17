@@ -256,7 +256,7 @@ impl RenderDevice {
     ) -> Result<BindGroupHandle, Error> {
         let programs = self.programs.read();
         let program = programs
-            .get(handle.0 as usize)
+            .get(handle)
             .ok_or(Error::InvalidProgramHandle(handle))?;
         let layout = program
             .layouts
