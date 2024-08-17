@@ -44,7 +44,7 @@ pub enum ImageData {
     Color([u8; 4]),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ImageAssetType {
     Rgba,
     Rg,

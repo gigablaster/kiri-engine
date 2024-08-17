@@ -91,7 +91,7 @@ pub enum MeshMaterialBlend {
 
 #[derive(Debug, Clone, Readable, Writable)]
 pub struct MeshMaterialAsset {
-    pub images: HashMap<String, AssetReference>,
+    pub images: HashMap<String, (AssetReference, ImageAssetType)>,
     pub emissive_power: f32,
     pub blend: MeshMaterialBlend,
 }
@@ -302,11 +302,14 @@ fn process_material(
     };
     MeshMaterialAsset {
         images: [
-            ("base_color".into(), base_color),
-            ("normals".into(), normals),
-            ("metallic_roughness".into(), metallic_roughness),
-            ("occlusion".into(), occlusion),
-            ("emissive".into(), emissive),
+            ("base_color".into(), (base_color, ImageAssetType::Color)),
+            ("normals".into(), (normals, ImageAssetType::Normal)),
+            (
+                "metallic_roughness".into(),
+                (metallic_roughness, ImageAssetType::MetallicRoughness),
+            ),
+            ("occlusion".into(), (occlusion, ImageAssetType::Occlusion)),
+            ("emissive".into(), (emissive, ImageAssetType::Emissive)),
         ]
         .into(),
         emissive_power: material.emissive_strength().unwrap_or(1.0),
