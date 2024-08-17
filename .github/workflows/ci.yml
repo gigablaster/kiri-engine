@@ -10,7 +10,10 @@ name: CI
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     env:
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
       RUSTFLAGS:
@@ -58,3 +61,4 @@ jobs:
         run: cargo build --tests
       - name: cargo test
         run: cargo test
+        
