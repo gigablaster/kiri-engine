@@ -160,6 +160,18 @@ impl From<Format> for vk::Format {
             Format::BC6_SFLOAT => vk::Format::BC6H_SFLOAT_BLOCK,
             Format::BC7_UNORM => vk::Format::BC7_UNORM_BLOCK,
             Format::BC7_SRGB => vk::Format::BC7_SRGB_BLOCK,
+            Format::A2RGB10_UNORM => vk::Format::A2R10G10B10_UNORM_PACK32,
+            Format::A2RGB10_SNORM => vk::Format::A2R10G10B10_SNORM_PACK32,
+            Format::A2RGB10_USCALED => vk::Format::A2R10G10B10_USCALED_PACK32,
+            Format::A2RGB10_SSCALED => vk::Format::A2R10G10B10_SSCALED_PACK32,
+            Format::A2RGB10_UINT => vk::Format::A2R10G10B10_UINT_PACK32,
+            Format::A2RGB10_SINT => vk::Format::A2R10G10B10_SINT_PACK32,
+            Format::A2BGR10_UNORM => vk::Format::A2B10G10R10_UNORM_PACK32,
+            Format::A2BGR10_SNORM => vk::Format::A2B10G10R10_SNORM_PACK32,
+            Format::A2BGR10_USCALED => vk::Format::A2B10G10R10_USCALED_PACK32,
+            Format::A2BGR10_SSCALED => vk::Format::A2B10G10R10_SSCALED_PACK32,
+            Format::A2BGR10_UINT => vk::Format::A2B10G10R10_UINT_PACK32,
+            Format::A2BGR10_SINT => vk::Format::A2B10G10R10_SINT_PACK32,
         }
     }
 }

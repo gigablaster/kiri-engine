@@ -62,6 +62,18 @@ pub enum Format {
     BGRA8_UINT,
     BGRA8_SINT,
     BGRA8_SRGB,
+    A2RGB10_UNORM,
+    A2RGB10_SNORM,
+    A2RGB10_USCALED,
+    A2RGB10_SSCALED,
+    A2RGB10_UINT,
+    A2RGB10_SINT,
+    A2BGR10_UNORM,
+    A2BGR10_SNORM,
+    A2BGR10_USCALED,
+    A2BGR10_SSCALED,
+    A2BGR10_UINT,
+    A2BGR10_SINT,
     R16_UNORM,
     R16_SNORM,
     R16_USCALED,
@@ -192,8 +204,19 @@ impl Format {
             | Format::R32_SINT
             | Format::R32_SFLOAT
             | Format::D32
-            | Format::D24_S8 => 4,
-
+            | Format::D24_S8
+            | Format::A2BGR10_SINT
+            | Format::A2BGR10_SNORM
+            | Format::A2BGR10_SSCALED
+            | Format::A2BGR10_UINT
+            | Format::A2BGR10_UNORM
+            | Format::A2BGR10_USCALED
+            | Format::A2RGB10_SINT
+            | Format::A2RGB10_SNORM
+            | Format::A2RGB10_SSCALED
+            | Format::A2RGB10_UINT
+            | Format::A2RGB10_UNORM
+            | Format::A2RGB10_USCALED => 4,
             Format::RGB16_UNORM
             | Format::RGB16_SNORM
             | Format::RGB16_USCALED

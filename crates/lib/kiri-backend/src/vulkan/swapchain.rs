@@ -126,11 +126,7 @@ impl Swapchain {
             panic!("Can't create swachain for surface with zero size");
         }
 
-        let present_mode_preferences = [
-            vk::PresentModeKHR::MAILBOX,
-            vk::PresentModeKHR::FIFO_RELAXED,
-            vk::PresentModeKHR::FIFO,
-        ];
+        let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
 
         let present_modes = unsafe {
             surface
@@ -138,7 +134,7 @@ impl Swapchain {
                 .get_physical_device_surface_present_modes(device.pdevice.raw, surface.raw)
         }?;
 
-        info!("Swapchain format: {:?}", format.format);
+        info!("Swapchain format: {:?}", format);
 
         let present_mode = present_mode_preferences
             .into_iter()
@@ -159,8 +155,8 @@ impl Swapchain {
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface.raw)
             .min_image_count(desired_image_count)
-            .image_format(format.format)
-            .image_color_space(format.color_space)
+            .image_format(format.into())
+            .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
             .image_extent(surface_resolution)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -183,7 +179,7 @@ impl Swapchain {
                         ImageDesc {
                             ty: ImageType::Type2D,
                             usage: ImageUsage::ColorTarget,
-                            format: Format::BGRA8_UNORM,
+                            format,
                             dims: [surface_resolution.width, surface_resolution.height],
                             mip_levels: 1,
                             array_elements: 1,
@@ -276,13 +272,15 @@ impl Swapchain {
         }?)
     }
 
-    fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [vk::SurfaceFormatKHR {
-            format: vk::Format::B8G8R8A8_UNORM,
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-        }];
+    fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<Format> {
+        let prefered = [Format::A2BGR10_UNORM, Format::BGRA8_UNORM];
 
-        prefered.into_iter().find(|format| formats.contains(format))
+        prefered.into_iter().find(|format| {
+            formats.contains(&vk::SurfaceFormatKHR {
+                format: (*format).into(),
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            })
+        })
     }
 
     pub fn dims(&self) -> [u32; 2] {
