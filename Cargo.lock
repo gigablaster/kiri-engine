@@ -1050,18 +1050,17 @@ dependencies = [
 name = "kiri"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "bevy_tasks",
- "directories",
+ "bytes",
+ "glam",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",
- "kiri-gfx",
+ "kiri-vfs",
  "log",
- "raw-window-handle",
- "simple_logger",
+ "parking_lot",
  "thiserror",
- "winit",
- "winres",
 ]
 
 [[package]]
@@ -1122,20 +1121,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiri-gfx"
+name = "kiri-runner"
 version = "0.1.0"
 dependencies = [
- "arrayvec",
  "bevy_tasks",
- "bytes",
- "glam",
+ "directories",
+ "kiri",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",
- "kiri-vfs",
  "log",
- "parking_lot",
+ "raw-window-handle",
+ "simple_logger",
  "thiserror",
+ "winit",
+ "winres",
 ]
 
 [[package]]

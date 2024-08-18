@@ -2,13 +2,13 @@
 
 use std::{error::Error, fmt::Display};
 
-use kiri::{run_game, GameClient};
+use kiri::ResourceManager;
 use kiri_assets::GltfSceneSource;
 use kiri_backend::{
     ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
     RenderTargetDesc, SubpassLayout,
 };
-use kiri_gfx::ResourceManager;
+use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
@@ -26,7 +26,7 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(resource_manager: &ResourceManager) -> Result<Self, kiri::GameError<LoopError>> {
+    fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<LoopError>> {
         let layout = RenderPassLayout::default()
             .color_target(
                 RenderTargetDesc::new(Format::BGRA8_UNORM)
@@ -51,8 +51,8 @@ impl GameClient<LoopError> for Loop {
         "Loop Demo"
     }
 
-    fn update(&mut self, _time: kiri_common::GameTime) -> Result<kiri::GameTickState, LoopError> {
-        Ok(kiri::GameTickState::Continue)
+    fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
+        Ok(GameTickState::Continue)
     }
 
     fn draw(

@@ -13,59 +13,46 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod runner;
+mod mesh;
+mod resource_manager;
 
-use std::error::Error;
+use std::io;
 
-use kiri_backend::RenderContext;
-use kiri_common::GameTime;
-use kiri_gfx::ResourceManager;
-pub use runner::*;
+pub use mesh::*;
+pub use resource_manager::*;
+use thiserror::Error;
 
-pub enum GameTickState {
-    Continue,
-    Exit,
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Backend error: {0}")]
+    BackendError(kiri_backend::Error),
+    #[error("IO error: {0}")]
+    IoError(io::Error),
+    #[error("Asset import error: {0}")]
+    AssetImportError(kiri_assets::Error),
+    #[error("Out of mesh memory")]
+    OutOfMeshMemory,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum GameError<E: Error> {
-    GameFailure(E),
-    GraphicsFailure(kiri_backend::Error),
-    LoopError(String),
-    GfxError(kiri_gfx::Error),
-}
-
-impl<E: Error> From<kiri_backend::Error> for GameError<E> {
+impl From<kiri_backend::Error> for Error {
     fn from(value: kiri_backend::Error) -> Self {
-        Self::GraphicsFailure(value)
+        Self::BackendError(value)
     }
 }
 
-impl<E: Error> From<String> for GameError<E> {
-    fn from(value: String) -> Self {
-        Self::LoopError(value)
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::IoError(value)
     }
 }
 
-impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
-    fn from(value: kiri_gfx::Error) -> Self {
-        match value {
-            kiri_gfx::Error::BackendError(err) => Self::GraphicsFailure(err),
-            err => Self::GfxError(err),
-        }
+impl From<kiri_assets::Error> for Error {
+    fn from(value: kiri_assets::Error) -> Self {
+        Self::AssetImportError(value)
     }
 }
 
-pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<E>>;
-    fn info() -> (&'static str, &'static str, &'static str);
-    fn title(&self) -> &str;
-    fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw(&self, time: GameTime, context: &RenderContext) -> Result<(), kiri_backend::Error>;
-    fn resumed(&mut self) -> Result<(), GameError<E>> {
-        Ok(())
-    }
-    fn suspended(&mut self) -> Result<(), GameError<E>> {
-        Ok(())
-    }
+pub enum RenderOrder {
+    Opaque,
+    Transparent,
 }

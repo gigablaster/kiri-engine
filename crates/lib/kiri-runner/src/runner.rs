@@ -16,11 +16,11 @@
 use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
+use kiri::ResourceManager;
 use kiri_backend::{
     FrameState, InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain,
 };
 use kiri_common::TimeFilter;
-use kiri_gfx::ResourceManager;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
