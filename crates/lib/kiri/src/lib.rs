@@ -14,14 +14,17 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod mesh;
+mod pass;
 mod resource_manager;
 mod temp_images;
 
 use std::io;
 
 pub use mesh::*;
+pub use pass::*;
 pub use resource_manager::*;
 pub use temp_images::*;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]

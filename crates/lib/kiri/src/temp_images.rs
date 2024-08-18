@@ -88,6 +88,8 @@ impl TemporaryRenderTargetDesc {
         }
     }
 }
+
+#[derive(Debug)]
 pub struct TemporaryRenderTarget<'a> {
     manager: &'a RenderTargetManager,
     key: RenderTargetKey,
