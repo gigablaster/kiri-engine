@@ -17,12 +17,13 @@ use glam::Affine3A;
 use kiri_assets::NodeIndex;
 use kiri_common::{Handle, HotColdPool};
 
-use crate::{Bounds, StaticMeshHandle, StaticRenderMesh};
+use crate::{Bounds, RenderScene, SceneHandle, StaticMeshHandle, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeData {
     Empty,
     StaticMesh(StaticMeshHandle),
+    Scene(SceneHandle),
 }
 
 impl NodeData {
@@ -47,7 +48,7 @@ pub struct SceneNode {
 
 /// Интерфейс для получения данных из сцены
 pub trait SceneCuller: Send + Sync {
-    fn cull(&self, bounds: Bounds, transform: Affine3A) -> bool;
+    fn cull(&self, bounds: Bounds) -> bool;
 }
 
 /// Сцена
@@ -75,11 +76,12 @@ pub struct Scene {
 /// Интерфейс для доступа к данным меша
 pub trait MeshResolver {
     fn resolve_static_mesh(&self, handle: StaticMeshHandle) -> Option<&StaticRenderMesh>;
+    fn resolve_scene(&self, handle: SceneHandle) -> Option<&RenderScene>;
 }
 
 #[derive(Debug)]
 pub struct CullResult {
-    pub static_meshes: Vec<StaticMeshHandle>,
+    pub static_meshes: Vec<(Affine3A, StaticMeshHandle)>,
 }
 
 impl Scene {
@@ -198,20 +200,36 @@ impl Scene {
         self.recalculate_transforms = false;
     }
 
-    pub fn cull<T: SceneCuller>(&self, culler: T) -> CullResult {
+    pub fn cull<T: SceneCuller, U: MeshResolver>(&self, culler: T, resolver: &U) -> CullResult {
         assert!(
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
             "Scene must be updated before culling"
         );
         let mut static_meshes = Vec::new();
-        #[allow(clippy::single_match)]
         self.data
             .iter()
             .enumerate()
             .for_each(|(index, data)| match data {
                 NodeData::StaticMesh(handle) => {
-                    if culler.cull(self.bounds[index], self.world_transforms[index]) {
-                        static_meshes.push(*handle)
+                    let transform = self.world_transforms[index];
+                    if culler.cull(self.bounds[index].transform(transform)) {
+                        static_meshes.push((transform, *handle));
+                    }
+                }
+                NodeData::Scene(handle) => {
+                    if let Some(scene) = resolver.resolve_scene(*handle) {
+                        let parent_transform = self.world_transforms[index];
+                        scene
+                            .node_to_mesh
+                            .iter()
+                            .copied()
+                            .for_each(|(node_index, mesh_index)| {
+                                let tranform =
+                                    parent_transform * scene.world_transforms[node_index];
+                                if culler.cull(scene.bounds[mesh_index].transform(tranform)) {
+                                    static_meshes.push((tranform, scene.meshes[mesh_index]));
+                                }
+                            });
                     }
                 }
                 _ => {}
@@ -229,6 +247,10 @@ mod test {
 
     impl MeshResolver for DummyResolver {
         fn resolve_static_mesh(&self, _handle: StaticMeshHandle) -> Option<&StaticRenderMesh> {
+            None
+        }
+
+        fn resolve_scene(&self, _handle: SceneHandle) -> Option<&RenderScene> {
             None
         }
     }

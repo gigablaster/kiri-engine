@@ -61,11 +61,24 @@ pub struct StaticRenderMesh {
 #[derive(Debug, Default)]
 pub struct RenderScene {
     pub meshes: Vec<StaticMeshHandle>,
+    pub bounds: Vec<Bounds>,
     pub names: HashMap<String, usize>,
     pub parents: Vec<NodeIndex>,
-    pub local_transforms: Vec<glam::Mat4>,
-    pub world_transforms: Vec<glam::Mat4>,
+    pub local_transforms: Vec<glam::Affine3A>,
+    pub world_transforms: Vec<glam::Affine3A>,
     pub node_to_mesh: Vec<(usize, usize)>,
+}
+
+impl RenderScene {
+    pub(crate) fn update_world_transforms(&mut self) {
+        for (index, local) in self.local_transforms.iter().enumerate() {
+            let parent = self.parents[index]
+                .index()
+                .map(|index| self.world_transforms[index as usize])
+                .unwrap_or(self.local_transforms[index]);
+            self.world_transforms[index] = parent * *local;
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -79,6 +92,15 @@ impl Bounds {
         Self {
             center: glam::Vec3::from_array(center),
             radius,
+        }
+    }
+
+    pub fn transform(self, transform: glam::Affine3A) -> Self {
+        let (scale, _, _) = transform.to_scale_rotation_translation();
+        let scale = scale.max_element();
+        Self {
+            center: transform.transform_point3(self.center),
+            radius: self.radius * scale,
         }
     }
 }

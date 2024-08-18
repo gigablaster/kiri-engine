@@ -514,13 +514,17 @@ impl ResourceManager {
 
         let mut render_scene = RenderScene::default();
         for mesh in asset.meshes {
-            render_scene.meshes.push(self.load_static_mesh(mesh)?);
+            let mesh = self.load_static_mesh(mesh)?;
+            render_scene.meshes.push(mesh);
+            render_scene
+                .bounds
+                .push(self.static_meshes.read().get(mesh).unwrap().bounds);
         }
         asset.nodes.into_iter().for_each(|bone| {
             render_scene.parents.push(bone.parent);
             render_scene
                 .local_transforms
-                .push(glam::Mat4::from_scale_rotation_translation(
+                .push(glam::Affine3A::from_scale_rotation_translation(
                     bone.scale.into(),
                     glam::Quat::from_array(bone.rotation),
                     bone.translation.into(),
@@ -536,6 +540,7 @@ impl ResourceManager {
             .into_iter()
             .map(|(node, mesh)| (node as usize, mesh as usize))
             .collect();
+        render_scene.update_world_transforms();
         let handle = self.scenes.write().push(render_scene);
         Ok(handle)
     }
