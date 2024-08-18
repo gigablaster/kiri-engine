@@ -8,7 +8,7 @@ use kiri_backend::{
     ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
     RenderTargetDesc, SubpassLayout,
 };
-use kiri_runner::{run_game, GameClient, GameError, GameTickState};
+use kiri_runner::{run_game, DrawContext, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
@@ -58,11 +58,11 @@ impl GameClient<LoopError> for Loop {
     fn draw(
         &self,
         _time: kiri_common::GameTime,
-        context: &kiri_backend::RenderContext,
+        context: DrawContext,
     ) -> Result<(), kiri_backend::Error> {
-        let targets = [RenderTarget::color(context.backbuffer)
+        let targets = [RenderTarget::color(context.render.backbuffer)
             .clear(ClearRenderTarget::Color([0.25, 0.25, 0.75, 1.0]))];
-        let recorder = context.record(self.render_pass, 0, &targets);
+        let recorder = context.render.record(self.render_pass, 0, &targets);
         recorder.finish();
         Ok(())
     }

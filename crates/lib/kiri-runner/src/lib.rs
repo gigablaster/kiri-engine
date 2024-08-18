@@ -17,7 +17,7 @@ mod runner;
 
 use std::error::Error;
 
-use kiri::ResourceManager;
+use kiri::{RenderTargetManager, ResourceManager};
 use kiri_backend::RenderContext;
 use kiri_common::GameTime;
 pub use runner::*;
@@ -56,12 +56,17 @@ impl<E: Error> From<kiri::Error> for GameError<E> {
     }
 }
 
+pub struct DrawContext<'a> {
+    pub render: &'a RenderContext<'a>,
+    pub targets: &'a RenderTargetManager,
+}
+
 pub trait GameClient<E: Error>: Sized + Send + Sync {
     fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<E>>;
     fn info() -> (&'static str, &'static str, &'static str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw(&self, time: GameTime, context: &RenderContext) -> Result<(), kiri_backend::Error>;
+    fn draw(&self, time: GameTime, context: DrawContext) -> Result<(), kiri_backend::Error>;
     fn resumed(&mut self) -> Result<(), GameError<E>> {
         Ok(())
     }

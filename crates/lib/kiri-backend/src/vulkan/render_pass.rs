@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use log::debug;
 use parking_lot::Mutex;
 
 use crate::{
@@ -410,6 +411,14 @@ impl RenderDevice {
         if let Some(pass) = self.render_passes.read().get(handle) {
             pass.clear_framebuffers(&self.device);
         }
+    }
+
+    pub(crate) fn clear_swapchain_dependent_resources(&self) {
+        debug!("Clear all framebuffers");
+        self.render_passes
+            .write()
+            .iter()
+            .for_each(|pass| pass.clear_framebuffers(&self.device));
     }
 }
 

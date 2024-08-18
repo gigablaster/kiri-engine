@@ -15,11 +15,13 @@
 
 mod mesh;
 mod resource_manager;
+mod temp_images;
 
 use std::io;
 
 pub use mesh::*;
 pub use resource_manager::*;
+pub use temp_images::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

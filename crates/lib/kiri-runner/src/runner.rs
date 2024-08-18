@@ -16,7 +16,7 @@
 use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
-use kiri::ResourceManager;
+use kiri::{RenderTargetManager, ResourceManager};
 use kiri_backend::{
     FrameState, InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain,
 };
@@ -31,14 +31,15 @@ use winit::{
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-use crate::{GameClient, GameError, GameTickState};
+use crate::{DrawContext, GameClient, GameError, GameTickState};
 
 struct InnerData<E: Error, G: GameClient<E>> {
     window: Window,
     swapchain: Option<Swapchain>,
     surface: Surface,
     device: Arc<RenderDevice>,
-    resource_manager: Arc<ResourceManager>,
+    resource_manager: ResourceManager,
+    render_targets: RenderTargetManager,
     _marker1: PhantomData<E>,
     _marker2: PhantomData<G>,
 }
@@ -87,6 +88,7 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
         Ok(Self {
             window,
             resource_manager: ResourceManager::new(&device)?,
+            render_targets: RenderTargetManager::new(&device),
             device,
             surface,
             swapchain: None,
@@ -159,6 +161,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                     let game = self.game.as_mut().unwrap();
                     if dims[0] > 0 && dims[1] > 0 {
                         if inner.swapchain.is_none() {
+                            inner.render_targets.cleanup();
                             inner.swapchain =
                                 Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap())
                         }
@@ -166,7 +169,13 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         if let FrameState::NeedRecreateSwapchain = inner
                             .device
                             .frame(swapchain, |context| {
-                                game.draw(self.game_time.game_time(), context)
+                                game.draw(
+                                    self.game_time.game_time(),
+                                    DrawContext {
+                                        render: context,
+                                        targets: &inner.render_targets,
+                                    },
+                                )
                             })
                             .unwrap()
                         {

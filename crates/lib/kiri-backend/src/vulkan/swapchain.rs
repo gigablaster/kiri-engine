@@ -212,6 +212,7 @@ impl Swapchain {
             acquire_semaphores.push(acquire_semaphore);
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
+        device.clear_swapchain_dependent_resources();
         Ok(Self {
             device: device.clone(),
             raw: swapchain,

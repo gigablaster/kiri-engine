@@ -530,6 +530,7 @@ pub struct RenderContext<'a> {
     pub(crate) frame: &'a Frame,
     pub(crate) passes: Mutex<Vec<RecordedRenderPass>>,
     pub backbuffer: ImageHandle,
+    pub back_buffer_size: [u32; 2],
     pub(crate) temp_buffer: BufferHandle,
 }
 

@@ -539,10 +539,12 @@ impl RenderDevice {
 
         let passes = {
             puffin::profile_scope!("Generate frame");
+
             let mut context = RenderContext {
                 frame: &frame,
                 passes: Default::default(),
                 backbuffer: target.image,
+                back_buffer_size: self.images.read().get_cold(target.image).unwrap().desc.dims,
                 temp_buffer: self.temp_buffer_handle,
             };
             f(&mut context)?;
@@ -566,6 +568,7 @@ impl RenderDevice {
             }?;
 
             staging.execute_pending_barriers(self, frame.cb);
+            drop(staging);
             for pass in passes {
                 let (pass, subpass, streams, targets) = pass.consume();
                 let pass = render_passes

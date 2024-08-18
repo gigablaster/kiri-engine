@@ -189,9 +189,9 @@ impl Drop for ResourceManager {
 }
 
 impl ResourceManager {
-    pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
+    pub fn new(device: &Arc<RenderDevice>) -> Result<Self, Error> {
         debug!("Create resource manager");
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             image_assets: Default::default(),
             loading_images: Default::default(),
@@ -219,7 +219,7 @@ impl ResourceManager {
             shaders: Default::default(),
             pipelines: Default::default(),
             passes: Default::default(),
-        }))
+        })
     }
 
     pub fn get_or_load_image(&self, source: ImageAssetSource) -> Result<ImageHandle, Error> {
