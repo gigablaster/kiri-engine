@@ -254,7 +254,7 @@ fn add_or_merge_dependency(
 }
 
 impl RenderDevice {
-    pub fn create_render_pass(&self, layout: RenderPassLayout) -> Result<RenderPassHandle, Error> {
+    pub fn create_render_pass(&self, layout: &RenderPassLayout) -> Result<RenderPassHandle, Error> {
         let render_pass_attachments = layout
             .color_targets
             .iter()

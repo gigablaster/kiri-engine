@@ -34,7 +34,7 @@ use kiri_backend::{
     BindGroupDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect,
     ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayout, PipelineHandle,
     PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPassHandle,
-    ShaderDesc,
+    RenderPassLayout, ShaderDesc,
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -154,6 +154,7 @@ pub struct ResourceManager {
     programs: RwLock<HashMap<ProgramKey, ProgramHandle>>,
     shaders: RwLock<HashMap<AssetReference, Bytes>>,
     pipelines: RwLock<HashMap<RasterPipelineDesc, PipelineHandle>>,
+    passes: RwLock<HashMap<RenderPassLayout, RenderPassHandle>>,
 }
 
 const MESH_POOL_SIZE: usize = 256 * 1024 * 1024;
@@ -180,6 +181,10 @@ impl Drop for ResourceManager {
             .write()
             .drain()
             .for_each(|(_, handle)| self.device.destroy_program(handle));
+        self.passes
+            .write()
+            .drain()
+            .for_each(|(_, handle)| self.device.destroy_render_pass(handle));
     }
 }
 
@@ -213,6 +218,7 @@ impl ResourceManager {
             programs: Default::default(),
             shaders: Default::default(),
             pipelines: Default::default(),
+            passes: Default::default(),
         }))
     }
 
@@ -621,6 +627,26 @@ impl ResourceManager {
                 );
                 pipelines.insert(desc, pipeline);
                 Ok(pipeline)
+            }
+        }
+    }
+
+    pub fn get_or_create_render_pass(
+        &self,
+        layout: RenderPassLayout,
+    ) -> Result<RenderPassHandle, Error> {
+        let passes = self.passes.upgradable_read();
+        if let Some(pass) = passes.get(&layout) {
+            Ok(*pass)
+        } else {
+            let mut passes = RwLockUpgradableReadGuard::upgrade(passes);
+            if let Some(pass) = passes.get(&layout) {
+                Ok(*pass)
+            } else {
+                debug!("Create render pass {:?}", layout);
+                let pass = self.device.create_render_pass(&layout)?;
+                passes.insert(layout, pass);
+                Ok(pass)
             }
         }
     }

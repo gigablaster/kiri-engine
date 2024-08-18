@@ -41,7 +41,7 @@ impl GameClient<LoopError> for Loop {
         cache.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
         cache.get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
         Ok(Self {
-            render_pass: render_device.create_render_pass(layout)?,
+            render_pass: cache.get_or_create_render_pass(layout)?,
             _cache: cache,
         })
     }
