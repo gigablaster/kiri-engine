@@ -423,7 +423,7 @@ impl Image {
         self.clear_views(drop_list);
     }
 
-    pub(crate) fn clear_views(self, drop_list: &mut DropList) {
+    pub(crate) fn clear_views(&self, drop_list: &mut DropList) {
         self.views
             .lock()
             .drain()
@@ -513,6 +513,13 @@ impl RenderDevice {
             self.with_drop_list(|drop_list| {
                 image.free(drop_list);
             })
+        }
+    }
+
+    pub fn clear_image_views(&self, handle: ImageHandle) {
+        if let Some(image) = self.images.read().get_cold(handle) {
+            self.with_drop_list(|drop_list| image.clear_views(drop_list));
+            self.image_updated(handle);
         }
     }
 }

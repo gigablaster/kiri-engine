@@ -405,6 +405,12 @@ impl RenderDevice {
             pass.free(&self.device);
         }
     }
+
+    pub fn clear_framebuffers(&self, handle: RenderPassHandle) {
+        if let Some(pass) = self.render_passes.read().get(handle) {
+            pass.clear_framebuffers(&self.device);
+        }
+    }
 }
 
 impl RenderPass {

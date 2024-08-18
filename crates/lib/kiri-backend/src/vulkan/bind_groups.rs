@@ -562,6 +562,7 @@ impl RenderDevice {
     }
 
     pub(crate) fn image_updated(&self, image: ImageHandle) {
+        let mut dirty = self.dirty_bind_groups.lock();
         self.bind_groups
             .lock()
             .enumerate()
@@ -573,7 +574,7 @@ impl RenderDevice {
                         false
                     }
                 }) {
-                    self.dirty_bind_groups.lock().insert(handle);
+                    dirty.insert(handle);
                 }
             });
     }
