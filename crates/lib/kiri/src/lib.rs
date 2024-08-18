@@ -15,10 +15,11 @@
 
 mod runner;
 
-use std::{error::Error, sync::Arc};
+use std::error::Error;
 
-use kiri_backend::{RenderContext, RenderDevice};
+use kiri_backend::RenderContext;
 use kiri_common::GameTime;
+use kiri_gfx::ResourceManager;
 pub use runner::*;
 
 pub enum GameTickState {
@@ -56,7 +57,7 @@ impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn new(render_device: &Arc<RenderDevice>) -> Result<Self, GameError<E>>;
+    fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<E>>;
     fn info() -> (&'static str, &'static str, &'static str);
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;

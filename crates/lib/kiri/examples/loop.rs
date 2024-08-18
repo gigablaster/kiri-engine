@@ -1,19 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{error::Error, fmt::Display, sync::Arc};
+use std::{error::Error, fmt::Display};
 
 use kiri::{run_game, GameClient};
 use kiri_assets::GltfSceneSource;
 use kiri_backend::{
-    ClearRenderTarget, Format, ImageLayout, RenderDevice, RenderPassHandle, RenderPassLayout,
-    RenderTarget, RenderTargetDesc, SubpassLayout,
+    ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
+    RenderTargetDesc, SubpassLayout,
 };
 use kiri_gfx::ResourceManager;
 
 #[derive(Debug)]
 struct Loop {
     render_pass: RenderPassHandle,
-    _cache: Arc<ResourceManager>,
 }
 
 #[derive(Debug)]
@@ -27,7 +26,7 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(render_device: &Arc<RenderDevice>) -> Result<Self, kiri::GameError<LoopError>> {
+    fn new(resource_manager: &ResourceManager) -> Result<Self, kiri::GameError<LoopError>> {
         let layout = RenderPassLayout::default()
             .color_target(
                 RenderTargetDesc::new(Format::BGRA8_UNORM)
@@ -37,12 +36,11 @@ impl GameClient<LoopError> for Loop {
                     .final_layout(ImageLayout::Present),
             )
             .subpass(SubpassLayout::default().color_write(&[0]));
-        let cache = ResourceManager::new(render_device)?;
-        cache.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
-        cache.get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
+        resource_manager.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
+        resource_manager
+            .get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
         Ok(Self {
-            render_pass: cache.get_or_create_render_pass(layout)?,
-            _cache: cache,
+            render_pass: resource_manager.get_or_create_render_pass(layout)?,
         })
     }
     fn info() -> (&'static str, &'static str, &'static str) {

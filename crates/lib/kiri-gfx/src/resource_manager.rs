@@ -650,4 +650,8 @@ impl ResourceManager {
             }
         }
     }
+
+    pub fn device(&self) -> &RenderDevice {
+        &self.device
+    }
 }

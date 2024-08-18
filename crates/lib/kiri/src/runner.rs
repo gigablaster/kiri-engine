@@ -20,6 +20,7 @@ use kiri_backend::{
     FrameState, InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain,
 };
 use kiri_common::TimeFilter;
+use kiri_gfx::ResourceManager;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
@@ -37,6 +38,7 @@ struct InnerData<E: Error, G: GameClient<E>> {
     swapchain: Option<Swapchain>,
     surface: Surface,
     device: Arc<RenderDevice>,
+    resource_manager: Arc<ResourceManager>,
     _marker1: PhantomData<E>,
     _marker2: PhantomData<G>,
 }
@@ -84,6 +86,7 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
         )?;
         Ok(Self {
             window,
+            resource_manager: ResourceManager::new(&device)?,
             device,
             surface,
             swapchain: None,
@@ -118,7 +121,9 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
         let internal = self
             .inner
             .get_or_insert(InnerData::new(event_loop).unwrap());
-        let game = self.game.get_or_insert(G::new(&internal.device).unwrap());
+        let game = self
+            .game
+            .get_or_insert(G::new(&internal.resource_manager).unwrap());
         game.resumed().unwrap();
         internal.window.set_title(game.title());
         self.last_time = Instant::now();
