@@ -172,6 +172,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                                 game.draw(
                                     self.game_time.game_time(),
                                     DrawContext {
+                                        resource_manager: &inner.resource_manager,
                                         render: context,
                                         targets: &inner.render_targets,
                                     },

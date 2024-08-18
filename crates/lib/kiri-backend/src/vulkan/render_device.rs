@@ -36,7 +36,7 @@ use std::fmt::Debug;
 
 use crate::{
     vulkan::{AcquiredSurface, Buffer, DrawStreamExecuteContext, RenderContext, MAX_ATTACHMENTS},
-    Error, Instance, RenderDeviceProperties, Swapchain,
+    Error, Instance, RenderDeviceProperties, ShaderStage, Swapchain,
 };
 
 use super::{
@@ -114,7 +114,7 @@ pub struct RenderDevice {
     pub(crate) bind_groups: Mutex<BindGroupPool>,
     pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
     pub(crate) uniforms: Mutex<Uniforms>,
-    pub(crate) layouts: Mutex<HashMap<BindGroupDesc, Arc<DescriptorSetLayout>>>,
+    pub(crate) layouts: Mutex<HashMap<BindGroupDesc<'static>, Arc<DescriptorSetLayout>>>,
     empty: Option<GpuDescriptor>,
 }
 
@@ -123,6 +123,11 @@ impl Debug for RenderDevice {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
     }
 }
+
+pub const EMPTY_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
+    stage: ShaderStage::Graphics,
+    set: &[],
+};
 
 impl RenderDevice {
     pub fn new(
@@ -292,10 +297,10 @@ impl RenderDevice {
             &mut memory_allocator,
             &pdevice,
         )?;
-        let empty_layout_desc = BindGroupDesc::graphics();
-        let empty_layout = create_descriptor_set_layout(&device, &samplers, &empty_layout_desc)?;
+        let empty_layout =
+            create_descriptor_set_layout(&device, &samplers, &EMPTY_BIND_GROUP_DESC)?;
         let mut layouts = HashMap::default();
-        layouts.insert(empty_layout_desc, empty_layout.clone());
+        layouts.insert(EMPTY_BIND_GROUP_DESC, empty_layout.clone());
         let empty = unsafe {
             descriptor_allocator.allocate(
                 AshDescriptorDevice::wrap(&device),
@@ -539,12 +544,19 @@ impl RenderDevice {
 
         let passes = {
             puffin::profile_scope!("Generate frame");
-
+            let backbuffer = self
+                .images
+                .read()
+                .get_cold(target.image)
+                .unwrap()
+                .desc
+                .clone();
             let mut context = RenderContext {
                 frame: &frame,
                 passes: Default::default(),
                 backbuffer: target.image,
-                back_buffer_size: self.images.read().get_cold(target.image).unwrap().desc.dims,
+                backbuffer_size: backbuffer.dims,
+                backbuffer_format: backbuffer.format,
                 temp_buffer: self.temp_buffer_handle,
             };
             f(&mut context)?;

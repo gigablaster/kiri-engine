@@ -381,12 +381,12 @@ pub struct RenderDeviceProperties {
 
 pub use vulkan::Error;
 pub use vulkan::{
-    BindGroupDesc, BindGroupHandle, BindGroupUpdateContext, BufferCreateDesc, BufferHandle,
-    BufferSlice, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc, ImageDesc,
-    ImageHandle, ImageSubresourceData, InputVertexStreamLayout, Instance, InstanceBuilder,
-    PhysicalDevice, PhysicalDeviceType, PipelineHandle, PipelineVertex, ProgramHandle,
-    RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle, RenderPassLayout,
-    RenderTarget, RenderTargetDesc, ShaderDesc, SkipMissingSlots, SubpassLayout, Surface,
-    Swapchain, DYNAMIC_BINDING_SLOT, FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT,
-    OBJECT_BINDING_SLOT,
+    BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
+    BufferHandle, BufferSlice, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc,
+    ImageDesc, ImageHandle, ImageSubresourceData, InputVertexAttrubute, InputVertexStreamLayout,
+    Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, PipelineVertex,
+    ProgramHandle, RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle,
+    RenderPassLayout, RenderTarget, RenderTargetDesc, ShaderDesc, SkipMissingSlots, SubpassLayout,
+    Surface, Swapchain, DYNAMIC_BINDING_SLOT, EMPTY_BIND_GROUP_DESC, FRAME_BINDING_SLOT,
+    MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };

@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    hash::Hash,
+    hash::{DefaultHasher, Hash, Hasher},
     mem,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -32,10 +32,10 @@ use kiri_assets::{
     StaticMeshAsset,
 };
 use kiri_backend::{
-    BindGroupDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect,
-    ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayout, PipelineHandle,
-    PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPassHandle,
-    RenderPassLayout, ShaderDesc,
+    BindGroupDesc, BindGroupSlotDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice,
+    ImageAspect, ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayout,
+    PipelineHandle, PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice,
+    RenderPassHandle, RenderPassLayout, ShaderDesc, ShaderStage,
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -43,8 +43,8 @@ use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
-    Bounds, Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshShaderData,
-    RenderMeshSurface, RenderScene, StaticRenderMesh,
+    Bounds, Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshSurface, RenderScene,
+    StaticRenderMesh,
 };
 
 pub type StaticMeshHandle = Handle<StaticRenderMesh>;
@@ -90,22 +90,22 @@ impl<T: Hash + Eq + PartialEq> AssetLifetimeTracker<T> {
 pub struct RasterPipelineDesc {
     pub vertex_shader: Option<String>,
     pub fragment_shader: Option<String>,
-    pub layout: Vec<BindGroupDesc>,
-    pub streams: Vec<InputVertexStreamLayout>,
+    pub layout: &'static [BindGroupDesc<'static>],
+    pub streams: &'static [InputVertexStreamLayout<'static>],
     pub pass: RenderPassHandle,
     pub subpass: u32,
     pub desc: RasterPipelineCreateDesc,
 }
 
 impl RasterPipelineDesc {
-    pub fn new<T: PipelineVertex>(layout: &[BindGroupDesc]) -> Self {
+    pub fn new<T: PipelineVertex>(layout: &'static [BindGroupDesc<'static>]) -> Self {
         Self {
             vertex_shader: None,
             fragment_shader: None,
-            layout: layout.to_vec(),
+            layout,
             pass: Default::default(),
             subpass: 0,
-            streams: T::layout().collect(),
+            streams: T::layout(),
             desc: Default::default(),
         }
     }
@@ -135,7 +135,7 @@ impl RasterPipelineDesc {
 struct ProgramKey {
     vertex_shader: Option<String>,
     fragment_shader: Option<String>,
-    layout: Vec<BindGroupDesc>,
+    layout: &'static [BindGroupDesc<'static>],
 }
 
 #[derive(Debug)]
@@ -155,16 +155,60 @@ pub struct ResourceManager {
     programs: RwLock<HashMap<ProgramKey, ProgramHandle>>,
     shaders: RwLock<HashMap<AssetReference, Bytes>>,
     pipelines: RwLock<HashMap<RasterPipelineDesc, PipelineHandle>>,
-    passes: RwLock<HashMap<RenderPassLayout, RenderPassHandle>>,
+    passes: RwLock<HashMap<u64, RenderPassHandle>>,
 }
 
 const MESH_POOL_SIZE: usize = 256 * 1024 * 1024;
+
+pub const PBR_MATERIAL_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindGroupSlotDesc {
+            slot: 0,
+            name: "material",
+            ty: BindType::Uniform,
+        },
+        BindGroupSlotDesc {
+            slot: 1,
+            name: "base_color",
+            ty: BindType::CombinedSampledImage,
+        },
+        BindGroupSlotDesc {
+            slot: 2,
+            name: "normals",
+            ty: BindType::CombinedSampledImage,
+        },
+        BindGroupSlotDesc {
+            slot: 3,
+            name: "metallic_roughness",
+            ty: BindType::CombinedSampledImage,
+        },
+        BindGroupSlotDesc {
+            slot: 4,
+            name: "occlusion",
+            ty: BindType::CombinedSampledImage,
+        },
+        BindGroupSlotDesc {
+            slot: 5,
+            name: "emissive",
+            ty: BindType::CombinedSampledImage,
+        },
+    ],
+};
+
+pub const RENDER_PASS_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
+    stage: ShaderStage::Graphics,
+    set: &[BindGroupSlotDesc {
+        slot: 0,
+        name: "pass",
+        ty: BindType::Uniform,
+    }],
+};
 
 impl Drop for ResourceManager {
     fn drop(&mut self) {
         debug!("Resource manager cleanup");
         self.static_meshes.write().drain().for_each(|mesh| {
-            self.device.destroy_bind_group(mesh.object_bind_group);
             mesh.materials
                 .iter()
                 .for_each(|material| self.device.destroy_bind_group(material.bind_group));
@@ -387,23 +431,13 @@ impl ResourceManager {
             .update_buffer(self.mesh_pool, vertex_offset, &asset.vertices)?;
         self.device
             .update_buffer(self.mesh_pool, index_offset, &asset.indices)?;
-        let object_bind_group = self
-            .device
-            .create_bind_group(BindGroupDesc::graphics().slot(0, "object", BindType::Uniform))?;
         let mut surfaces = Vec::with_capacity(asset.surfaces.len());
         let mut materials = Vec::with_capacity(asset.materials.len());
         for material in &asset.materials {
             materials.push((
                 material.clone(),
-                self.device.create_bind_group(
-                    BindGroupDesc::graphics()
-                        .slot(0, "material", BindType::Uniform)
-                        .slot(1, "base_color", BindType::CombinedSampledImage)
-                        .slot(2, "normals", BindType::CombinedSampledImage)
-                        .slot(3, "metallic_roughness", BindType::CombinedSampledImage)
-                        .slot(4, "occlusion", BindType::CombinedSampledImage)
-                        .slot(5, "emissive", BindType::CombinedSampledImage),
-                )?,
+                self.device
+                    .create_bind_group(&PBR_MATERIAL_BIND_GROUP_DESC)?,
             ));
         }
         for surface in &asset.surfaces {
@@ -416,21 +450,11 @@ impl ResourceManager {
         let mut mesh = StaticRenderMesh {
             vertices: BufferSlice::new(self.mesh_pool, vertex_offset),
             indices: BufferSlice::new(self.mesh_pool, index_offset),
-            object_bind_group,
             surfaces,
             materials: Default::default(),
             bounds: Bounds::from_array_and_radius(asset.bounds.0, asset.bounds.1),
         };
         self.device.update_bind_groups(|context| {
-            context.push_uniform(
-                mesh.object_bind_group,
-                "object",
-                &[RenderMeshShaderData {
-                    position_scale: asset.positon_scale,
-                    uv1_scale: asset.uv_scale[0],
-                    uv2_scale: asset.uv_scale[1],
-                }],
-            )?;
             for material in &materials {
                 let cutoff = if let MeshMaterialBlend::AlphaTest(cutoff) = material.0.blend {
                     cutoff
@@ -478,7 +502,6 @@ impl ResourceManager {
                         .iter()
                         .for_each(|image| self.unload_image(*image));
                 });
-                self.device.destroy_bind_group(mesh.object_bind_group);
             }
         }
     }
@@ -529,6 +552,9 @@ impl ResourceManager {
                     glam::Quat::from_array(bone.rotation),
                     bone.translation.into(),
                 ));
+            render_scene
+                .world_transforms
+                .push(glam::Affine3A::default());
         });
         render_scene.names = asset
             .node_names
@@ -549,12 +575,12 @@ impl ResourceManager {
         &self,
         vertex_shader: Option<String>,
         fragment_shader: Option<String>,
-        layout: &[BindGroupDesc],
+        layout: &'static [BindGroupDesc<'static>],
     ) -> Result<ProgramHandle, Error> {
         let key = ProgramKey {
             vertex_shader: vertex_shader.clone(),
             fragment_shader: fragment_shader.clone(),
-            layout: layout.to_vec(),
+            layout,
         };
         let programs = self.programs.upgradable_read();
 
@@ -623,13 +649,13 @@ impl ResourceManager {
                 let program = self.get_or_load_program(
                     desc.vertex_shader.clone(),
                     desc.fragment_shader.clone(),
-                    &desc.layout,
+                    desc.layout,
                 )?;
                 let pipeline = self.device.create_pipeline(
                     program,
                     desc.pass,
                     desc.subpass,
-                    &desc.streams,
+                    desc.streams,
                     &desc.desc,
                 );
                 pipelines.insert(desc, pipeline);
@@ -641,18 +667,22 @@ impl ResourceManager {
     pub fn get_or_create_render_pass(
         &self,
         layout: RenderPassLayout,
-    ) -> Result<RenderPassHandle, Error> {
+    ) -> Result<RenderPassHandle, kiri_backend::Error> {
         let passes = self.passes.upgradable_read();
-        if let Some(pass) = passes.get(&layout) {
+        // We can't store RenderPassLayout in HashMap, but we can compute hash from it!
+        let mut hasher = DefaultHasher::default();
+        layout.hash(&mut hasher);
+        let hash = hasher.finish();
+        if let Some(pass) = passes.get(&hash) {
             Ok(*pass)
         } else {
             let mut passes = RwLockUpgradableReadGuard::upgrade(passes);
-            if let Some(pass) = passes.get(&layout) {
+            if let Some(pass) = passes.get(&hash) {
                 Ok(*pass)
             } else {
                 debug!("Create render pass {:?}", layout);
                 let pass = self.device.create_render_pass(&layout)?;
-                passes.insert(layout, pass);
+                passes.insert(hash, pass);
                 Ok(pass)
             }
         }

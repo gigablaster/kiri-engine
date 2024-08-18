@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, Rect2D};
 use parking_lot::Mutex;
 
-use crate::{vulkan::DYNAMIC_BINDING_SLOT, PipelineHandle};
+use crate::{vulkan::DYNAMIC_BINDING_SLOT, Format, PipelineHandle};
 
 use super::{
     BindGroupHandle, BindGroupPool, BufferHandle, BufferPool, BufferSlice, Error, Frame,
@@ -530,7 +530,8 @@ pub struct RenderContext<'a> {
     pub(crate) frame: &'a Frame,
     pub(crate) passes: Mutex<Vec<RecordedRenderPass>>,
     pub backbuffer: ImageHandle,
-    pub back_buffer_size: [u32; 2],
+    pub backbuffer_size: [u32; 2],
+    pub backbuffer_format: Format,
     pub(crate) temp_buffer: BufferHandle,
 }
 

@@ -4,15 +4,12 @@ use std::{error::Error, fmt::Display};
 
 use kiri::ResourceManager;
 use kiri_backend::{
-    ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
-    RenderTargetDesc, SubpassLayout,
+    ClearRenderTarget, ImageLayout, RenderPassLayout, RenderTarget, RenderTargetDesc, SubpassLayout,
 };
 use kiri_runner::{run_game, DrawContext, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
-struct Loop {
-    render_pass: RenderPassHandle,
-}
+struct Loop {}
 
 #[derive(Debug)]
 enum LoopError {}
@@ -26,20 +23,9 @@ impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
     fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<LoopError>> {
-        let layout = RenderPassLayout::default()
-            .color_target(
-                RenderTargetDesc::new(Format::BGRA8_UNORM)
-                    .clear_input()
-                    .store_output()
-                    .initial_layout(ImageLayout::Undefined)
-                    .final_layout(ImageLayout::Present),
-            )
-            .subpass(SubpassLayout::default().color_write(&[0]));
         resource_manager.get_or_load_static_mesh("PBR/gun.gltf#Mesh")?;
         resource_manager.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        Ok(Self {
-            render_pass: resource_manager.get_or_create_render_pass(layout)?,
-        })
+        Ok(Self {})
     }
     fn info() -> (&'static str, &'static str, &'static str) {
         ("com", "gigablaster", "kiri-demo-loop")
@@ -58,9 +44,24 @@ impl GameClient<LoopError> for Loop {
         _time: kiri_common::GameTime,
         context: DrawContext,
     ) -> Result<(), kiri_backend::Error> {
+        let layout = RenderPassLayout {
+            color_targets: &[RenderTargetDesc::new(context.render.backbuffer_format)
+                .clear_input()
+                .store_output()
+                .initial_layout(ImageLayout::Undefined)
+                .final_layout(ImageLayout::Present)],
+            depth_target: None,
+            subpasses: &[SubpassLayout {
+                depth_write: false,
+                depth_read: false,
+                color_writes: &[0],
+                color_reads: &[],
+            }],
+        };
         let targets = [RenderTarget::color(context.render.backbuffer)
             .clear(ClearRenderTarget::Color([0.25, 0.25, 0.75, 1.0]))];
-        let recorder = context.render.record(self.render_pass, 0, &targets);
+        let render_pass = context.get_or_create_render_pass(layout)?;
+        let recorder = context.render.record(render_pass, 0, &targets);
         recorder.finish();
         Ok(())
     }

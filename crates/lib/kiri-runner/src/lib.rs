@@ -18,7 +18,7 @@ mod runner;
 use std::error::Error;
 
 use kiri::{RenderTargetManager, ResourceManager};
-use kiri_backend::RenderContext;
+use kiri_backend::{RenderContext, RenderPassHandle, RenderPassLayout};
 use kiri_common::GameTime;
 pub use runner::*;
 
@@ -57,8 +57,18 @@ impl<E: Error> From<kiri::Error> for GameError<E> {
 }
 
 pub struct DrawContext<'a> {
+    resource_manager: &'a ResourceManager,
     pub render: &'a RenderContext<'a>,
     pub targets: &'a RenderTargetManager,
+}
+
+impl<'a> DrawContext<'a> {
+    pub fn get_or_create_render_pass(
+        &self,
+        layout: RenderPassLayout,
+    ) -> Result<RenderPassHandle, kiri_backend::Error> {
+        self.resource_manager.get_or_create_render_pass(layout)
+    }
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {

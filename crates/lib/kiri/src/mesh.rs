@@ -29,14 +29,6 @@ pub struct RenderMeshSurface {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
-pub(crate) struct RenderMeshShaderData {
-    pub position_scale: f32,
-    pub uv1_scale: f32,
-    pub uv2_scale: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
 pub(crate) struct PbrMaterialShaderData {
     pub emissive_power: f32,
     pub alpha_cutoff: f32,
@@ -52,7 +44,6 @@ pub struct RenderMeshMaterial {
 pub struct StaticRenderMesh {
     pub vertices: BufferSlice,
     pub indices: BufferSlice,
-    pub object_bind_group: BindGroupHandle,
     pub surfaces: Vec<RenderMeshSurface>,
     pub materials: Vec<RenderMeshMaterial>,
     pub bounds: Bounds,

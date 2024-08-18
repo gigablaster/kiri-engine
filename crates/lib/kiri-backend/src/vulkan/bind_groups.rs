@@ -244,8 +244,11 @@ pub(crate) struct BindGroupData {
 }
 
 impl RenderDevice {
-    pub fn create_bind_group(&self, layout: BindGroupDesc) -> Result<BindGroupHandle, Error> {
-        let layout = self.get_or_create_layout(&layout)?;
+    pub fn create_bind_group(
+        &self,
+        layout: &'static BindGroupDesc<'static>,
+    ) -> Result<BindGroupHandle, Error> {
+        let layout = self.get_or_create_layout(layout)?;
         self.create_bind_group_from_layout(&layout)
     }
 
@@ -356,14 +359,14 @@ impl RenderDevice {
 
     pub(crate) fn get_or_create_layout(
         &self,
-        layout: &BindGroupDesc,
+        layout: &'static BindGroupDesc<'static>,
     ) -> Result<Arc<DescriptorSetLayout>, Error> {
         let mut layouts = self.layouts.lock();
         if let Some(layout) = layouts.get(layout).cloned() {
             Ok(layout)
         } else {
             let result = create_descriptor_set_layout(&self.device, &self.samplers, layout)?;
-            layouts.insert(layout.clone(), result.clone());
+            layouts.insert(*layout, result.clone());
             Ok(result)
         }
     }

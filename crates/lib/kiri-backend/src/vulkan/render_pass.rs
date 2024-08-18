@@ -60,58 +60,19 @@ pub struct RenderTargetDesc {
     pub final_layout: Option<ImageLayout>,
 }
 
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
-pub struct SubpassLayout {
-    depth_write: bool,
-    depth_read: bool,
-    color_writes: Vec<usize>,
-    color_reads: Vec<usize>,
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct SubpassLayout<'a> {
+    pub depth_write: bool,
+    pub depth_read: bool,
+    pub color_writes: &'a [usize],
+    pub color_reads: &'a [usize],
 }
 
-impl SubpassLayout {
-    pub fn depth_write(mut self) -> Self {
-        self.depth_write = true;
-        self
-    }
-
-    pub fn depth_read(mut self) -> Self {
-        self.depth_read = true;
-        self
-    }
-
-    pub fn color_write(mut self, indices: &[usize]) -> Self {
-        self.color_writes.extend(indices);
-        self
-    }
-
-    pub fn color_read(mut self, indices: &[usize]) -> Self {
-        self.color_reads.extend(indices);
-        self
-    }
-}
-
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
-pub struct RenderPassLayout {
-    pub color_targets: Vec<RenderTargetDesc>,
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct RenderPassLayout<'a> {
+    pub color_targets: &'a [RenderTargetDesc],
     pub depth_target: Option<RenderTargetDesc>,
-    pub subpasses: Vec<SubpassLayout>,
-}
-
-impl RenderPassLayout {
-    pub fn color_target(mut self, target: RenderTargetDesc) -> Self {
-        self.color_targets.push(target);
-        self
-    }
-
-    pub fn depth_target(mut self, target: RenderTargetDesc) -> Self {
-        self.depth_target = Some(target);
-        self
-    }
-
-    pub fn subpass(mut self, subpass: SubpassLayout) -> Self {
-        self.subpasses.push(subpass);
-        self
-    }
+    pub subpasses: &'a [SubpassLayout<'a>],
 }
 
 impl RenderTargetDesc {

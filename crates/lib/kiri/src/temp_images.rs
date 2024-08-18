@@ -137,7 +137,7 @@ impl RenderTargetManager {
         desc: TemporaryRenderTargetDesc,
     ) -> Result<TemporaryRenderTarget, Error> {
         let mut free = self.free.lock();
-        let key = desc.to_key(context.back_buffer_size);
+        let key = desc.to_key(context.backbuffer_size);
         if let Some(targets) = free.get_mut(&key) {
             if let Some(image) = targets.pop() {
                 return Ok(TemporaryRenderTarget {
