@@ -42,8 +42,8 @@ use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
-    Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshShaderData, RenderMeshSurface,
-    RenderScene, RenderSceneGroup, StaticRenderMesh,
+    Bounds, Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshShaderData,
+    RenderMeshSurface, RenderScene, RenderSceneGroup, StaticRenderMesh,
 };
 
 pub type StaticMeshHandle = Handle<StaticRenderMesh>;
@@ -415,6 +415,7 @@ impl ResourceManager {
             object_bind_group,
             surfaces,
             materials: Default::default(),
+            bounds: Bounds::from_array_and_radius(asset.bounds.0, asset.bounds.1),
         };
         self.device.update_bind_groups(|context| {
             context.push_uniform(

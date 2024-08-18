@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use kiri_assets::BoneIndex;
+use kiri_assets::NodeIndex;
 use kiri_backend::{BindGroupHandle, BufferSlice, ImageHandle};
 
 use crate::StaticMeshHandle;
@@ -42,51 +42,6 @@ pub(crate) struct PbrMaterialShaderData {
     pub alpha_cutoff: f32,
 }
 
-// pub(crate) const STATIC_MESH_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-//     stage: ShaderStage::Graphics,
-//     set: &[BindGroupSlotDesc {
-//         name: "object",
-//         slot: 0,
-//         ty: BindType::Uniform,
-//     }],
-// };
-
-// pub(crate) const PBR_MATERIAL_BIND_GROUP: BindGroupDesc = BindGroupDesc {
-//     stage: ShaderStage::Graphics,
-//     set: &[
-//         BindGroupSlotDesc {
-//             name: "material",
-//             slot: 0,
-//             ty: BindType::Uniform,
-//         },
-//         BindGroupSlotDesc {
-//             name: "base_color",
-//             slot: 1,
-//             ty: BindType::CombinedSampledImage,
-//         },
-//         BindGroupSlotDesc {
-//             name: "normals",
-//             slot: 2,
-//             ty: BindType::CombinedSampledImage,
-//         },
-//         BindGroupSlotDesc {
-//             name: "metallic_roughness",
-//             slot: 3,
-//             ty: BindType::CombinedSampledImage,
-//         },
-//         BindGroupSlotDesc {
-//             name: "occlusion",
-//             slot: 4,
-//             ty: BindType::CombinedSampledImage,
-//         },
-//         BindGroupSlotDesc {
-//             name: "emissive",
-//             slot: 5,
-//             ty: BindType::CombinedSampledImage,
-//         },
-//     ],
-// };
-
 #[derive(Debug)]
 pub struct RenderMeshMaterial {
     pub bind_group: BindGroupHandle,
@@ -100,13 +55,14 @@ pub struct StaticRenderMesh {
     pub object_bind_group: BindGroupHandle,
     pub surfaces: Vec<RenderMeshSurface>,
     pub materials: Vec<RenderMeshMaterial>,
+    pub bounds: Bounds,
 }
 
 #[derive(Debug, Default)]
 pub struct RenderScene {
     pub meshes: Vec<StaticMeshHandle>,
     pub names: HashMap<String, usize>,
-    pub parents: Vec<BoneIndex>,
+    pub parents: Vec<NodeIndex>,
     pub local_transforms: Vec<glam::Mat4>,
     pub world_transforms: Vec<glam::Mat4>,
     pub node_to_mesh: Vec<(usize, usize)>,
@@ -115,4 +71,19 @@ pub struct RenderScene {
 #[derive(Debug)]
 pub struct RenderSceneGroup {
     pub scenes: HashMap<String, RenderScene>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Bounds {
+    pub center: glam::Vec3A,
+    pub radius: f32,
+}
+
+impl Bounds {
+    pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
+        Self {
+            center: glam::Vec3A::from_array(center),
+            radius,
+        }
+    }
 }
