@@ -39,7 +39,7 @@ pub struct ImageAsset {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ImageData {
-    Path(PathBuf),
+    Path(String),
     Bytes(Bytes),
     Color([u8; 4]),
 }
@@ -89,30 +89,22 @@ impl ImageAssetType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ImageAssetSource {
     pub ty: ImageAssetType,
-    pub mips: bool,
     pub data: ImageData,
 }
 
 impl ImageAssetSource {
-    pub fn from_file<P: AsRef<Path>>(p: P) -> Self {
+    pub fn from_file(path: &str) -> Self {
         Self {
             ty: ImageAssetType::Color,
-            mips: true,
-            data: ImageData::Path(p.as_ref().to_owned()),
+            data: ImageData::Path(path.replace("\\", "/")),
         }
     }
 
     pub fn from_color(color: [u8; 4]) -> Self {
         Self {
             ty: ImageAssetType::Color,
-            mips: false,
             data: ImageData::Color(color),
         }
-    }
-
-    pub fn mips(mut self, value: bool) -> Self {
-        self.mips = value;
-        self
     }
 
     pub fn ty(mut self, value: ImageAssetType) -> Self {
@@ -167,7 +159,7 @@ impl ImportAsset<ImageAssetSource> for ImageAsset {
             image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
         let dims = [image.width(), image.height()];
         let is_pow2 = dims[0].is_power_of_two() && dims[1].is_power_of_two();
-        if is_pow2 && source.mips {
+        if is_pow2 && dims[0] > 16 && dims[1] > 16 {
             // Generate and compress mips
             let bc = match source.ty {
                 ImageAssetType::Normal => BcMode::Bc5,

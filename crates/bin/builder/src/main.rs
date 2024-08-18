@@ -228,7 +228,7 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
             let path = path.path().strip_prefix(ROOT_DATA_PATH).unwrap().to_owned();
             let path_str = path.to_str().unwrap().replace('\\', "/");
             if path_str.ends_with(".gltf") {
-                processor.import_scene(GltfSceneSource::new(path_str));
+                processor.import_scene(GltfSceneSource::new(&path_str));
             } else if path_str.ends_with(".vert") {
                 processor.import_shader(ShaderAssetSource::vertex(&path_str));
             } else if path_str.ends_with(".frag") {

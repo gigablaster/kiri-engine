@@ -33,11 +33,11 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GltfSceneSource(PathBuf);
+pub struct GltfSceneSource(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GltfMeshSource {
-    pub gltf: PathBuf,
+    pub gltf: String,
     pub mesh: String,
 }
 
@@ -54,8 +54,8 @@ impl AssetSource for GltfSceneSource {
 }
 
 impl GltfSceneSource {
-    pub fn new<P: AsRef<Path>>(p: P) -> Self {
-        Self(p.as_ref().to_owned())
+    pub fn new(path: &str) -> Self {
+        Self(path.replace("\\", "/"))
     }
 }
 
@@ -195,8 +195,8 @@ impl Asset for SceneAsset {
 
 struct GltfProcessingContext<'a> {
     pub asset_importer: &'a dyn AssetImportContext,
-    pub base_path: PathBuf,
-    pub gltf_path: PathBuf,
+    pub base_path: String,
+    pub gltf_path: String,
     pub buffers: Vec<gltf::buffer::Data>,
 }
 
@@ -217,10 +217,15 @@ fn process_texture(
 ) -> AssetReference {
     match texture.source().source() {
         gltf::image::Source::Uri { uri, .. } => {
-            let image_path = context.base_path.join(uri).normalize();
+            let image_path = Path::new(&context.base_path)
+                .join(uri)
+                .normalize()
+                .to_str()
+                .unwrap()
+                .to_owned();
             context
                 .asset_importer
-                .import_image(ImageAssetSource::from_file(image_path).ty(ty))
+                .import_image(ImageAssetSource::from_file(&image_path).ty(ty))
         }
         _ => panic!(),
     }
@@ -455,6 +460,8 @@ impl ImportAsset<GltfSceneSource> for SceneAsset {
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
         let base_path = get_relative_asset_path(&source.0)?
             .parent()
+            .unwrap()
+            .to_str()
             .unwrap()
             .to_owned();
         import_scenes(
