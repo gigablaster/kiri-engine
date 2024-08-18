@@ -73,7 +73,7 @@ pub struct RenderSceneGroup {
     pub scenes: HashMap<String, RenderScene>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Bounds {
     pub center: glam::Vec3A,
     pub radius: f32,

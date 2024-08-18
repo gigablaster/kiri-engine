@@ -127,28 +127,24 @@ pub struct StaticMeshAsset {
     pub bounds: ([f32; 3], f32),
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
-pub struct BoneIndex(u32);
+#[derive(Debug, Clone, Copy, Readable, Writable, Eq, PartialEq)]
+pub struct NodeIndex(u32);
 
-impl From<u32> for BoneIndex {
+impl From<u32> for NodeIndex {
     fn from(value: u32) -> Self {
         Self(value)
     }
 }
 
-impl Default for BoneIndex {
+impl Default for NodeIndex {
     fn default() -> Self {
         Self(u32::MAX)
     }
 }
 
-impl BoneIndex {
-    pub fn new(index: Option<u32>) -> BoneIndex {
-        if let Some(index) = index {
-            Self(index)
-        } else {
-            Self(u32::MAX)
-        }
+impl NodeIndex {
+    pub fn new(index: u32) -> NodeIndex {
+        Self(index)
     }
 
     pub fn index(self) -> Option<u32> {
@@ -163,7 +159,7 @@ impl BoneIndex {
 #[derive(Debug, Clone, Readable, Writable)]
 pub struct GltfBone {
     pub name: String,
-    pub parent: BoneIndex,
+    pub parent: NodeIndex,
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
@@ -381,7 +377,7 @@ fn process_mesh(
 
 fn process_node(
     context: &mut NodeProcessingContext,
-    parent_index: BoneIndex,
+    parent_index: NodeIndex,
     name: &str,
     node: gltf::Node,
 ) -> Result<(), Error> {
@@ -412,7 +408,7 @@ fn process_node(
     for (index, child) in node.children().enumerate() {
         process_node(
             context,
-            BoneIndex::new(Some(bone_index)),
+            NodeIndex::new(bone_index),
             &format!("{}/{}", name, child.name().unwrap_or(&format!("{}", index))),
             child,
         )?;
@@ -438,7 +434,7 @@ fn import_scene(
     for (index, node) in scene.nodes().enumerate() {
         process_node(
             &mut context,
-            BoneIndex::new(None),
+            NodeIndex::default(),
             node.name().unwrap_or(&format!("{}", index)),
             node,
         )?;

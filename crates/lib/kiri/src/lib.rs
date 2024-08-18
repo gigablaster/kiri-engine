@@ -16,6 +16,7 @@
 mod mesh;
 mod pass;
 mod resource_manager;
+mod scene;
 mod temp_images;
 
 use std::io;
@@ -23,6 +24,7 @@ use std::io;
 pub use mesh::*;
 pub use pass::*;
 pub use resource_manager::*;
+pub use scene::*;
 pub use temp_images::*;
 
 use thiserror::Error;

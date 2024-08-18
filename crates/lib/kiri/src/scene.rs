@@ -1,0 +1,453 @@
+#![allow(clippy::doc_lazy_continuation)]
+// Copyright (C) 2024 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+use glam::Affine3A;
+use kiri_assets::NodeIndex;
+use kiri_common::{Handle, HotColdPool};
+
+use crate::{Bounds, StaticMeshHandle, StaticRenderMesh};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeData {
+    Empty,
+    StaticMesh(StaticMeshHandle),
+}
+
+impl NodeData {
+    pub fn bounds<T: MeshResolver>(self, resolver: &T) -> Option<Bounds> {
+        match self {
+            Self::StaticMesh(handle) => resolver.resolve_static_mesh(handle).map(|x| x.bounds),
+            _ => None,
+        }
+    }
+}
+
+pub type NodeHandle = Handle<SceneNode>;
+type NodePool = HotColdPool<SceneNode, NodeIndex>;
+
+/// Клиентские данные о ноде
+#[derive(Debug, Clone, Copy)]
+pub struct SceneNode {
+    data: NodeData,
+    parent: NodeHandle,
+    transform: glam::Affine3A,
+}
+
+/// Интерфейс для получения данных из сцены
+pub trait SceneCuller: Send + Sync {
+    fn cull(&self, bounds: Bounds, transform: Affine3A) -> bool;
+}
+
+/// Сцена
+///
+/// Служит для хранения иерархии объектов и определения видимости. Работа состит из двух этапов.
+/// 1. Манипуляции сценой - все операции сохраняются но никаких изменений не происходит
+/// 2. Обновление - операции испольняются и сцена реально меняется
+/// Запросы видимости возможны только после выполнения обновления.
+///
+/// Внтури содержит SOA предсатвление сцены, при перестройке сцены ноды ремаппятся на реальные
+/// индексы в внутреннем представлении.
+#[derive(Debug, Default)]
+pub struct Scene {
+    nodes: NodePool,
+    data: Vec<NodeData>,
+    parents: Vec<NodeIndex>,
+    local_transforms: Vec<glam::Affine3A>,
+    world_transforms: Vec<glam::Affine3A>,
+    bounds: Vec<Bounds>,
+    rebuild_scene: bool,
+    recalculate_transforms: bool,
+    update_bounds: Vec<NodeHandle>,
+}
+
+/// Интерфейс для доступа к данным меша
+pub trait MeshResolver {
+    fn resolve_static_mesh(&self, handle: StaticMeshHandle) -> Option<&StaticRenderMesh>;
+}
+
+#[derive(Debug)]
+pub struct CullResult {
+    pub static_meshes: Vec<StaticMeshHandle>,
+}
+
+impl Scene {
+    pub fn add_node(
+        &mut self,
+        parent: NodeHandle,
+        data: NodeData,
+        transform: Affine3A,
+    ) -> NodeHandle {
+        let handle = self.nodes.push(
+            SceneNode {
+                data,
+                parent,
+                transform,
+            },
+            NodeIndex::default(),
+        );
+        self.rebuild_scene = true;
+        handle
+    }
+
+    pub fn remove_node(&mut self, handle: NodeHandle) {
+        if self.nodes.remove(handle).is_some() {
+            self.rebuild_scene = true;
+        }
+    }
+
+    pub fn update_node_transform(&mut self, handle: NodeHandle, transform: Affine3A) {
+        if let Some(node) = self.nodes.get_mut(handle) {
+            node.transform = transform;
+            if let Some(index) = self.nodes.get_cold(handle).unwrap().index() {
+                self.local_transforms[index as usize] = transform;
+                self.recalculate_transforms = true;
+            }
+        }
+    }
+
+    pub fn update_node_data(&mut self, handle: NodeHandle, data: NodeData) {
+        if let Some(node) = self.nodes.get_mut(handle) {
+            node.data = data;
+            if let Some(index) = self.nodes.get_cold(handle).unwrap().index() {
+                self.data[index as usize] = data;
+                self.update_bounds.push(handle);
+            }
+        }
+    }
+
+    pub fn update<T: MeshResolver>(&mut self, resolver: &T) {
+        puffin::profile_function!();
+        if self.rebuild_scene {
+            puffin::profile_scope!("Rebuild scene");
+            let mut nodes_by_parent = self
+                .nodes
+                .enumerate()
+                .map(|(handle, node, _)| (handle, *node))
+                .collect::<Vec<_>>();
+            nodes_by_parent.sort_by(|a, b| a.1.parent.cmp(&b.1.parent));
+            let mut last_parent_handle = Handle::default();
+            let mut last_parent = NodeIndex::default();
+            self.parents.clear();
+            self.local_transforms.clear();
+            self.world_transforms.clear();
+            self.bounds.clear();
+            self.data.clear();
+            let mut garbage = Vec::new();
+            let mut index = 0u32;
+            for (handle, node) in nodes_by_parent.into_iter() {
+                let current = NodeIndex::new(index);
+                if node.parent != last_parent_handle {
+                    if garbage.contains(&node.parent) {
+                        garbage.push(handle);
+                        continue;
+                    }
+                    last_parent = if let Some(node_index) = self.nodes.get_cold(node.parent) {
+                        *node_index
+                    } else {
+                        garbage.push(handle);
+                        continue;
+                    };
+                    last_parent_handle = node.parent;
+                }
+                self.parents.push(last_parent);
+                self.local_transforms.push(node.transform);
+                self.data.push(node.data);
+                self.bounds
+                    .push(node.data.bounds(resolver).unwrap_or_default());
+                self.world_transforms.push(Affine3A::default());
+                self.nodes.replace_cold(handle, current);
+                index += 1;
+            }
+        } else if !self.update_bounds.is_empty() {
+            self.update_bounds.sort();
+            self.update_bounds.dedup();
+            self.update_bounds.drain(..).for_each(|handle| {
+                let index = self.nodes.get_cold(handle).unwrap().index().unwrap() as usize;
+                self.bounds[index] = self
+                    .nodes
+                    .get(handle)
+                    .unwrap()
+                    .data
+                    .bounds(resolver)
+                    .unwrap_or_default();
+            })
+        }
+        if self.rebuild_scene || self.recalculate_transforms {
+            puffin::profile_scope!("Update transforms");
+            for i in 0..self.parents.len() {
+                let parent_transform = self.parents[i]
+                    .index()
+                    .map(|x| self.world_transforms[x as usize])
+                    .unwrap_or_default();
+                self.world_transforms[i] = parent_transform * self.local_transforms[i];
+            }
+        }
+        self.rebuild_scene = false;
+        self.recalculate_transforms = false;
+    }
+
+    pub fn cull<T: SceneCuller>(&self, culler: T) -> CullResult {
+        assert!(
+            !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
+            "Scene must be updated before culling"
+        );
+        let mut static_meshes = Vec::new();
+        #[allow(clippy::single_match)]
+        self.data
+            .iter()
+            .enumerate()
+            .for_each(|(index, data)| match data {
+                NodeData::StaticMesh(handle) => {
+                    if culler.cull(self.bounds[index], self.world_transforms[index]) {
+                        static_meshes.push(*handle)
+                    }
+                }
+                _ => {}
+            });
+        CullResult { static_meshes }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[derive(Default)]
+    struct DummyResolver {}
+
+    impl MeshResolver for DummyResolver {
+        fn resolve_static_mesh(&self, _handle: StaticMeshHandle) -> Option<&StaticRenderMesh> {
+            None
+        }
+    }
+
+    #[test]
+    fn build_scene() {
+        let mut scene = Scene::default();
+        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1_1 = scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2 = scene.add_node(
+            Handle::default(),
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2_1 = scene.add_node(
+            handle2,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+        );
+        scene.update(&DummyResolver::default());
+        assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle1).unwrap());
+        assert_eq!(NodeIndex::new(1), *scene.nodes.get_cold(handle2).unwrap());
+        assert_eq!(NodeIndex::new(2), *scene.nodes.get_cold(handle1_1).unwrap());
+        assert_eq!(NodeIndex::new(3), *scene.nodes.get_cold(handle2_1).unwrap());
+        assert_eq!(NodeIndex::default(), scene.parents[0]);
+        assert_eq!(NodeIndex::default(), scene.parents[1]);
+        assert_eq!(NodeIndex::new(0), scene.parents[2]);
+        assert_eq!(NodeIndex::new(1), scene.parents[3]);
+        assert_eq!(
+            glam::Vec3A::default(),
+            scene.local_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[2].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(2.0, 2.0, 2.0),
+            scene.local_transforms[3].translation
+        );
+        assert_eq!(
+            glam::Vec3A::default(),
+            scene.world_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.world_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.world_transforms[2].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(3.0, 3.0, 3.0),
+            scene.world_transforms[3].translation
+        );
+    }
+
+    #[test]
+    fn remove_node() {
+        let mut scene = Scene::default();
+        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1_1 = scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2 = scene.add_node(
+            Handle::default(),
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2_1 = scene.add_node(
+            handle2,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+        );
+        scene.update(&DummyResolver::default());
+        scene.remove_node(handle1_1);
+        scene.update(&DummyResolver::default());
+        assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle1).unwrap());
+        assert_eq!(NodeIndex::new(1), *scene.nodes.get_cold(handle2).unwrap());
+        assert_eq!(NodeIndex::new(2), *scene.nodes.get_cold(handle2_1).unwrap());
+        assert_eq!(NodeIndex::default(), scene.parents[0]);
+        assert_eq!(NodeIndex::default(), scene.parents[1]);
+        assert_eq!(NodeIndex::new(1), scene.parents[2]);
+        assert_eq!(
+            glam::Vec3A::default(),
+            scene.local_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(2.0, 2.0, 2.0),
+            scene.local_transforms[2].translation
+        );
+        assert_eq!(
+            glam::Vec3A::default(),
+            scene.world_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.world_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(3.0, 3.0, 3.0),
+            scene.world_transforms[2].translation
+        );
+    }
+
+    #[test]
+    fn move_node() {
+        let mut scene = Scene::default();
+        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1_1 = scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2 = scene.add_node(
+            Handle::default(),
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2_1 = scene.add_node(
+            handle2,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+        );
+        scene.update(&DummyResolver::default());
+        scene.update_node_transform(
+            handle1,
+            glam::Affine3A::from_translation(glam::Vec3::new(10.0, 10.0, 10.0)),
+        );
+        scene.update(&DummyResolver::default());
+        assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle1).unwrap());
+        assert_eq!(NodeIndex::new(1), *scene.nodes.get_cold(handle2).unwrap());
+        assert_eq!(NodeIndex::new(2), *scene.nodes.get_cold(handle1_1).unwrap());
+        assert_eq!(NodeIndex::new(3), *scene.nodes.get_cold(handle2_1).unwrap());
+        assert_eq!(NodeIndex::default(), scene.parents[0]);
+        assert_eq!(NodeIndex::default(), scene.parents[1]);
+        assert_eq!(NodeIndex::new(0), scene.parents[2]);
+        assert_eq!(NodeIndex::new(1), scene.parents[3]);
+        assert_eq!(
+            glam::Vec3A::new(10.0, 10.0, 10.0),
+            scene.local_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[2].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(2.0, 2.0, 2.0),
+            scene.local_transforms[3].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(10.0, 10.0, 10.0),
+            scene.world_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.world_transforms[1].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(11.0, 11.0, 11.0),
+            scene.world_transforms[2].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(3.0, 3.0, 3.0),
+            scene.world_transforms[3].translation
+        );
+    }
+
+    #[test]
+    fn remove_parent_node_removes_children() {
+        let mut scene = Scene::default();
+        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let _handle1_1 = scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let handle2 = scene.add_node(
+            Handle::default(),
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        let _handle1_2 = scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+        );
+        scene.update(&DummyResolver::default());
+        scene.remove_node(handle1);
+        scene.update(&DummyResolver::default());
+        assert_eq!(1, scene.data.len());
+        assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle2).unwrap());
+        assert_eq!(NodeIndex::default(), scene.parents[0]);
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.local_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(1.0, 1.0, 1.0),
+            scene.world_transforms[0].translation
+        );
+    }
+}
