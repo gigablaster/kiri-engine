@@ -223,7 +223,8 @@ impl ResourceManager {
         })
     }
 
-    pub fn get_or_load_image(&self, source: ImageAssetSource) -> Result<ImageHandle, Error> {
+    pub fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
+        let source = ImageAssetSource::from_file(name).ty(ty);
         Ok(self.get_or_load_image_by_reference(source.reference(), source.ty)?)
     }
 
@@ -265,10 +266,12 @@ impl ResourceManager {
         }
     }
 
-    pub fn get_or_load_static_mesh(
-        &self,
-        source: &GltfMeshSource,
-    ) -> Result<StaticMeshHandle, Error> {
+    pub fn get_or_load_static_mesh(&self, name: &str) -> Result<StaticMeshHandle, Error> {
+        let parts = name.split("#").collect::<ArrayVec<_, 2>>();
+        let source = GltfMeshSource {
+            gltf: parts[0].to_owned(),
+            mesh: parts[1].to_owned(),
+        };
         self.load_static_mesh(source.reference())
     }
 
@@ -480,7 +483,8 @@ impl ResourceManager {
         }
     }
 
-    pub fn get_or_load_scene(&self, source: GltfSceneSource) -> Result<SceneHandle, Error> {
+    pub fn get_or_load_scene(&self, name: &str) -> Result<SceneHandle, Error> {
+        let source = GltfSceneSource::new(name);
         self.load_scene(source.reference())
     }
 

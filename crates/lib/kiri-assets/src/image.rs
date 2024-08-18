@@ -15,7 +15,6 @@
 
 use std::{
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
     time::SystemTime,
 };
 

@@ -16,7 +16,7 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::Path,
     time::SystemTime,
 };
 

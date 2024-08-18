@@ -3,7 +3,6 @@
 use std::{error::Error, fmt::Display};
 
 use kiri::ResourceManager;
-use kiri_assets::GltfSceneSource;
 use kiri_backend::{
     ClearRenderTarget, Format, ImageLayout, RenderPassHandle, RenderPassLayout, RenderTarget,
     RenderTargetDesc, SubpassLayout,
@@ -36,9 +35,8 @@ impl GameClient<LoopError> for Loop {
                     .final_layout(ImageLayout::Present),
             )
             .subpass(SubpassLayout::default().color_write(&[0]));
-        resource_manager.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
-        resource_manager
-            .get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
+        resource_manager.get_or_load_static_mesh("PBR/gun.gltf#Mesh")?;
+        resource_manager.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
         Ok(Self {
             render_pass: resource_manager.get_or_create_render_pass(layout)?,
         })
