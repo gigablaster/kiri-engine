@@ -27,8 +27,9 @@ use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use bytes::Bytes;
 use kiri_assets::{
-    Asset, AssetReference, AssetSource, GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset,
-    ImageAssetSource, ImageAssetType, MeshMaterialBlend, ShaderAssetSource, StaticMeshAsset,
+    Asset, AssetReference, AssetSource, GltfMeshSource, GltfSceneSource, ImageAsset,
+    ImageAssetSource, ImageAssetType, MeshMaterialBlend, SceneAsset, ShaderAssetSource,
+    StaticMeshAsset,
 };
 use kiri_backend::{
     BindGroupDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect,
@@ -43,14 +44,14 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
     Bounds, Error, PbrMaterialShaderData, RenderMeshMaterial, RenderMeshShaderData,
-    RenderMeshSurface, RenderScene, RenderSceneGroup, StaticRenderMesh,
+    RenderMeshSurface, RenderScene, StaticRenderMesh,
 };
 
 pub type StaticMeshHandle = Handle<StaticRenderMesh>;
-pub type SceneHandle = Handle<RenderSceneGroup>;
+pub type SceneHandle = Handle<RenderScene>;
 
 type StaticMeshPool = Pool<StaticRenderMesh>;
-type ScenePool = Pool<RenderSceneGroup>;
+type ScenePool = Pool<RenderScene>;
 
 type LoadingImageTask = Task<()>;
 
@@ -505,37 +506,33 @@ impl ResourceManager {
     fn do_load_scene(&self, reference: AssetReference) -> Result<SceneHandle, Error> {
         debug!("Load scene asset: {}", reference);
         let data = vfs_load(reference)?;
-        let asset = GltfAsset::load(data)?;
-        let mut scenes = HashMap::default();
-        for (name, scene) in asset.scenes {
-            let mut render_scene = RenderScene::default();
-            for mesh in scene.meshes {
-                render_scene.meshes.push(self.load_static_mesh(mesh)?);
-            }
-            scene.bones.into_iter().for_each(|bone| {
-                render_scene.parents.push(bone.parent);
-                render_scene
-                    .local_transforms
-                    .push(glam::Mat4::from_scale_rotation_translation(
-                        bone.scale.into(),
-                        glam::Quat::from_array(bone.rotation),
-                        bone.translation.into(),
-                    ));
-            });
-            render_scene.names = scene
-                .bone_names
-                .into_iter()
-                .map(|(name, index)| (name, index as usize))
-                .collect();
-            render_scene.node_to_mesh = scene
-                .bone_to_mesh
-                .into_iter()
-                .map(|(node, mesh)| (node as usize, mesh as usize))
-                .collect();
-            scenes.insert(name, render_scene);
+        let asset = SceneAsset::load(data)?;
+
+        let mut render_scene = RenderScene::default();
+        for mesh in asset.meshes {
+            render_scene.meshes.push(self.load_static_mesh(mesh)?);
         }
-        let scene = RenderSceneGroup { scenes };
-        let handle = self.scenes.write().push(scene);
+        asset.nodes.into_iter().for_each(|bone| {
+            render_scene.parents.push(bone.parent);
+            render_scene
+                .local_transforms
+                .push(glam::Mat4::from_scale_rotation_translation(
+                    bone.scale.into(),
+                    glam::Quat::from_array(bone.rotation),
+                    bone.translation.into(),
+                ));
+        });
+        render_scene.names = asset
+            .node_names
+            .into_iter()
+            .map(|(name, index)| (name, index as usize))
+            .collect();
+        render_scene.node_to_mesh = asset
+            .node_to_mesh
+            .into_iter()
+            .map(|(node, mesh)| (node as usize, mesh as usize))
+            .collect();
+        let handle = self.scenes.write().push(render_scene);
         Ok(handle)
     }
 

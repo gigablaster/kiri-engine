@@ -14,8 +14,8 @@ use bytes::Bytes;
 use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_cached_asset_path, Asset, AssetImportContext, AssetReference, AssetSource, Error,
-    GltfAsset, GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset,
-    MeshAssetBuilder, ShaderAsset, ShaderAssetSource, ROOT_DATA_PATH,
+    GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset, MeshAssetBuilder,
+    SceneAsset, ShaderAsset, ShaderAssetSource, ROOT_DATA_PATH,
 };
 use kiri_vfs::PackageBuilder;
 use log::{error, info};
@@ -143,7 +143,7 @@ impl ContentProcessor {
 
     async fn build_scene(&self, scene: GltfSceneSource) {
         info!("Building scene {:?}", scene);
-        if let Err(err) = self.build_asset::<GltfAsset, GltfSceneSource>(scene.clone()) {
+        if let Err(err) = self.build_asset::<SceneAsset, GltfSceneSource>(scene.clone()) {
             error!("Failed to build scene {:?}: {}", scene, err);
         }
     }

@@ -68,21 +68,16 @@ pub struct RenderScene {
     pub node_to_mesh: Vec<(usize, usize)>,
 }
 
-#[derive(Debug)]
-pub struct RenderSceneGroup {
-    pub scenes: HashMap<String, RenderScene>,
-}
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Bounds {
-    pub center: glam::Vec3A,
+    pub center: glam::Vec3,
     pub radius: f32,
 }
 
 impl Bounds {
     pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
         Self {
-            center: glam::Vec3A::from_array(center),
+            center: glam::Vec3::from_array(center),
             radius,
         }
     }

@@ -38,7 +38,6 @@ pub struct GltfSceneSource(PathBuf);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GltfMeshSource {
     pub gltf: PathBuf,
-    pub scene: String,
     pub mesh: String,
 }
 
@@ -157,7 +156,7 @@ impl NodeIndex {
 }
 
 #[derive(Debug, Clone, Readable, Writable)]
-pub struct GltfBone {
+pub struct Node {
     pub name: String,
     pub parent: NodeIndex,
     pub translation: [f32; 3],
@@ -166,17 +165,12 @@ pub struct GltfBone {
 }
 
 #[derive(Debug, Readable, Writable)]
-pub struct GltfSceneAsset {
+pub struct SceneAsset {
     pub meshes: Vec<AssetReference>,
-    pub bones: Vec<GltfBone>,
+    pub nodes: Vec<Node>,
     pub mesh_names: HashMap<String, u32>,
-    pub bone_names: HashMap<String, u32>,
-    pub bone_to_mesh: Vec<(u32, u32)>,
-}
-
-#[derive(Debug, Readable, Writable)]
-pub struct GltfAsset {
-    pub scenes: HashMap<String, GltfSceneAsset>,
+    pub node_names: HashMap<String, u32>,
+    pub node_to_mesh: Vec<(u32, u32)>,
 }
 
 impl Asset for StaticMeshAsset {
@@ -189,7 +183,7 @@ impl Asset for StaticMeshAsset {
     }
 }
 
-impl Asset for GltfAsset {
+impl Asset for SceneAsset {
     fn load(data: bytes::Bytes) -> std::io::Result<Self> {
         Ok(Self::read_from_buffer(&data)?)
     }
@@ -208,9 +202,8 @@ struct GltfProcessingContext<'a> {
 
 struct NodeProcessingContext<'a> {
     context: &'a GltfProcessingContext<'a>,
-    scene_name: &'a str,
     bone_to_mesh: HashMap<u32, u32>,
-    bones: Vec<GltfBone>,
+    bones: Vec<Node>,
     bone_names: HashMap<String, u32>,
     meshes: Vec<AssetReference>,
     mesh_names: HashMap<String, u32>,
@@ -326,7 +319,6 @@ fn process_material(
 
 fn process_mesh(
     context: &GltfProcessingContext,
-    scene_name: &str,
     mesh_name: &str,
     mesh: gltf::Mesh,
 ) -> Result<Option<AssetReference>, Error> {
@@ -368,7 +360,6 @@ fn process_mesh(
     Ok(Some(context.asset_importer.import_static_mesh(
         GltfMeshSource {
             gltf: context.gltf_path.clone(),
-            scene: scene_name.into(),
             mesh: mesh_name.into(),
         },
         builder,
@@ -383,7 +374,7 @@ fn process_node(
 ) -> Result<(), Error> {
     let bone_index = context.bones.len() as u32;
     let (translation, rotation, scale) = node.transform().decomposed();
-    context.bones.push(GltfBone {
+    context.bones.push(Node {
         name: name.to_owned(),
         parent: parent_index,
         translation,
@@ -397,7 +388,7 @@ fn process_node(
         } else {
             let name = mesh.name().unwrap_or(name);
 
-            if let Some(mesh) = process_mesh(context.context, context.scene_name, name, mesh)? {
+            if let Some(mesh) = process_mesh(context.context, name, mesh)? {
                 let mesh_index = context.meshes.len() as u32;
                 context.meshes.push(mesh);
                 context.mesh_names.insert(name.to_owned(), mesh_index);
@@ -416,14 +407,9 @@ fn process_node(
     Ok(())
 }
 
-fn import_scene(
-    context: &GltfProcessingContext,
-    name: &str,
-    scene: gltf::Scene,
-) -> Result<GltfSceneAsset, Error> {
+fn import_scene(context: &GltfProcessingContext, scene: gltf::Scene) -> Result<SceneAsset, Error> {
     let mut context = NodeProcessingContext {
         context,
-        scene_name: name,
         bone_to_mesh: Default::default(),
         meshes: Default::default(),
         bones: Default::default(),
@@ -440,12 +426,12 @@ fn import_scene(
         )?;
     }
     Ok({
-        GltfSceneAsset {
+        SceneAsset {
             meshes: context.meshes,
-            bones: context.bones,
+            nodes: context.bones,
             mesh_names: context.mesh_names,
-            bone_names: context.bone_names,
-            bone_to_mesh: context.bone_to_mesh.into_iter().collect::<Vec<_>>(),
+            node_names: context.bone_names,
+            node_to_mesh: context.bone_to_mesh.into_iter().collect::<Vec<_>>(),
         }
     })
 }
@@ -453,18 +439,14 @@ fn import_scene(
 fn import_scenes(
     context: GltfProcessingContext,
     document: gltf::Document,
-) -> Result<GltfAsset, Error> {
-    let mut scenes = HashMap::new();
-    for scene in document.scenes() {
-        let name = scene.name().unwrap_or("main");
-        if !name.starts_with("_") && !name.starts_with("!") {
-            scenes.insert(name.to_owned(), import_scene(&context, name, scene)?);
-        }
-    }
-    Ok(GltfAsset { scenes })
+) -> Result<SceneAsset, Error> {
+    let scene = document
+        .default_scene()
+        .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
+    import_scene(&context, scene)
 }
 
-impl ImportAsset<GltfSceneSource> for GltfAsset {
+impl ImportAsset<GltfSceneSource> for SceneAsset {
     fn import(
         source: GltfSceneSource,
         asset_importer: &dyn AssetImportContext,
