@@ -8,12 +8,12 @@ use kiri_backend::{
     ClearRenderTarget, Format, ImageLayout, RenderDevice, RenderPassHandle, RenderPassLayout,
     RenderTarget, RenderTargetDesc, SubpassLayout,
 };
-use kiri_gfx::AssetCache;
+use kiri_gfx::ResourceManager;
 
 #[derive(Debug)]
 struct Loop {
     render_pass: RenderPassHandle,
-    _cache: Arc<AssetCache>,
+    _cache: Arc<ResourceManager>,
 }
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl GameClient<LoopError> for Loop {
                     .final_layout(ImageLayout::Present),
             )
             .subpass(SubpassLayout::default().color_write(&[0]));
-        let cache = AssetCache::new(render_device)?;
+        let cache = ResourceManager::new(render_device)?;
         cache.get_or_load_scene(GltfSceneSource::new("PBR/gun.gltf"))?;
         cache.get_or_load_scene(GltfSceneSource::new("ABeautifulGame/ABeautifulGame.gltf"))?;
         Ok(Self {

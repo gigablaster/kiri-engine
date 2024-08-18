@@ -13,13 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod asset_cache;
 mod mesh;
+mod resource_manager;
 
 use std::io;
 
-pub use asset_cache::*;
 pub use mesh::*;
+pub use resource_manager::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -138,7 +138,7 @@ struct ProgramKey {
 }
 
 #[derive(Debug)]
-pub struct AssetCache {
+pub struct ResourceManager {
     device: Arc<RenderDevice>,
     image_assets: RwLock<HashMap<AssetReference, ImageHandle>>,
     loading_images: Mutex<Vec<LoadingImageTask>>,
@@ -158,9 +158,9 @@ pub struct AssetCache {
 
 const MESH_POOL_SIZE: usize = 256 * 1024 * 1024;
 
-impl Drop for AssetCache {
+impl Drop for ResourceManager {
     fn drop(&mut self) {
-        debug!("Asset cache cleanup");
+        debug!("Resource manager cleanup");
         self.static_meshes.write().drain().for_each(|mesh| {
             self.device.destroy_bind_group(mesh.object_bind_group);
             mesh.materials
@@ -183,9 +183,9 @@ impl Drop for AssetCache {
     }
 }
 
-impl AssetCache {
+impl ResourceManager {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
-        debug!("Create asset cache");
+        debug!("Create resource manager");
         Ok(Arc::new(Self {
             device: device.clone(),
             image_assets: Default::default(),
