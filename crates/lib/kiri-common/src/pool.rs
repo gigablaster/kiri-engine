@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    cmp,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
@@ -61,6 +62,24 @@ impl<T> Eq for Handle<T> {}
 impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.data.hash(state);
+    }
+}
+
+impl<T> PartialOrd for Handle<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for Handle<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if !self.is_valid() && other.is_valid() {
+            std::cmp::Ordering::Less
+        } else if self.is_valid() && !other.is_valid() {
+            std::cmp::Ordering::Greater
+        } else {
+            self.index().cmp(&other.index())
+        }
     }
 }
 
@@ -744,5 +763,15 @@ mod test {
         let cont = container.drain().collect::<Vec<_>>();
         assert_eq!([1u32, 2, 3].to_vec(), cont);
         assert!(container.iter().collect::<Vec<_>>().is_empty());
+    }
+
+    #[test]
+    fn sort() {
+        let mut handles: Vec<Handle<u32>> =
+            vec![Handle::new(2, 0), Handle::default(), Handle::new(1, 1)];
+        handles.sort();
+        assert_eq!(Handle::default(), handles[0]);
+        assert_eq!(Handle::new(1, 1), handles[1]);
+        assert_eq!(Handle::new(2, 0), handles[2]);
     }
 }
