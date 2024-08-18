@@ -392,6 +392,7 @@ pub enum BindType {
     SampledImage,
     CombinedSampledImage,
     Sampler,
+    RenderPassInput,
 }
 
 use bitflags::bitflags;
@@ -405,11 +406,11 @@ pub struct RenderDeviceProperties {
 pub use vulkan::Error;
 pub use vulkan::{
     BindGroupDesc, BindGroupHandle, BindGroupSlotDesc, BindGroupUpdateContext, BufferCreateDesc,
-    BufferHandle, BufferSlice, ClearRenderTarget, DrawStream, FrameState, ImageCreateDesc,
-    ImageDesc, ImageHandle, ImageSubresourceData, InputVertexAttrubute, InputVertexStreamLayout,
-    Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, PipelineVertex,
-    ProgramHandle, RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle,
-    RenderPassLayout, RenderPassRecorder, RenderTarget, RenderTargetDesc, ShaderDesc,
+    BufferHandle, BufferSlice, DrawStream, FrameState, ImageCreateDesc, ImageDesc, ImageHandle,
+    ImageSubresourceData, InputVertexAttrubute, InputVertexStreamLayout, Instance, InstanceBuilder,
+    PhysicalDevice, PhysicalDeviceType, PipelineHandle, PipelineVertex, ProgramHandle,
+    RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle, RenderPassLayout,
+    RenderPassRecorder, RenderTarget, RenderTargetClear, RenderTargetDesc, ShaderDesc,
     SkipMissingSlots, SubpassLayout, Surface, Swapchain, DYNAMIC_BINDING_SLOT,
     EMPTY_BIND_GROUP_DESC, FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };

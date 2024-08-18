@@ -27,22 +27,22 @@ use crate::{
 use super::{Error, ImageHandle, ImagePool, ImageViewDesc, RenderDevice, RenderPassHandle};
 
 #[derive(Debug, Clone, Copy)]
-pub enum ClearRenderTarget {
+pub enum RenderTargetClear {
     None,
     Color([f32; 4]),
     DepthStencil(f32, u32),
 }
 
-impl From<ClearRenderTarget> for vk::ClearValue {
-    fn from(value: ClearRenderTarget) -> Self {
+impl From<RenderTargetClear> for vk::ClearValue {
+    fn from(value: RenderTargetClear) -> Self {
         match value {
-            ClearRenderTarget::Color(color) => vk::ClearValue {
+            RenderTargetClear::Color(color) => vk::ClearValue {
                 color: vk::ClearColorValue { float32: color },
             },
-            ClearRenderTarget::DepthStencil(depth, stencil) => vk::ClearValue {
+            RenderTargetClear::DepthStencil(depth, stencil) => vk::ClearValue {
                 depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
             },
-            ClearRenderTarget::None => vk::ClearValue::default(),
+            RenderTargetClear::None => vk::ClearValue::default(),
         }
     }
 }
@@ -137,7 +137,7 @@ struct FramebufferDesc {
 pub struct RenderTarget {
     pub image: ImageHandle,
     pub aspect: ImageAspect,
-    pub clear: ClearRenderTarget,
+    pub clear: RenderTargetClear,
 }
 
 impl RenderTarget {
@@ -145,7 +145,7 @@ impl RenderTarget {
         Self {
             image,
             aspect: ImageAspect::Color,
-            clear: ClearRenderTarget::None,
+            clear: RenderTargetClear::None,
         }
     }
 
@@ -153,11 +153,11 @@ impl RenderTarget {
         Self {
             image,
             aspect: ImageAspect::Depth,
-            clear: ClearRenderTarget::None,
+            clear: RenderTargetClear::None,
         }
     }
 
-    pub fn clear(mut self, clear: ClearRenderTarget) -> Self {
+    pub fn clear(mut self, clear: RenderTargetClear) -> Self {
         self.clear = clear;
         self
     }

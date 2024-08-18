@@ -46,6 +46,7 @@ impl From<BindType> for vk::DescriptorType {
             BindType::SampledImage => vk::DescriptorType::SAMPLED_IMAGE,
             BindType::CombinedSampledImage => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             BindType::Sampler => vk::DescriptorType::SAMPLER,
+            BindType::RenderPassInput => vk::DescriptorType::INPUT_ATTACHMENT,
         }
     }
 }
@@ -106,7 +107,8 @@ pub(crate) fn create_descriptor_set_layout(
             | BindType::Storage
             | BindType::DynamicUniform
             | BindType::DynamicStorage
-            | BindType::SampledImage => {
+            | BindType::SampledImage
+            | BindType::RenderPassInput => {
                 bindings.insert(binding.slot, create_binding(set.stage, binding));
             }
             BindType::CombinedSampledImage | BindType::Sampler => {

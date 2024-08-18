@@ -278,6 +278,7 @@ impl RenderDevice {
             .filter_map(|(slot, ty)| {
                 if *ty == vk::DescriptorType::SAMPLED_IMAGE
                     || *ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                    || *ty == vk::DescriptorType::INPUT_ATTACHMENT
                 {
                     Some(ImageBinding::new(*slot as _, *ty))
                 } else {

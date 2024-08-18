@@ -4,7 +4,7 @@ use std::{error::Error, fmt::Display};
 
 use kiri::ResourceManager;
 use kiri_backend::{
-    ClearRenderTarget, ImageLayout, RenderPassLayout, RenderTarget, RenderTargetDesc, SubpassLayout,
+    ImageLayout, RenderPassLayout, RenderTarget, RenderTargetClear, RenderTargetDesc, SubpassLayout,
 };
 use kiri_runner::{run_game, DrawContext, GameClient, GameError, GameTickState};
 
@@ -59,7 +59,7 @@ impl GameClient<LoopError> for Loop {
             }],
         };
         let targets = [RenderTarget::color(context.render.backbuffer)
-            .clear(ClearRenderTarget::Color([0.25, 0.25, 0.75, 1.0]))];
+            .clear(RenderTargetClear::Color([0.25, 0.25, 0.75, 1.0]))];
         let render_pass = context.get_or_create_render_pass(layout)?;
         let recorder = context.render.record(render_pass, 0, &targets);
         recorder.finish();

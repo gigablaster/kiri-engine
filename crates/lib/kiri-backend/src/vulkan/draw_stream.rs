@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, Rect2D};
 use parking_lot::Mutex;
 
-use crate::{vulkan::DYNAMIC_BINDING_SLOT, Format, PipelineHandle};
+use crate::{vulkan::DYNAMIC_BINDING_SLOT, PipelineHandle};
 
 use super::{
     BindGroupHandle, BindGroupPool, BindGroupUpdateContext, BufferHandle, BufferPool, BufferSlice,
@@ -568,7 +568,7 @@ impl<'a, 'b> RenderContext<'a, 'b> {
         &mut self,
         cb: CB,
     ) -> Result<(), Error> {
-        cb(&mut self.binds)
+        cb(self.binds)
     }
 }
 

@@ -544,13 +544,7 @@ impl RenderDevice {
 
         let passes = {
             puffin::profile_scope!("Generate frame");
-            let backbuffer_desc = self
-                .images
-                .read()
-                .get_cold(target.image)
-                .unwrap()
-                .desc
-                .clone();
+            let backbuffer_desc = self.images.read().get_cold(target.image).unwrap().desc;
             let mut binds = BindGroupUpdateContext {
                 bind_groups: &mut self.bind_groups.lock(),
                 uniforms: &mut self.uniforms.lock(),
