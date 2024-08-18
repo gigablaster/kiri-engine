@@ -20,9 +20,9 @@ use parking_lot::Mutex;
 use crate::{vulkan::DYNAMIC_BINDING_SLOT, Format, PipelineHandle};
 
 use super::{
-    BindGroupHandle, BindGroupPool, BufferHandle, BufferPool, BufferSlice, Error, Frame,
-    ImageHandle, PipelinePool, RenderPassHandle, RenderTarget, MAX_ATTACHMENTS,
-    MAX_DESCRIPTOR_SETS,
+    BindGroupHandle, BindGroupPool, BindGroupUpdateContext, BufferHandle, BufferPool, BufferSlice,
+    Error, Frame, ImageDesc, ImageHandle, PipelinePool, RenderPassHandle, RenderTarget,
+    MAX_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
 };
 
 const MAX_VERTEX_STREAMS: usize = 2;
@@ -509,8 +509,8 @@ impl DrawStream {
 }
 
 #[derive(Debug)]
-pub struct RenderPassRecorder<'a> {
-    context: &'a RenderContext<'a>,
+pub struct RenderPassRecorder<'a, 'b> {
+    context: &'a RenderContext<'a, 'b>,
     pub targets: &'a [RenderTarget],
     pass: RenderPassHandle,
     subpass: u32,
@@ -526,16 +526,16 @@ pub(crate) struct RecordedRenderPass {
 }
 
 #[derive(Debug)]
-pub struct RenderContext<'a> {
+pub struct RenderContext<'a, 'b> {
     pub(crate) frame: &'a Frame,
     pub(crate) passes: Mutex<Vec<RecordedRenderPass>>,
     pub backbuffer: ImageHandle,
-    pub backbuffer_size: [u32; 2],
-    pub backbuffer_format: Format,
+    pub backbuffer_desc: ImageDesc,
     pub(crate) temp_buffer: BufferHandle,
+    pub(crate) binds: &'b mut BindGroupUpdateContext<'b>,
 }
 
-impl<'a> RenderContext<'a> {
+impl<'a, 'b> RenderContext<'a, 'b> {
     pub(crate) fn finish(self) -> Vec<RecordedRenderPass> {
         self.passes.into_inner()
     }
@@ -545,7 +545,7 @@ impl<'a> RenderContext<'a> {
         pass: RenderPassHandle,
         subpass: u32,
         targets: &'a [RenderTarget],
-    ) -> RenderPassRecorder<'a> {
+    ) -> RenderPassRecorder<'a, 'b> {
         RenderPassRecorder {
             context: self,
             targets,
@@ -563,9 +563,16 @@ impl<'a> RenderContext<'a> {
         let offset = self.dynamic_data(data)?;
         Ok(BufferSlice(self.temp_buffer, offset))
     }
+
+    pub fn update_bind_groups<CB: FnOnce(&mut BindGroupUpdateContext) -> Result<(), Error>>(
+        &mut self,
+        cb: CB,
+    ) -> Result<(), Error> {
+        cb(&mut self.binds)
+    }
 }
 
-impl<'a> RenderPassRecorder<'a> {
+impl<'a, 'b> RenderPassRecorder<'a, 'b> {
     pub fn record(&self, stream: DrawStreamRecorder) {
         self.streams.lock().push(stream.finish());
     }

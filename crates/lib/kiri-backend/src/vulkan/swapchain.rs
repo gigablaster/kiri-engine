@@ -183,8 +183,8 @@ impl Swapchain {
                             dims: [surface_resolution.width, surface_resolution.height],
                             mip_levels: 1,
                             array_elements: 1,
-                            name: Some(format!("Swapchain image #{}", index)),
                         },
+                        Some(&format!("Swapchain image #{}", index)),
                     )
                     .unwrap()
             })

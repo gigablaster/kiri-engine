@@ -36,7 +36,7 @@ use std::fmt::Debug;
 
 use crate::{
     vulkan::{AcquiredSurface, Buffer, DrawStreamExecuteContext, RenderContext, MAX_ATTACHMENTS},
-    Error, Instance, RenderDeviceProperties, ShaderStage, Swapchain,
+    BindGroupUpdateContext, Error, Instance, RenderDeviceProperties, ShaderStage, Swapchain,
 };
 
 use super::{
@@ -544,20 +544,27 @@ impl RenderDevice {
 
         let passes = {
             puffin::profile_scope!("Generate frame");
-            let backbuffer = self
+            let backbuffer_desc = self
                 .images
                 .read()
                 .get_cold(target.image)
                 .unwrap()
                 .desc
                 .clone();
+            let mut binds = BindGroupUpdateContext {
+                bind_groups: &mut self.bind_groups.lock(),
+                uniforms: &mut self.uniforms.lock(),
+                dirty: &mut self.dirty_bind_groups.lock(),
+                retired_uniforms: Default::default(),
+                temp: self.temp_buffer,
+            };
             let mut context = RenderContext {
                 frame: &frame,
                 passes: Default::default(),
                 backbuffer: target.image,
-                backbuffer_size: backbuffer.dims,
-                backbuffer_format: backbuffer.format,
+                backbuffer_desc,
                 temp_buffer: self.temp_buffer_handle,
+                binds: &mut binds,
             };
             f(&mut context)?;
             context.finish()

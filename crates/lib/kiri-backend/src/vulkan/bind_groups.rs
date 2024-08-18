@@ -604,12 +604,13 @@ impl RenderDevice {
     }
 }
 
+#[derive(Debug)]
 pub struct BindGroupUpdateContext<'a> {
-    bind_groups: &'a mut BindGroupPool,
-    uniforms: &'a mut Uniforms,
-    dirty: &'a mut HashSet<BindGroupHandle>,
-    retired_uniforms: Vec<ShaderUniform>,
-    temp: vk::Buffer,
+    pub(crate) bind_groups: &'a mut BindGroupPool,
+    pub(crate) uniforms: &'a mut Uniforms,
+    pub(crate) dirty: &'a mut HashSet<BindGroupHandle>,
+    pub(crate) retired_uniforms: Vec<ShaderUniform>,
+    pub(crate) temp: vk::Buffer,
 }
 
 impl<'a> BindGroupUpdateContext<'a> {

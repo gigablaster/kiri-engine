@@ -56,13 +56,13 @@ impl<E: Error> From<kiri::Error> for GameError<E> {
     }
 }
 
-pub struct DrawContext<'a> {
+pub struct DrawContext<'a, 'b> {
     resource_manager: &'a ResourceManager,
-    pub render: &'a RenderContext<'a>,
+    pub render: &'a RenderContext<'a, 'b>,
     pub targets: &'a RenderTargetManager,
 }
 
-impl<'a> DrawContext<'a> {
+impl<'a, 'b> DrawContext<'a, 'b> {
     pub fn get_or_create_render_pass(
         &self,
         layout: RenderPassLayout,

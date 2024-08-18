@@ -45,7 +45,7 @@ impl GameClient<LoopError> for Loop {
         context: DrawContext,
     ) -> Result<(), kiri_backend::Error> {
         let layout = RenderPassLayout {
-            color_targets: &[RenderTargetDesc::new(context.render.backbuffer_format)
+            color_targets: &[RenderTargetDesc::new(context.render.backbuffer_desc.format)
                 .clear_input()
                 .store_output()
                 .initial_layout(ImageLayout::Undefined)

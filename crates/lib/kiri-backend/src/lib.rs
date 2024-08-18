@@ -409,7 +409,7 @@ pub use vulkan::{
     ImageDesc, ImageHandle, ImageSubresourceData, InputVertexAttrubute, InputVertexStreamLayout,
     Instance, InstanceBuilder, PhysicalDevice, PhysicalDeviceType, PipelineHandle, PipelineVertex,
     ProgramHandle, RasterPipelineCreateDesc, RenderContext, RenderDevice, RenderPassHandle,
-    RenderPassLayout, RenderTarget, RenderTargetDesc, ShaderDesc, SkipMissingSlots, SubpassLayout,
-    Surface, Swapchain, DYNAMIC_BINDING_SLOT, EMPTY_BIND_GROUP_DESC, FRAME_BINDING_SLOT,
-    MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
+    RenderPassLayout, RenderPassRecorder, RenderTarget, RenderTargetDesc, ShaderDesc,
+    SkipMissingSlots, SubpassLayout, Surface, Swapchain, DYNAMIC_BINDING_SLOT,
+    EMPTY_BIND_GROUP_DESC, FRAME_BINDING_SLOT, MATERIAL_BINDING_SLOT, OBJECT_BINDING_SLOT,
 };

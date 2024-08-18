@@ -25,7 +25,7 @@ use crate::{
 
 use super::{error::Error, DropList, GpuMemory};
 
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub dims: [u32; 2],
     pub ty: ImageType,
@@ -33,7 +33,6 @@ pub struct ImageDesc {
     pub format: Format,
     pub mip_levels: u32,
     pub array_elements: u32,
-    pub name: Option<String>,
 }
 
 impl From<ImageType> for vk::ImageType {
@@ -408,7 +407,6 @@ impl Image {
                 format: desc.format,
                 mip_levels: desc.mip_levels as u32,
                 array_elements: desc.array_elements as u32,
-                name: desc.name.map(|x| x.to_owned()),
             },
             memory: Some(memory),
             views: Default::default(),
@@ -495,8 +493,9 @@ impl RenderDevice {
         &self,
         image: vk::Image,
         desc: ImageDesc,
+        name: Option<&str>,
     ) -> Result<ImageHandle, Error> {
-        if let Some(name) = &desc.name {
+        if let Some(name) = name {
             self.set_object_name(image, name);
         }
         let image = Image::internal(image, desc);
