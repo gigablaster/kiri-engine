@@ -1,0 +1,13 @@
+[package]
+name = "kiri-gfx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kiri-common = { path = "../kiri-common" }
+kiri-backend = { path = "../kiri-backend" }
+ash = "0.38.0"
+puffin = "0.19.0"
+gpu-descriptor = "0.3.0"
+thiserror = "1.0.61"
+arrayvec = "0.7.4"

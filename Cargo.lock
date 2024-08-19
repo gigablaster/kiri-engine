@@ -830,6 +830,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiri-gfx"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "ash",
+ "gpu-descriptor",
+ "kiri-backend",
+ "kiri-common",
+ "puffin",
+ "thiserror",
+]
+
+[[package]]
 name = "kiri-vfs"
 version = "0.1.0"
 dependencies = [
