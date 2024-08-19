@@ -18,16 +18,17 @@ use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use gpu_descriptor_ash::AshDescriptorDevice;
 use parking_lot::Mutex;
 use std::fmt::Debug;
 
-use crate::{AsVulkan, Error, Instance};
+use crate::{Error, Image, ImageSubresource, Instance};
 
 use super::{
     drop_list::DropList, frame::Frame, physical_device::PhysicalDevice, FindSuitableDevice,
-    GpuAllocator, GpuDescriptorAllocator, GpuMemory, PhysicalDeviceType, Surface, SwapchainImage,
+    GpuAllocator, GpuMemory, PhysicalDeviceType, Surface, SwapchainImage,
 };
+
+const MAX_SUBMITS: usize = 32;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -37,18 +38,12 @@ pub struct SamplerDesc {
     pub anisotropy_level: u32,
 }
 
-pub enum FrameState {
-    Rendered,
-    NeedRecreateSwapchain,
-}
-
 pub struct RenderDevice {
-    instance: Arc<Instance>,
-    pdevice: PhysicalDevice,
-    device: ash::Device,
+    pub instance: Arc<Instance>,
+    pub physical_device: PhysicalDevice,
+    pub raw: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
     memory_allocator: Mutex<GpuAllocator>,
-    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     current_drop_list: Mutex<DropList>,
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
@@ -57,7 +52,7 @@ pub struct RenderDevice {
 
 impl Debug for RenderDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "VkDevice({})", vk::Handle::as_raw(self.device.handle()))
+        write!(f, "VkDevice({})", vk::Handle::as_raw(self.raw.handle()))
     }
 }
 
@@ -76,9 +71,15 @@ impl RenderDevice {
             return Err(Error::NoSuitableDevice);
         };
 
-        let device_extension_names = vec![ash::khr::swapchain::NAME];
+        let device_extension_names = [
+            ash::khr::swapchain::NAME,
+            ash::khr::maintenance1::NAME,
+            ash::khr::maintenance2::NAME,
+            ash::khr::maintenance3::NAME,
+            ash::khr::maintenance4::NAME,
+        ];
 
-        for ext in device_extension_names.iter().copied() {
+        for ext in device_extension_names.iter() {
             let ext = ext.to_str().unwrap();
             if !pdevice.is_extensions_sipported(ext) {
                 return Err(Error::ExtensionNotFound(ext.into()));
@@ -91,21 +92,42 @@ impl RenderDevice {
             .collect::<Vec<_>>();
 
         let universal_queue_family = pdevice
-            .find_queue(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER, &[])
+            .find_queue(
+                vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
+                &[],
+            )
             .ok_or(Error::NoSuitableQueue)?;
 
         let universal_queue_index = universal_queue_family.index;
 
         let queue_priorities = [1.0];
-        let mut queue_info = Vec::new();
-        queue_info.push(
-            vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(universal_queue_family.index)
-                .queue_priorities(&queue_priorities),
-        );
+        let queue_info = [vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(universal_queue_family.index)
+            .queue_priorities(&queue_priorities)];
 
+        let mut synchronization2 =
+            vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
+        let mut buffer_device_address =
+            vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
+        let mut dynamic_rendering =
+            vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
+            .runtime_descriptor_array(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_storage_buffer_array_non_uniform_indexing(true)
+            .shader_storage_image_array_non_uniform_indexing(true);
         let mut features = vk::PhysicalDeviceFeatures2::default()
-            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
+            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
+            .push_next(&mut synchronization2)
+            .push_next(&mut buffer_device_address)
+            .push_next(&mut dynamic_rendering)
+            .push_next(&mut maintenance4)
+            .push_next(&mut descriptor_indexing);
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
             .enabled_extension_names(&device_extension_names)
@@ -113,7 +135,7 @@ impl RenderDevice {
 
         let device = unsafe {
             instance
-                .get()
+                .raw
                 .create_device(pdevice.raw, &device_create_info, None)?
         };
 
@@ -131,12 +153,12 @@ impl RenderDevice {
             initial_buddy_dedicated_size: 128 * 1024 * 1024,
         };
         let allocator_props =
-            unsafe { device_properties(instance.get(), Instance::vulkan_version(), pdevice.raw) }?;
+            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
 
         let debug = instance
             .debug_utils()
             .iter()
-            .map(|_| ash::ext::debug_utils::Device::new(instance.get(), &device))
+            .map(|_| ash::ext::debug_utils::Device::new(&instance.raw, &device))
             .next();
 
         let samplers = Self::generate_samplers(&device);
@@ -144,26 +166,17 @@ impl RenderDevice {
         Ok(Arc::new(Self {
             instance: instance.clone(),
             samplers,
-            pdevice,
+            physical_device: pdevice,
             memory_allocator: Mutex::new(GpuAllocator::new(allocator_config, allocator_props)),
-            descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(0)),
             universal_queue,
             frames: [
                 Mutex::new(Arc::new(Frame::new(&device)?)),
                 Mutex::new(Arc::new(Frame::new(&device)?)),
             ],
             current_drop_list: Mutex::default(),
-            device,
+            raw: device,
             debug,
         }))
-    }
-
-    pub fn get(&self) -> &ash::Device {
-        &self.device
-    }
-
-    pub fn instance(&self) -> &Instance {
-        &self.instance
     }
 
     pub fn sampler(&self, desc: SamplerDesc) -> Option<vk::Sampler> {
@@ -234,27 +247,18 @@ impl RenderDevice {
         Ok(if dedicated {
             unsafe {
                 allocator.alloc_with_dedicated(
-                    AshMemoryDevice::wrap(&self.device),
+                    AshMemoryDevice::wrap(&self.raw),
                     request,
                     gpu_alloc::Dedicated::Required,
                 )
             }
         } else {
-            unsafe { allocator.alloc(AshMemoryDevice::wrap(&self.device), request) }
+            unsafe { allocator.alloc(AshMemoryDevice::wrap(&self.raw), request) }
         }?)
     }
 
-    pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
+    pub(super) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
-    }
-
-    pub fn with_descriptor_allocator<
-        CB: FnOnce(&mut GpuDescriptorAllocator) -> Result<(), Error>,
-    >(
-        &self,
-        cb: CB,
-    ) -> Result<(), Error> {
-        cb(&mut self.descriptor_allocator.lock())
     }
 
     pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
@@ -267,46 +271,68 @@ impl RenderDevice {
         }
     }
 
+    /// Submits execution to main queue
+    ///
+    /// Thread-safe.
     pub fn submit(
         &self,
-        cb: (vk::CommandBuffer, vk::Fence),
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
-        triggers: &[vk::Semaphore],
+        cbs: &[vk::CommandBuffer],
+        fence: vk::Fence,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        signal: &[(vk::Semaphore, vk::PipelineStageFlags2)],
     ) -> Result<(), Error> {
         puffin::profile_function!();
-        let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
-        let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
-        let command_bufers = [cb.0];
-        let info = vk::SubmitInfo::default()
-            .command_buffers(&command_bufers)
-            .wait_semaphores(&wait_semaphores)
-            .signal_semaphores(triggers)
-            .wait_dst_stage_mask(&wait_stages);
+        let command_info = cbs
+            .iter()
+            .map(|x| vk::CommandBufferSubmitInfo::default().command_buffer(*x))
+            .collect::<ArrayVec<_, MAX_SUBMITS>>();
+        let wait_info = wait
+            .iter()
+            .map(|(semaphore, stage)| {
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(*semaphore)
+                    .stage_mask(*stage)
+            })
+            .collect::<ArrayVec<_, MAX_SUBMITS>>();
+        let signal_info = signal
+            .iter()
+            .map(|(semaphore, stage)| {
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(*semaphore)
+                    .stage_mask(*stage)
+            })
+            .collect::<ArrayVec<_, MAX_SUBMITS>>();
+        let submit_info = vk::SubmitInfo2::default()
+            .command_buffer_infos(&command_info)
+            .wait_semaphore_infos(&wait_info)
+            .signal_semaphore_infos(&signal_info);
         unsafe {
-            self.device
-                .queue_submit(*self.universal_queue.lock(), &[info], cb.1)
+            self.raw
+                .queue_submit2(*self.universal_queue.lock(), &[submit_info], fence)
         }?;
         Ok(())
     }
 
+    /// Begins frame
+    ///
+    /// Waiting for last frame to finish rendering, them resets fences and frame state.
     pub fn begin_frame(&self) -> Result<Arc<Frame>, Error> {
         puffin::profile_function!();
         let mut frame = self.frames[0].lock();
         {
             let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
             unsafe {
-                self.device
-                    .wait_for_fences(slice::from_ref(&frame.fence()), true, u64::MAX)?
+                self.raw
+                    .wait_for_fences(&[frame.present_fence], true, u64::MAX)?
             };
-            frame.reset(
-                &self.device,
-                &mut self.memory_allocator.lock(),
-                &mut self.descriptor_allocator.lock(),
-            )?;
+            frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
         }
         Ok(frame.clone())
     }
 
+    /// Ends frame
+    ///
+    /// Current frame marked for execution, last frame moved to be waited.
     pub fn end_frame(&self, frame: Arc<Frame>) {
         drop(frame);
 
@@ -318,68 +344,154 @@ impl RenderDevice {
         mem::swap(frame, next_frame);
     }
 
-    pub fn present(&self, image: SwapchainImage) {
+    /// Gets image and copy it to backbuffer.
+    ///
+    /// As far as I understand it will let us to execute redering commands while waiting for
+    /// vsync. So as soon as back bffer is there we can just copy result and go for another
+    /// frame.    
+    pub fn present(
+        &self,
+        target: SwapchainImage,
+        image: &Image,
+        frame: &Frame,
+    ) -> Result<(), Error> {
         puffin::profile_function!();
-        let binding = image.swapchain.as_vulkan();
+        unsafe {
+            let cb = frame.get_command_buffer(&self.raw, vk::CommandBufferLevel::PRIMARY)?;
+            self.raw.begin_command_buffer(
+                cb,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+            let barriers = [
+                vk::ImageMemoryBarrier2::default()
+                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .image(target.image.raw)
+                    .subresource_range(target.image.subresource(
+                        vk::ImageAspectFlags::COLOR,
+                        ImageSubresource::LevelAndMip(1, 1),
+                    )),
+                vk::ImageMemoryBarrier2::default()
+                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .image(image.raw)
+                    .subresource_range(image.subresource(
+                        vk::ImageAspectFlags::COLOR,
+                        ImageSubresource::LevelAndMip(1, 1),
+                    )),
+            ];
+            self.raw.cmd_pipeline_barrier2(
+                cb,
+                &vk::DependencyInfo::default()
+                    .dependency_flags(vk::DependencyFlags::BY_REGION)
+                    .image_memory_barriers(&barriers),
+            );
+            self.raw.cmd_copy_image2(
+                cb,
+                &vk::CopyImageInfo2::default()
+                    .src_image(image.raw)
+                    .dst_image(target.image.raw)
+                    .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .regions(&[vk::ImageCopy2::default().extent(vk::Extent3D {
+                        width: image.desc.dims[0],
+                        height: image.desc.dims[1],
+                        depth: 1,
+                    })]),
+            );
+            let barrier = vk::ImageMemoryBarrier2::default()
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE) // ?
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                .dst_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .image(target.image.raw)
+                .subresource_range(target.image.subresource(
+                    vk::ImageAspectFlags::COLOR,
+                    ImageSubresource::LevelAndMip(1, 1),
+                ));
+            self.raw.cmd_pipeline_barrier2(
+                cb,
+                &vk::DependencyInfo::default()
+                    .dependency_flags(vk::DependencyFlags::BY_REGION)
+                    .image_memory_barriers(&[barrier]),
+            );
+            self.raw.end_command_buffer(cb)?;
+            self.submit(
+                &[cb],
+                frame.present_fence,
+                &[
+                    (
+                        frame.render_finished,
+                        vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                    ),
+                    (
+                        target.acquire_semaphore,
+                        vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                    ),
+                ],
+                &[(
+                    target.present_finished,
+                    vk::PipelineStageFlags2::TOP_OF_PIPE,
+                )],
+            )?;
+        }
+        let binding = target.swapchain.raw;
         let present_info = vk::PresentInfoKHR::default()
-            .wait_semaphores(slice::from_ref(&image.rendering_finished))
+            .wait_semaphores(slice::from_ref(&target.present_finished))
             .swapchains(slice::from_ref(&binding))
-            .image_indices(slice::from_ref(&image.image_index));
+            .image_indices(slice::from_ref(&target.image_index));
 
         match unsafe {
-            image
+            target
                 .swapchain
                 .loader()
                 .queue_present(*self.universal_queue.lock(), &present_info)
         } {
-            Ok(_) => (),
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => Ok(()),
             Err(err) => panic!("Can't present image: {}", err),
+            _ => Ok(()),
         }
     }
 
     pub fn physical_device(&self) -> &PhysicalDevice {
-        &self.pdevice
+        &self.physical_device
     }
 }
 
 impl Drop for RenderDevice {
     fn drop(&mut self) {
-        unsafe { self.device.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
+        unsafe { self.raw.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         let mut memory_allocator = self.memory_allocator.lock();
-        let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut drop_list = self.current_drop_list.lock();
-        drop_list.purge(
-            &self.device,
-            &mut memory_allocator,
-            &mut descriptor_allocator,
-        );
+        drop_list.purge(&self.raw, &mut memory_allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
                 .expect("Nothing should hold a frame at point when we destroy rendering context")
-                .reset(
-                    &self.device,
-                    &mut memory_allocator,
-                    &mut descriptor_allocator,
-                )
+                .reset(&self.raw, &mut memory_allocator)
                 .unwrap();
         });
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
                 .expect("Nothing should hold frame at this point")
-                .free(
-                    &self.device,
-                    &mut memory_allocator,
-                    &mut descriptor_allocator,
-                )
+                .free(&self.raw, &mut memory_allocator)
         });
         self.samplers
             .drain()
-            .for_each(|(_, sampler)| unsafe { self.device.destroy_sampler(sampler, None) });
+            .for_each(|(_, sampler)| unsafe { self.raw.destroy_sampler(sampler, None) });
         unsafe {
-            descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.device));
-            memory_allocator.cleanup(AshMemoryDevice::wrap(&self.device));
-            self.device.destroy_device(None);
+            memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
+            self.raw.destroy_device(None);
         }
     }
 }

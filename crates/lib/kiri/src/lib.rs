@@ -13,19 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod gpu;
 mod mesh;
-mod pass;
 mod resource_manager;
-mod scene;
-mod temp_images;
+// mod scene;
+// mod temp_images;
 
 use std::io;
 
 pub use mesh::*;
-pub use pass::*;
 pub use resource_manager::*;
-pub use scene::*;
-pub use temp_images::*;
+// pub use scene::*;
+
+// pub use temp_images::*;
 
 use thiserror::Error;
 
@@ -33,6 +33,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("Backend error: {0}")]
     BackendError(kiri_backend::Error),
+    #[error("Renderer error: {0}")]
+    RendererError(kiri_gfx::Error),
     #[error("IO error: {0}")]
     IoError(io::Error),
     #[error("Asset import error: {0}")]
@@ -44,6 +46,12 @@ pub enum Error {
 impl From<kiri_backend::Error> for Error {
     fn from(value: kiri_backend::Error) -> Self {
         Self::BackendError(value)
+    }
+}
+
+impl From<kiri_gfx::Error> for Error {
+    fn from(value: kiri_gfx::Error) -> Self {
+        Self::RendererError(value)
     }
 }
 
@@ -62,4 +70,28 @@ impl From<kiri_assets::Error> for Error {
 pub enum RenderOrder {
     Opaque,
     Transparent,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Bounds {
+    pub center: glam::Vec3,
+    pub radius: f32,
+}
+
+impl Bounds {
+    pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
+        Self {
+            center: glam::Vec3::from_array(center),
+            radius,
+        }
+    }
+
+    pub fn transform(self, transform: glam::Affine3A) -> Self {
+        let (scale, _, _) = transform.to_scale_rotation_translation();
+        let scale = scale.max_element();
+        Self {
+            center: transform.transform_point3(self.center),
+            radius: self.radius * scale,
+        }
+    }
 }

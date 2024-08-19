@@ -14,225 +14,25 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashMap,
-    ffi::{CStr, CString},
-    slice,
+    collections::{BTreeMap, HashMap},
+    ffi::CString,
     sync::Arc,
 };
 
 use arrayvec::ArrayVec;
-use ash::vk;
+use ash::vk::{self, PushConstantRange};
 use byte_slice_cast::AsSliceOf;
-use gpu_descriptor::DescriptorTotalCount;
+use kiri_common::{DefaultPoolLimits, PoolLimits, TempList};
+use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
-use crate::{AsVulkan, Error};
+use crate::{Error, SamplerDesc};
 
-use super::{RenderDevice, SamplerDesc};
+use super::RenderDevice;
 
-const MAX_SAMPLERS: usize = 32;
-pub const FRAME_BINDING_SLOT: usize = 0;
-pub const MATERIAL_BINDING_SLOT: usize = 1;
-pub const OBJECT_BINDING_SLOT: usize = 2;
+pub const BINDLESS_BINDING_SLOT: usize = 0;
+pub const SAMPLERS_BINDING_SLOT: usize = 1;
 pub const DYNAMIC_BINDING_SLOT: usize = 3;
-pub(super) const MAX_DESCRIPTOR_SETS: usize = 4;
-
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct DescritptorSetSlotDesc<'a> {
-    pub slot: usize,
-    pub name: &'a str,
-    pub ty: vk::DescriptorType,
-}
-
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct DescriptorSetLayoutDesc<'a> {
-    pub stage: vk::ShaderStageFlags,
-    pub set: &'a [DescritptorSetSlotDesc<'a>],
-}
-
-#[derive(Debug)]
-pub struct DescriptorSetLayout {
-    device: Arc<RenderDevice>,
-    raw: vk::DescriptorSetLayout,
-    count: DescriptorTotalCount,
-    types: HashMap<usize, vk::DescriptorType>,
-    names: HashMap<String, usize>,
-}
-
-impl AsVulkan<vk::DescriptorSetLayout> for DescriptorSetLayout {
-    fn as_vulkan(&self) -> vk::DescriptorSetLayout {
-        self.raw
-    }
-}
-impl DescriptorSetLayout {
-    pub fn new(
-        device: &Arc<RenderDevice>,
-        desc: DescriptorSetLayoutDesc,
-    ) -> Result<Arc<DescriptorSetLayout>, Error> {
-        let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
-        let mut bindings = HashMap::with_capacity(desc.set.len());
-        for binding in desc.set.iter() {
-            match binding.ty {
-                vk::DescriptorType::UNIFORM_BUFFER
-                | vk::DescriptorType::STORAGE_BUFFER
-                | vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                | vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                | vk::DescriptorType::SAMPLED_IMAGE
-                | vk::DescriptorType::INPUT_ATTACHMENT => {
-                    bindings.insert(binding.slot, Self::create_binding(desc.stage, binding));
-                }
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER | vk::DescriptorType::SAMPLER => {
-                    let sampler = Self::get_suitable_sampler_desc(binding.name);
-                    let sampler = device
-                        .sampler(sampler)
-                        .ok_or(Error::SamplerNotFound(sampler))?;
-                    samplers.push((sampler, binding.slot, 1, binding.ty, desc.stage));
-                    if binding.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER {
-                        bindings.insert(binding.slot, Self::create_binding(desc.stage, binding));
-                    }
-                }
-                ty => panic!("Unsupported binding type {:?}", ty),
-            };
-        }
-        let mut count = DescriptorTotalCount::default();
-        for binding in bindings.values() {
-            match binding.descriptor_type {
-                vk::DescriptorType::UNIFORM_BUFFER => {
-                    count.uniform_buffer += binding.descriptor_count
-                }
-                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                    count.uniform_buffer_dynamic += binding.descriptor_count
-                }
-                vk::DescriptorType::STORAGE_BUFFER => {
-                    count.storage_buffer += binding.descriptor_count
-                }
-                vk::DescriptorType::STORAGE_IMAGE => {
-                    count.storage_image += binding.descriptor_count
-                }
-                vk::DescriptorType::SAMPLED_IMAGE => {
-                    count.sampled_image += binding.descriptor_count
-                }
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    count.combined_image_sampler += binding.descriptor_count
-                }
-                vk::DescriptorType::SAMPLER => count.sampler += binding.descriptor_count,
-                _ => panic!(),
-            }
-        }
-        for (sampler, slot, count, ty, stage) in &samplers {
-            let layout_biding = vk::DescriptorSetLayoutBinding::default()
-                .binding(*slot as _)
-                .descriptor_count(*count as _)
-                .descriptor_type((*ty).into())
-                .stage_flags((*stage).into())
-                .immutable_samplers(slice::from_ref(sampler));
-            bindings.insert(*slot, layout_biding);
-        }
-
-        let layout = bindings.values().copied().collect::<Vec<_>>();
-        let types = bindings
-            .iter()
-            .map(|(index, binding)| (*index, binding.descriptor_type))
-            .collect::<HashMap<_, _>>();
-        let names = desc
-            .set
-            .iter()
-            .map(|x| (x.name.to_owned(), x.slot))
-            .collect::<HashMap<_, _>>();
-        let layout_create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout);
-        let layout = unsafe {
-            device
-                .get()
-                .create_descriptor_set_layout(&layout_create_info, None)
-        }?;
-
-        Ok(Arc::new(DescriptorSetLayout {
-            device: device.clone(),
-            raw: layout,
-            count,
-            types,
-            names,
-        }))
-    }
-
-    pub fn slot_by_name(&self, name: &str) -> Option<usize> {
-        self.names.get(name).copied()
-    }
-
-    pub fn type_by_slot(&self, slot: usize) -> Option<vk::DescriptorType> {
-        self.types.get(&slot).copied()
-    }
-
-    pub fn count(&self) -> DescriptorTotalCount {
-        self.count
-    }
-
-    fn create_binding<'a>(
-        stage: vk::ShaderStageFlags,
-        binding: &'a DescritptorSetSlotDesc<'a>,
-    ) -> vk::DescriptorSetLayoutBinding<'a> {
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(binding.slot as _)
-            .descriptor_type(binding.ty.into())
-            .descriptor_count(1)
-            .stage_flags(stage.into())
-    }
-
-    fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
-        if name.ends_with("_nr") {
-            SamplerDesc {
-                texel_filter: vk::Filter::NEAREST,
-                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-                address_mode: vk::SamplerAddressMode::REPEAT,
-                anisotropy_level: 0, // TODO:: control anisotropy level
-            }
-        } else if name.ends_with("_nb") {
-            SamplerDesc {
-                texel_filter: vk::Filter::NEAREST,
-                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-                address_mode: vk::SamplerAddressMode::CLAMP_TO_BORDER,
-                anisotropy_level: 0, // TODO:: control anisotropy level
-            }
-        } else if name.ends_with("_nm") {
-            SamplerDesc {
-                texel_filter: vk::Filter::NEAREST,
-                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-                address_mode: vk::SamplerAddressMode::MIRRORED_REPEAT,
-                anisotropy_level: 0, // TODO:: control anisotropy level
-            }
-        } else if name.ends_with("_lb") {
-            SamplerDesc {
-                texel_filter: vk::Filter::LINEAR,
-                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                address_mode: vk::SamplerAddressMode::CLAMP_TO_BORDER,
-                anisotropy_level: 8, // TODO:: control anisotropy level
-            }
-        } else if name.ends_with("_lm") {
-            SamplerDesc {
-                texel_filter: vk::Filter::LINEAR,
-                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                address_mode: vk::SamplerAddressMode::MIRRORED_REPEAT,
-                anisotropy_level: 8, // TODO:: control anisotropy level
-            }
-        } else {
-            SamplerDesc {
-                texel_filter: vk::Filter::LINEAR,
-                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                address_mode: vk::SamplerAddressMode::REPEAT,
-                anisotropy_level: 8, // TODO:: control anisotropy level
-            }
-        }
-    }
-}
-
-impl Drop for DescriptorSetLayout {
-    fn drop(&mut self) {
-        unsafe {
-            self.device
-                .get()
-                .destroy_descriptor_set_layout(self.raw, None)
-        }
-    }
-}
+pub const MAX_DESCRIPTOR_SETS: usize = 4;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct ShaderDesc<'a> {
@@ -280,105 +80,321 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug)]
-pub struct Shader {
-    raw: vk::ShaderModule,
-    stage: vk::ShaderStageFlags,
-    entry: CString,
-}
-
-impl AsVulkan<vk::ShaderModule> for Shader {
-    fn as_vulkan(&self) -> vk::ShaderModule {
-        self.raw
-    }
-}
-
-impl Shader {
-    fn new(device: &ash::Device, desc: &ShaderDesc) -> Result<Self, Error> {
-        let shader_create_info =
-            vk::ShaderModuleCreateInfo::default().code(desc.code.as_slice_of::<u32>().unwrap());
-
-        let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
-        Ok(Self {
-            raw: shader,
-            stage: desc.stage.into(),
-            entry: CString::new(desc.entry).unwrap(),
-        })
-    }
-
-    fn free(&self, device: &ash::Device) {
-        unsafe { device.destroy_shader_module(self.raw, None) }
-    }
-
-    pub fn stage(&self) -> vk::ShaderStageFlags {
-        self.stage
-    }
-
-    pub fn entry(&self) -> &CStr {
-        &self.entry
-    }
-}
+pub type DescriptorSetDesc = HashMap<usize, (String, vk::DescriptorType, usize)>;
+type RelfectedDescriptorSetLayout = HashMap<usize, DescriptorSetDesc>;
 
 const MAX_SHADERS: usize = 2;
 
-/// Shader program similar to what we had in OpenGL.
-///
-/// Contains shader modules and layouts needed to create PSOs and descriptor sets.
 #[derive(Debug)]
 pub struct Program {
     device: Arc<RenderDevice>,
-    shaders: ArrayVec<Shader, MAX_SHADERS>,
-    pipeline_layout: vk::PipelineLayout,
+    pub stages: vk::ShaderStageFlags,
+    pub push_range: PushConstantRange,
+    pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
+    pub pipeline_layout: vk::PipelineLayout,
+    pub layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
 }
 
 impl Program {
-    pub fn new(
-        device: &Arc<RenderDevice>,
-        layouts: &[&DescriptorSetLayout],
-        shaders: &[ShaderDesc],
-    ) -> Result<Self, Error> {
+    pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
-        let shaders = shaders
-            .iter()
-            .map(|desc| {
-                stages |= desc.stage;
-                Shader::new(device.get(), desc).unwrap()
-            })
-            .collect::<ArrayVec<_, MAX_SHADERS>>();
-        let vk_layouts = layouts
-            .iter()
-            .map(|x| x.as_vulkan())
-            .collect::<ArrayVec<_, MAX_DESCRIPTOR_SETS>>();
-        let layout_desc = vk::PipelineLayoutCreateInfo::default().set_layouts(&vk_layouts);
-        let pipeline_layout = unsafe { device.get().create_pipeline_layout(&layout_desc, None) }?;
-
+        let mut layouts = Vec::new();
+        let mut push_ranges = Vec::new();
+        for shader in shaders {
+            let (descriptor_layout, push_range, _) = Self::reflect(shader.code)?;
+            layouts.push(descriptor_layout);
+            push_ranges.push(push_range.stage_flags(shader.stage));
+            stages |= shader.stage;
+        }
+        let mut layout = merge_reflected_layouts(layouts.iter())
+            .into_iter()
+            .collect::<Vec<_>>();
+        layout.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut modules = ArrayVec::<_, MAX_SHADERS>::new();
+        for shader in shaders {
+            stages |= shader.stage;
+            modules.push(Self::create_shader(&device.raw, shader, shader.entry)?);
+        }
+        let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
+        for (slot, info) in layout {
+            layouts.push(create_descriptor_layout(device, stages, &info, slot == 0)?);
+        }
+        let create_info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&layouts)
+            .push_constant_ranges(&push_ranges);
+        let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
         Ok(Self {
             device: device.clone(),
+            stages,
+            push_range: vk::PushConstantRange::default().size(
+                push_ranges
+                    .iter()
+                    .map(|x| x.offset + x.size)
+                    .max()
+                    .unwrap_or_default(),
+            ),
+            shaders: modules,
             pipeline_layout,
-            shaders,
+            layouts,
         })
     }
 
-    pub fn shaders(&self) -> &[Shader] {
-        &self.shaders
+    fn create_shader(
+        device: &ash::Device,
+        desc: &ShaderDesc,
+        entry: &str,
+    ) -> Result<(vk::ShaderModule, vk::ShaderStageFlags, CString), Error> {
+        let shader_create_info =
+            vk::ShaderModuleCreateInfo::default().code(desc.code.as_slice_of::<u32>().unwrap());
+
+        Ok((
+            unsafe { device.create_shader_module(&shader_create_info, None) }?,
+            desc.stage,
+            CString::new(entry).unwrap(),
+        ))
+    }
+
+    fn reflect(
+        code: &[u8],
+    ) -> Result<
+        (
+            RelfectedDescriptorSetLayout,
+            vk::PushConstantRange,
+            (u32, u32, u32),
+        ),
+        Error,
+    > {
+        let reflection = Reflection::new_from_spirv(code)?;
+        let descriptor_sets = reflection.get_descriptor_sets()?;
+        let push_range = reflection
+            .get_push_constant_range()?
+            .map(|x| {
+                vk::PushConstantRange::default()
+                    .offset(x.offset)
+                    .size(x.size)
+            })
+            .unwrap_or_default();
+        let group_size = reflection.get_compute_group_size().unwrap_or_default();
+        let mut layout = RelfectedDescriptorSetLayout::default();
+        for (index, set) in descriptor_sets.into_iter() {
+            layout.insert(
+                index as usize,
+                Self::reflect_descriptor(set, index == DYNAMIC_BINDING_SLOT as u32)?,
+            );
+        }
+        Ok((layout, push_range, group_size))
+    }
+
+    fn reflect_descriptor(
+        value: BTreeMap<u32, DescriptorInfo>,
+        dynamic: bool,
+    ) -> Result<DescriptorSetDesc, Error> {
+        let mut result = DescriptorSetDesc::new();
+        for (index, info) in value.into_iter() {
+            let ty = match info.ty {
+                rspirv_reflect::DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
+                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => vk::DescriptorType::SAMPLED_IMAGE,
+
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
+                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+                }
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
+                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+                }
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
+                    vk::DescriptorType::STORAGE_BUFFER
+                }
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
+                    vk::DescriptorType::UNIFORM_BUFFER
+                }
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+                }
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+                }
+                rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                }
+                rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
+                _ => panic!("Not supported {}", info.ty.0),
+            };
+            let count = match info.binding_count {
+                BindingCount::One => 1,
+                BindingCount::StaticSized(count) => count,
+                BindingCount::Unbounded => DefaultPoolLimits::max_index() as usize,
+            };
+            result.insert(index as usize, (info.name, ty, count));
+        }
+        Ok(result)
     }
 }
 
-impl AsVulkan<vk::PipelineLayout> for Program {
-    fn as_vulkan(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
+pub fn create_descriptor_layout(
+    device: &RenderDevice,
+    stage: vk::ShaderStageFlags,
+    layout: &DescriptorSetDesc,
+    bindless: bool,
+) -> Result<vk::DescriptorSetLayout, Error> {
+    let flags = if bindless {
+        vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL
+    } else {
+        vk::DescriptorSetLayoutCreateFlags::empty()
+    };
+    let samplers = TempList::new();
+    let bindings = layout
+        .iter()
+        .map(|(index, (name, ty, count))| {
+            let mut binding = vk::DescriptorSetLayoutBinding::default()
+                .binding(*index as _)
+                .descriptor_count(*count as _)
+                .descriptor_type(*ty)
+                .stage_flags(stage);
+            if *ty == vk::DescriptorType::SAMPLER
+                || *ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+            {
+                binding = binding.immutable_samplers(samplers.add(vec![
+                    device.sampler(get_sampler_desc(name)).unwrap();
+                    *count
+                ]));
+            }
+            binding
+        })
+        .collect::<Vec<_>>();
+    let mut create_info = vk::DescriptorSetLayoutCreateInfo::default()
+        .flags(flags)
+        .bindings(&bindings);
+    let flags = vec![
+        vk::DescriptorBindingFlags::PARTIALLY_BOUND
+            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
+        bindings.len()
+    ];
+    let mut binding_flags =
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
+
+    if bindless {
+        create_info = create_info.push_next(&mut binding_flags);
+    }
+    Ok(unsafe {
+        device
+            .raw
+            .create_descriptor_set_layout(&create_info, None)?
+    })
+}
+
+fn get_sampler_desc(name: &str) -> SamplerDesc {
+    if name.ends_with("_pr") {
+        SamplerDesc {
+            texel_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode: vk::SamplerAddressMode::REPEAT,
+            anisotropy_level: 0,
+        }
+    } else if name.ends_with("_pb") {
+        SamplerDesc {
+            texel_filter: vk::Filter::NEAREST,
+            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+            address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            anisotropy_level: 0,
+        }
+    } else if name.ends_with("_lb") {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            anisotropy_level: 0,
+        }
+    } else {
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: vk::SamplerAddressMode::REPEAT,
+            anisotropy_level: 4,
+        }
     }
 }
 
 impl Drop for Program {
     fn drop(&mut self) {
-        self.shaders
-            .iter()
-            .for_each(|shader| shader.free(self.device.get()));
+        self.shaders.drain(..).for_each(|(shader, _, _)| unsafe {
+            self.device.raw.destroy_shader_module(shader, None)
+        });
         unsafe {
             self.device
-                .get()
+                .raw
                 .destroy_pipeline_layout(self.pipeline_layout, None)
         };
+    }
+}
+
+fn merge_reflected_layouts<'a>(
+    layouts: impl Iterator<Item = &'a RelfectedDescriptorSetLayout>,
+) -> RelfectedDescriptorSetLayout {
+    let mut result = RelfectedDescriptorSetLayout::new();
+    layouts.for_each(|x| merge_reflected_layout_set(&mut result, x));
+    for i in 0..MAX_DESCRIPTOR_SETS {
+        result.entry(i).or_default();
+    }
+    result
+}
+
+fn merge_reflected_layout_set(
+    target: &mut RelfectedDescriptorSetLayout,
+    next: &RelfectedDescriptorSetLayout,
+) {
+    next.iter().for_each(|(index, set)| {
+        target
+            .entry(*index)
+            .and_modify(|existing| {
+                set.iter().for_each(|(index, set)| {
+                    existing.insert(*index, set.clone());
+                })
+            })
+            .or_insert(set.clone());
+    });
+}
+
+#[cfg(test)]
+mod test {
+    use ash::vk;
+
+    use crate::program::merge_reflected_layouts;
+
+    use super::{DescriptorSetDesc, RelfectedDescriptorSetLayout};
+
+    #[test]
+    fn merge_refected_layouts() {
+        let mut set1 = DescriptorSetDesc::new();
+        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE, 1));
+        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER, 1));
+        let mut set2 = DescriptorSetDesc::new();
+        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
+        let mut set3 = DescriptorSetDesc::new();
+        set3.insert(
+            1,
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
+        );
+
+        let mut combined = DescriptorSetDesc::new();
+        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
+        combined.insert(
+            1,
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
+        );
+
+        let mut a = RelfectedDescriptorSetLayout::new();
+        a.insert(0, set1.clone());
+        a.insert(2, set2);
+        // a.insert(0, )
+        let mut b = RelfectedDescriptorSetLayout::new();
+        b.insert(0, set1.clone());
+        b.insert(2, set3);
+        let merged = merge_reflected_layouts([a, b].iter());
+        let rset1 = merged.get(&0).unwrap();
+        let rset2 = merged.get(&2).unwrap();
+        assert!(merged.get(&1).unwrap().is_empty());
+        assert!(merged.get(&3).unwrap().is_empty());
+        assert_eq!(rset1, &set1);
+        assert_eq!(rset2, &combined);
     }
 }

@@ -13,13 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
-
-use ash::vk;
-use kiri_backend::Image;
-use kiri_common::Handle;
-
-pub type ImageHandle = Handle<Arc<Image>>;
-pub type BufferHandle = Handle<vk::Buffer>;
-
-pub struct Renderer {}
+pub struct PipelineCache {
+    // pipelines:
+}

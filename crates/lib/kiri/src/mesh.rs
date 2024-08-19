@@ -13,34 +13,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use kiri_assets::MeshMaterialBlend;
+use kiri_gfx::{BufferSlice, ImageHandle};
 
-use kiri_assets::NodeIndex;
-use kiri_backend::{DescriptorSetHandle, BufferSlice, ImageHandle};
-
-use crate::StaticMeshHandle;
+use crate::Bounds;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
-    pub material_index: usize,
+    pub material_index: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub(crate) struct PbrMaterialShaderData {
-    pub emissive_power: f32,
-    pub alpha_cutoff: f32,
-}
-
-#[derive(Debug)]
 pub struct RenderMeshMaterial {
-    pub bind_group: DescriptorSetHandle,
-    pub images: Vec<ImageHandle>,
+    pub base_color: ImageHandle,
+    pub normals: ImageHandle,
+    pub metallic_roughness: ImageHandle,
+    pub occlusion: ImageHandle,
+    pub emissive: ImageHandle,
+    pub emissive_power: f32,
+    pub blend: MeshMaterialBlend,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StaticRenderMesh {
     pub vertices: BufferSlice,
     pub indices: BufferSlice,
@@ -49,49 +45,25 @@ pub struct StaticRenderMesh {
     pub bounds: Bounds,
 }
 
-#[derive(Debug, Default)]
-pub struct RenderScene {
-    pub meshes: Vec<StaticMeshHandle>,
-    pub bounds: Vec<Bounds>,
-    pub names: HashMap<String, usize>,
-    pub parents: Vec<NodeIndex>,
-    pub local_transforms: Vec<glam::Affine3A>,
-    pub world_transforms: Vec<glam::Affine3A>,
-    pub node_to_mesh: Vec<(usize, usize)>,
-}
+// #[derive(Debug, Default)]
+// pub struct RenderScene {
+//     pub meshes: Vec<StaticMeshHandle>,
+//     pub bounds: Vec<Bounds>,
+//     pub names: HashMap<String, usize>,
+//     pub parents: Vec<NodeIndex>,
+//     pub local_transforms: Vec<glam::Affine3A>,
+//     pub world_transforms: Vec<glam::Affine3A>,
+//     pub node_to_mesh: Vec<(usize, usize)>,
+// }
 
-impl RenderScene {
-    pub(crate) fn update_world_transforms(&mut self) {
-        for (index, local) in self.local_transforms.iter().enumerate() {
-            let parent = self.parents[index]
-                .index()
-                .map(|index| self.world_transforms[index as usize])
-                .unwrap_or(self.local_transforms[index]);
-            self.world_transforms[index] = parent * *local;
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Bounds {
-    pub center: glam::Vec3,
-    pub radius: f32,
-}
-
-impl Bounds {
-    pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
-        Self {
-            center: glam::Vec3::from_array(center),
-            radius,
-        }
-    }
-
-    pub fn transform(self, transform: glam::Affine3A) -> Self {
-        let (scale, _, _) = transform.to_scale_rotation_translation();
-        let scale = scale.max_element();
-        Self {
-            center: transform.transform_point3(self.center),
-            radius: self.radius * scale,
-        }
-    }
-}
+// impl RenderScene {
+//     pub(super) fn update_world_transforms(&mut self) {
+//         for (index, local) in self.local_transforms.iter().enumerate() {
+//             let parent = self.parents[index]
+//                 .index()
+//                 .map(|index| self.world_transforms[index as usize])
+//                 .unwrap_or(self.local_transforms[index]);
+//             self.world_transforms[index] = parent * *local;
+//         }
+//     }
+// }

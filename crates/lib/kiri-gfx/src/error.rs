@@ -13,8 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::error;
+
 use ash::vk;
 use thiserror::Error;
+
+use crate::{BufferHandle, ImageHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -25,8 +29,13 @@ pub enum Error {
     #[error("Slot with index {0} not found")]
     SlotWithIndexNotFound(usize),
     #[error("Image is too big")]
-    ImageTooBig
-
+    ImageTooBig,
+    #[error("Out of dynamic memory")]
+    OutOfDynamicMemory,
+    #[error("Invalid image handle {0}")]
+    InvalidImageHandle(ImageHandle),
+    #[error("Invalid buffer handle {0}")]
+    InvaludBufferHandle(BufferHandle),
 }
 
 impl From<kiri_backend::Error> for Error {

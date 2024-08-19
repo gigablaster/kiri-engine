@@ -23,18 +23,15 @@ use parking_lot::Mutex;
 
 use crate::Error;
 
-use super::{DropList, GpuAllocator, GpuDescriptorAllocator};
+use super::{DropList, GpuAllocator};
 
 #[derive(Debug, Default)]
-struct SecondaryCommandBufferPool {
+struct CommandBufferPool {
     pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    free: Vec<vk::CommandBuffer>,
 }
 
-const ALLOCATE_PER_CALL: u32 = 8;
-
-impl SecondaryCommandBufferPool {
+impl CommandBufferPool {
     pub fn new(device: &ash::Device) -> Result<Self, Error> {
         let create_info =
             vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -42,31 +39,29 @@ impl SecondaryCommandBufferPool {
         Ok(Self {
             pool,
             command_buffers: Vec::default(),
-            free: Vec::default(),
         })
     }
 
-    pub fn get(&mut self, device: &ash::Device) -> Result<vk::CommandBuffer, Error> {
-        if self.free.is_empty() {
-            let create_info = vk::CommandBufferAllocateInfo::default()
-                .command_pool(self.pool)
-                .command_buffer_count(ALLOCATE_PER_CALL)
-                .level(vk::CommandBufferLevel::SECONDARY);
-            let cbs = unsafe { device.allocate_command_buffers(&create_info)? };
-            for cb in cbs {
-                self.command_buffers.push(cb);
-                self.free.push(cb);
-            }
-        }
-        Ok(self.free.pop().unwrap())
+    pub fn get(
+        &mut self,
+        device: &ash::Device,
+        level: vk::CommandBufferLevel,
+    ) -> Result<vk::CommandBuffer, Error> {
+        let create_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.pool)
+            .command_buffer_count(1)
+            .level(level);
+        let cb = unsafe { device.allocate_command_buffers(&create_info)? }.remove(0);
+        self.command_buffers.push(cb);
+        Ok(cb)
     }
 
     pub fn recycle(&mut self, device: &ash::Device) -> Result<(), Error> {
-        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
-        self.free.clear();
-        for cb in &self.command_buffers {
-            self.free.push(*cb);
-        }
+        unsafe {
+            device.free_command_buffers(self.pool, &self.command_buffers);
+            device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?
+        };
+        self.command_buffers.clear();
         Ok(())
     }
 
@@ -74,43 +69,33 @@ impl SecondaryCommandBufferPool {
         unsafe { device.destroy_command_pool(self.pool, None) }
     }
 }
+
+/// Contains per-frame data
 #[derive(Debug)]
 pub struct Frame {
-    pool: vk::CommandPool,
-    cb: vk::CommandBuffer,
-    fence: vk::Fence,
-    finished: vk::Semaphore,
     drop_list: DropList,
-    per_thread_pools: Mutex<HashMap<ThreadId, SecondaryCommandBufferPool>>,
+    per_thread_pools: Mutex<HashMap<ThreadId, CommandBufferPool>>,
+    pub(super) present_fence: vk::Fence,
+    /// Signal thos semaphore when finsihed rendering
+    pub render_finished: vk::Semaphore,
 }
 
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
 impl Frame {
-    pub fn new(device: &ash::Device) -> Result<Self, Error> {
+    pub(super) fn new(device: &ash::Device) -> Result<Self, Error> {
         unsafe {
-            let pool = device.create_command_pool(
-                &vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT),
-                None,
-            )?;
-            let cb = device.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(pool)
-                    .command_buffer_count(1)
-                    .level(vk::CommandBufferLevel::PRIMARY),
-            )?[0];
-            let fence = device.create_fence(
+            let present_fence = device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
             )?;
-            let finished = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
+            let render_finished =
+                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
             let drop_list = DropList::default();
             Ok(Self {
-                pool,
-                cb,
-                fence,
-                finished,
+                present_fence,
+                render_finished,
                 drop_list,
                 per_thread_pools: Default::default(),
             })
@@ -121,14 +106,10 @@ impl Frame {
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
-        descriptor_allocator: &mut GpuDescriptorAllocator,
     ) -> Result<(), Error> {
-        self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator);
-        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+        self.drop_list.purge(device, memory_allocator);
         unsafe {
-            device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
-            device.reset_fences(&[self.fence])?;
+            device.reset_fences(&[self.present_fence])?;
         }
         self.per_thread_pools
             .lock()
@@ -138,50 +119,36 @@ impl Frame {
         Ok(())
     }
 
-    pub(super) fn free(
-        &mut self,
-        device: &ash::Device,
-        memory_allocator: &mut GpuAllocator,
-        descriptor_allocator: &mut GpuDescriptorAllocator,
-    ) {
+    pub(super) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
         unsafe {
-            device.destroy_command_pool(self.pool, None);
-            device.destroy_fence(self.fence, None);
-            device.destroy_semaphore(self.finished, None);
+            device.destroy_fence(self.present_fence, None);
+            device.destroy_semaphore(self.render_finished, None);
         }
-        self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator);
+        self.drop_list.purge(device, memory_allocator);
         self.per_thread_pools
             .lock()
             .drain()
             .for_each(|(_, x)| x.free(device))
     }
 
-    pub fn assign_drop_list(&mut self, drop_list: DropList) {
+    pub(super) fn assign_drop_list(&mut self, drop_list: DropList) {
         self.drop_list = drop_list;
     }
 
-    pub fn secondary_command_buffer(
+    pub fn get_command_buffer(
         &self,
         device: &ash::Device,
+        level: vk::CommandBufferLevel,
     ) -> Result<vk::CommandBuffer, Error> {
         let therad_id = thread::current().id();
         let mut pools = self.per_thread_pools.lock();
         if let Some(pool) = pools.get_mut(&therad_id) {
-            Ok(pool.get(device)?)
+            Ok(pool.get(device, level)?)
         } else {
-            let mut pool = SecondaryCommandBufferPool::new(device)?;
-            let cb = pool.get(device)?;
+            let mut pool = CommandBufferPool::new(device)?;
+            let cb = pool.get(device, level)?;
             pools.insert(therad_id, pool);
             Ok(cb)
         }
-    }
-
-    pub fn main_command_buffer(&self) -> vk::CommandBuffer {
-        self.cb
-    }
-
-    pub(super) fn fence(&self) -> vk::Fence {
-        self.fence
     }
 }

@@ -16,11 +16,10 @@
 use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
-use kiri::{RenderTargetManager, ResourceManager};
-use kiri_backend::{
-    FrameState, InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain,
-};
+use kiri::ResourceManager;
+use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::TimeFilter;
+use kiri_gfx::{FrameState, BindlessManager};
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
@@ -31,15 +30,14 @@ use winit::{
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-use crate::{DrawContext, GameClient, GameError, GameTickState};
+use crate::{GameClient, GameError, GameTickState};
 
 struct InnerData<E: Error, G: GameClient<E>> {
     window: Window,
     swapchain: Option<Swapchain>,
     surface: Surface,
     device: Arc<RenderDevice>,
-    resource_manager: ResourceManager,
-    render_targets: RenderTargetManager,
+    renderer: Arc<BindlessManager>,
     _marker1: PhantomData<E>,
     _marker2: PhantomData<G>,
 }
@@ -75,20 +73,19 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
                 .with_inner_size(PhysicalSize::new(1280, 720))
                 .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE),
         )?;
-        let instance =
-            InstanceBuilder::new(window.display_handle()?.display_handle()?.into(), G::info())
-                .debug(true)
-                .build()?;
+        let instance = InstanceBuilder::new(window.display_handle()?.display_handle()?.into())
+            .debug(true)
+            .build()?;
         let surface = Surface::new(&instance, window.window_handle()?.window_handle()?.into())?;
         let device = RenderDevice::new(
             &instance,
             &surface,
             &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
         )?;
+        let renderer = BindlessManager::new(&device)?;
         Ok(Self {
             window,
-            resource_manager: ResourceManager::new(&device)?,
-            render_targets: RenderTargetManager::new(&device),
+            renderer,
             device,
             surface,
             swapchain: None,
@@ -123,9 +120,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
         let internal = self
             .inner
             .get_or_insert(InnerData::new(event_loop).unwrap());
-        let game = self
-            .game
-            .get_or_insert(G::new(&internal.resource_manager).unwrap());
+        let game = self.game.get_or_insert(G::new(&internal.renderer).unwrap());
         game.resumed().unwrap();
         internal.window.set_title(game.title());
         self.last_time = Instant::now();
@@ -161,22 +156,14 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                     let game = self.game.as_mut().unwrap();
                     if dims[0] > 0 && dims[1] > 0 {
                         if inner.swapchain.is_none() {
-                            inner.render_targets.cleanup();
                             inner.swapchain =
                                 Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap())
                         }
                         let swapchain = inner.swapchain.as_ref().unwrap();
                         if let FrameState::NeedRecreateSwapchain = inner
-                            .device
-                            .frame(swapchain, |context| {
-                                game.draw(
-                                    self.game_time.game_time(),
-                                    DrawContext {
-                                        resource_manager: &inner.resource_manager,
-                                        render: context,
-                                        targets: &inner.render_targets,
-                                    },
-                                )
+                            .renderer
+                            .render(swapchain, |context| {
+                                game.render(self.game_time.game_time(), context)
                             })
                             .unwrap()
                         {

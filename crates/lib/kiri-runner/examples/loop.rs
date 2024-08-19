@@ -1,16 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, sync::Arc};
 
+use ash::vk;
 use kiri::ResourceManager;
-use kiri_backend::{
-    AttachmentClearValue, ImageLayout, RenderPassAttachment, RenderPassAttachmentDesc,
-    RenderPassLayout, SubpassLayout,
-};
-use kiri_runner::{run_game, DrawContext, GameClient, GameError, GameTickState};
+use kiri_backend::{Image, ImageCreateDesc};
+use kiri_gfx::{BindlessManager, RenderContext};
+use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
-struct Loop {}
+struct Loop {
+    image: Arc<Image>,
+    resource_manager: Arc<ResourceManager>,
+}
 
 #[derive(Debug)]
 enum LoopError {}
@@ -23,15 +25,21 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<LoopError>> {
+    fn new(renderer: &Arc<BindlessManager>) -> Result<Self, GameError<LoopError>> {
+        let resource_manager = ResourceManager::new(renderer)?;
         resource_manager.get_or_load_static_mesh("PBR/gun.gltf#Mesh")?;
         resource_manager.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        Ok(Self {})
+        Ok(Self {
+            image: Arc::new(Image::new(
+                &renderer.device,
+                ImageCreateDesc::new(vk::Format::R8G8B8A8_UNORM, [1280, 720])
+                    .trasfer_source()
+                    .sampled()
+                    .samples(vk::SampleCountFlags::TYPE_1),
+            )?),
+            resource_manager,
+        })
     }
-    fn info() -> (&'static str, &'static str, &'static str) {
-        ("com", "gigablaster", "kiri-demo-loop")
-    }
-
     fn title(&self) -> &str {
         "Loop Demo"
     }
@@ -40,33 +48,12 @@ impl GameClient<LoopError> for Loop {
         Ok(GameTickState::Continue)
     }
 
-    fn draw(
+    fn render(
         &self,
         _time: kiri_common::GameTime,
-        context: DrawContext,
-    ) -> Result<(), kiri_backend::Error> {
-        let layout = RenderPassLayout {
-            color_targets: &[
-                RenderPassAttachmentDesc::new(context.render.backbuffer_desc.format)
-                    .clear_input()
-                    .store_output()
-                    .initial_layout(ImageLayout::Undefined)
-                    .final_layout(ImageLayout::Present),
-            ],
-            depth_target: None,
-            subpasses: &[SubpassLayout {
-                depth_write: false,
-                depth_read: false,
-                color_writes: &[0],
-                color_reads: &[],
-            }],
-        };
-        let targets = [RenderPassAttachment::color(context.render.backbuffer)
-            .clear(AttachmentClearValue::Color([0.25, 0.25, 0.75, 1.0]))];
-        let render_pass = context.get_or_create_render_pass(layout)?;
-        let recorder = context.render.record(render_pass, 0, &targets);
-        recorder.finish();
-        Ok(())
+        _context: RenderContext,
+    ) -> Result<Arc<Image>, kiri_gfx::Error> {
+        Ok(self.image.clone())
     }
 }
 fn main() {

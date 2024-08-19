@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{AsVulkan, Image};
+use crate::Image;
 
 use super::{Error, ImageViewDesc, RenderDevice};
 
@@ -79,12 +79,12 @@ impl RenderPassAttachmentDesc {
         final_layout: vk::ImageLayout,
     ) -> vk::AttachmentDescription {
         vk::AttachmentDescription::default()
-            .initial_layout(self.inital_layout.unwrap_or(initial_layout).into())
-            .final_layout(self.final_layout.unwrap_or(final_layout).into())
+            .initial_layout(self.inital_layout.unwrap_or(initial_layout))
+            .final_layout(self.final_layout.unwrap_or(final_layout))
             .format(self.format)
-            .load_op(self.load.into())
-            .store_op(self.store.into())
-            .samples(self.samples.into())
+            .load_op(self.load)
+            .store_op(self.store)
+            .samples(self.samples)
     }
 }
 
@@ -328,7 +328,7 @@ impl RenderPass {
             .subpasses(&subpasses)
             .dependencies(&dependencies);
 
-        let render_pass = unsafe { device.get().create_render_pass(&render_pass_info, None) }?;
+        let render_pass = unsafe { device.raw.create_render_pass(&render_pass_info, None) }?;
         Ok(Self {
             device: device.clone(),
             raw: render_pass,
@@ -340,7 +340,7 @@ impl RenderPass {
         self.framebuffers
             .write()
             .drain()
-            .for_each(|(_, fbo)| unsafe { self.device.get().destroy_framebuffer(fbo, None) });
+            .for_each(|(_, fbo)| unsafe { self.device.raw.destroy_framebuffer(fbo, None) });
     }
 
     pub fn framebuffer(
@@ -362,7 +362,7 @@ impl RenderPass {
                     .width(desc.dims[0])
                     .height(desc.dims[1])
                     .layers(1);
-                let fbo = unsafe { self.device.get().create_framebuffer(&fbo_info, None) }?;
+                let fbo = unsafe { self.device.raw.create_framebuffer(&fbo_info, None) }?;
                 framebuffers.insert(desc, fbo);
                 Ok(fbo)
             }
@@ -373,12 +373,6 @@ impl RenderPass {
 impl Drop for RenderPass {
     fn drop(&mut self) {
         self.clear_framebuffers();
-        unsafe { self.device.get().destroy_render_pass(self.raw, None) };
-    }
-}
-
-impl AsVulkan<vk::RenderPass> for RenderPass {
-    fn as_vulkan(&self) -> vk::RenderPass {
-        self.raw
+        unsafe { self.device.raw.destroy_render_pass(self.raw, None) };
     }
 }

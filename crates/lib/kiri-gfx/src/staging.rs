@@ -20,98 +20,73 @@ use std::{
     sync::Arc,
 };
 
-use arrayvec::ArrayVec;
-use ash::vk::{self, ImageSubresourceRange};
-use kiri_backend::{AsVulkan, Buffer, BufferCreateDesc, Image, RenderDevice};
+use ash::vk::{self};
+use kiri_backend::{Buffer, BufferCreateDesc, Image, RenderDevice};
 use kiri_common::BumpAllocator;
 
-use crate::Error;
+use crate::{Error, ImageSubresourceData};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
-
-#[derive(Debug, Clone, Copy)]
-pub struct ImageSubresourceData<'a> {
-    pub data: &'a [u8],
-}
 
 #[derive(Debug)]
 pub struct Staging {
     device: Arc<RenderDevice>,
     command_pool: vk::CommandPool,
-    command_buffers: Vec<(vk::CommandBuffer, vk::Fence)>,
+    command_buffer: vk::CommandBuffer,
+    fence: vk::Fence,
     allocator: BumpAllocator,
     upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
     upload_images: HashMap<vk::Image, Vec<ImageUploadRequest>>,
-    buffer: Buffer,
+    staging: Buffer,
     mapping: NonNull<u8>,
-    semaphores: Vec<vk::Semaphore>,
-    render_semaphores: Vec<vk::Semaphore>,
-    last: Option<usize>,
-    current: usize,
-    pending_buffer_barriers: Vec<(vk::Buffer, u64, u64)>,
-    pending_image_barriers: Vec<(vk::Image, ImageSubresourceRange)>,
+    semaphore: vk::Semaphore,
 }
 
 unsafe impl Send for Staging {}
 unsafe impl Sync for Staging {}
 
-const PAGE_SIZE: usize = 32 * 1024 * 1024;
-const PAGE_COUNT: usize = 4;
-
-fn create_semaphore(device: &ash::Device) -> Result<vk::Semaphore, Error> {
-    let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }?;
-    Ok(semaphore)
-}
-
-fn create_command_buffer(
-    device: &ash::Device,
-    pool: vk::CommandPool,
-) -> Result<(vk::CommandBuffer, vk::Fence), Error> {
-    let cb = unsafe {
-        device.allocate_command_buffers(
-            &vk::CommandBufferAllocateInfo::default()
-                .command_buffer_count(1)
-                .command_pool(pool),
-        )
-    }?[0];
-    let fence = unsafe {
-        device.create_fence(
-            &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-            None,
-        )
-    }?;
-    Ok((cb, fence))
-}
+const STAGING_SIZE: usize = 64 * 1024 * 1024;
 
 impl Staging {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Self, Error> {
-        let size = (PAGE_SIZE * PAGE_COUNT) as u64;
-        let pool_info = vk::CommandPoolCreateInfo::default()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-        let command_pool = unsafe { device.get().create_command_pool(&pool_info, None) }?;
-        let transfer_cbs = Vec::from_iter(
-            (0..PAGE_COUNT).map(|_| create_command_buffer(device.get(), command_pool).unwrap()),
-        );
-        let semaphores =
-            Vec::from_iter((0..PAGE_COUNT).map(|_| create_semaphore(device.get()).unwrap()));
-        let render_semaphores =
-            Vec::from_iter((0..PAGE_COUNT).map(|_| create_semaphore(device.get()).unwrap()));
+        let pool_info =
+            vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT);
+        let command_pool = unsafe { device.raw.create_command_pool(&pool_info, None) }?;
 
-        let mut buffer = Buffer::new(
+        let command_buffer = unsafe {
+            device.raw.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_buffer_count(1)
+                    .command_pool(command_pool),
+            )
+        }?[0];
+        let fence = unsafe {
+            device.raw.create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )
+        }?;
+        let semaphore = unsafe {
+            device
+                .raw
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        }?;
+        let mut staging = Buffer::new(
             device,
-            BufferCreateDesc::shared(PAGE_SIZE * PAGE_COUNT)
+            BufferCreateDesc::shared(STAGING_SIZE)
                 .transfer_source()
                 .dedicated(true),
         )?;
-        let mapping = buffer.map()?;
+        let mapping = staging.map()?;
 
         Ok(Self {
             device: device.clone(),
+            fence,
             command_pool,
-            command_buffers: transfer_cbs,
+            command_buffer,
             allocator: BumpAllocator::new(
-                PAGE_SIZE as _,
+                STAGING_SIZE as _,
                 device
                     .physical_device()
                     .properties
@@ -121,13 +96,8 @@ impl Staging {
             upload_buffers: Default::default(),
             upload_images: Default::default(),
             mapping,
-            buffer,
-            semaphores,
-            render_semaphores,
-            last: None,
-            current: 0,
-            pending_buffer_barriers: Default::default(),
-            pending_image_barriers: Default::default(),
+            staging,
+            semaphore,
         })
     }
 
@@ -141,7 +111,7 @@ impl Staging {
         loop {
             let data_len = mem::size_of_val(data);
             let pushed = self.try_push_buffer(
-                target.as_vulkan(),
+                target.raw,
                 offset + current_offset,
                 data_len - current_offset,
                 unsafe { (data.as_ptr() as *const u8).add(current_offset) },
@@ -175,26 +145,21 @@ impl Staging {
         data: &ImageSubresourceData,
     ) -> Result<bool, Error> {
         let size = data.data.len();
-        if size > PAGE_SIZE {
+        if size > STAGING_SIZE {
             return Err(Error::ImageTooBig);
         }
-        if let Some(allocated_offset) = self.allocator.allocate(size) {
-            let buffer_offset = PAGE_SIZE * self.current + allocated_offset;
+        if let Some(offset) = self.allocator.allocate(size) {
             unsafe {
-                copy_nonoverlapping(
-                    data.data.as_ptr(),
-                    self.mapping.as_ptr().add(buffer_offset),
-                    size,
-                )
+                copy_nonoverlapping(data.data.as_ptr(), self.mapping.as_ptr().add(offset), size)
             };
-            let dims = target.desc().dims;
+            let dims = target.desc.dims;
             let op = vk::BufferImageCopy::default()
                 .image_extent(vk::Extent3D {
                     width: dims[0] >> mip,
                     height: dims[1] >> mip,
                     depth: 1,
                 })
-                .buffer_offset(buffer_offset as _)
+                .buffer_offset(offset as _)
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_subresource(vk::ImageSubresourceLayers {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -211,7 +176,7 @@ impl Staging {
             };
 
             self.upload_images
-                .entry(target.as_vulkan())
+                .entry(target.raw)
                 .or_default()
                 .push(ImageUploadRequest(op, range));
 
@@ -229,11 +194,10 @@ impl Staging {
         data: *const u8,
     ) -> Result<usize, Error> {
         let can_send = self.allocator.validate(bytes as _);
-        let allocated = self.allocator.allocate(bytes as _).unwrap(); // Already checked that allocator can allocate enough space
-        let src_offset = PAGE_SIZE * self.current + allocated;
-        unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(src_offset), can_send) };
+        let dst_offset = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
+        unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(dst_offset), can_send) };
         let op = vk::BufferCopy::default()
-            .src_offset(src_offset as _)
+            .src_offset(dst_offset as _)
             .dst_offset(offset as _)
             .size(can_send as _);
         self.upload_buffers.entry(target).or_default().push(op);
@@ -241,122 +205,62 @@ impl Staging {
         Ok(can_send)
     }
 
-    pub fn upload(&mut self) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
+    pub fn upload(&mut self) -> Result<Option<vk::Semaphore>, Error> {
         self.upload_impl(true)
     }
 
-    fn upload_impl(
-        &mut self,
-        client_will_wait: bool,
-    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
-        puffin::profile_function!();
-        let (cb, fence) = self.command_buffers[self.current];
-
+    fn upload_impl(&mut self, need_semaphore: bool) -> Result<Option<vk::Semaphore>, Error> {
+        if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
+            return Ok(None);
+        }
         unsafe {
             self.device
-                .get()
-                .wait_for_fences(&[fence], true, u64::MAX)?;
-            self.device.get().reset_fences(&[fence])?;
+                .raw
+                .wait_for_fences(&[self.fence], true, u64::MAX)?;
+            self.device.raw.reset_fences(&[self.fence])?;
             self.device
-                .get()
-                .reset_command_buffer(cb, vk::CommandBufferResetFlags::empty())?;
-            self.device
-                .get()
-                .begin_command_buffer(cb, &vk::CommandBufferBeginInfo::default())?;
-        }
-        self.barrier_before(cb);
-        self.copy_buffers(cb);
-        self.copy_images(cb);
-        self.defer_barrier_after();
-        unsafe { self.device.get().end_command_buffer(cb) }?;
-
-        let semaphore = self.semaphores[self.current];
-        let render_semaphore = self.render_semaphores[self.current];
-        let mut triggers = ArrayVec::<_, 2>::new();
-        triggers.push(semaphore);
-        if client_will_wait {
-            // fixme?
-            triggers.push(render_semaphore);
-        }
-
-        if let Some(last) = self.last {
-            self.device.submit(
-                self.command_buffers[self.current],
-                &[(self.semaphores[last], vk::PipelineStageFlags::TRANSFER)],
-                &triggers,
+                .raw
+                .reset_command_pool(self.command_pool, vk::CommandPoolResetFlags::empty())?;
+            self.device.raw.begin_command_buffer(
+                self.command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-        } else {
-            self.device
-                .submit(self.command_buffers[self.current], &[], &triggers)?;
+            self.barrier_before();
+            self.copy_buffers();
+            self.copy_images();
+            self.barriers_after();
+            self.device.raw.end_command_buffer(self.command_buffer)?;
         }
-
-        self.last = Some(self.current);
-        self.current += 1;
-        self.current %= PAGE_COUNT;
         self.allocator.reset();
         self.upload_buffers.clear();
         self.upload_images.clear();
-
-        Ok((render_semaphore, vk::PipelineStageFlags::TRANSFER))
+        if need_semaphore {
+            self.device.submit(
+                &[self.command_buffer],
+                self.fence,
+                &[],
+                &[(self.semaphore, vk::PipelineStageFlags2::DRAW_INDIRECT)],
+            )?;
+            Ok(Some(self.semaphore))
+        } else {
+            self.device
+                .submit(&[self.command_buffer], self.fence, &[], &[])?;
+            Ok(None)
+        }
     }
 
-    pub fn execute_pending_barriers(&mut self, device: &RenderDevice, cb: vk::CommandBuffer) {
-        let image_barriers = self
-            .pending_image_barriers
-            .drain(..)
-            .map(|x| {
-                vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image(x.0)
-                    .subresource_range(x.1)
-            })
-            .collect::<Vec<_>>();
-        let buffer_barriers = self
-            .pending_buffer_barriers
-            .drain(..)
-            .map(|x| {
-                vk::BufferMemoryBarrier::default()
-                    .buffer(x.0)
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::INDEX_READ)
-                    .offset(x.1)
-                    .size(x.2)
-            })
-            .collect::<Vec<_>>();
-        unsafe {
-            self.device.get().cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &[],
-                &image_barriers,
-            );
-            self.device.get().cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::VERTEX_INPUT,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &buffer_barriers,
-                &[],
-            );
-        };
-    }
-
-    fn barrier_before(&self, cb: vk::CommandBuffer) {
+    fn barriers_after(&mut self) {
         let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::BufferMemoryBarrier::default()
+                let barrier = vk::BufferMemoryBarrier2::default()
                     .buffer(*x.0)
-                    .src_access_mask(vk::AccessFlags::UNIFORM_READ)
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags2::INDIRECT_COMMAND_READ)
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::DRAW_INDIRECT)
                     .offset(op.dst_offset)
                     .size(op.size);
                 buffer_barriers.push(barrier);
@@ -366,9 +270,54 @@ impl Staging {
         let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::SHADER_READ)
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                let barrier = vk::ImageMemoryBarrier2::default()
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image(*x.0)
+                    .subresource_range(op.1);
+                image_barriers.push(barrier);
+            })
+        });
+        unsafe {
+            self.device.raw.cmd_pipeline_barrier2(
+                self.command_buffer,
+                &vk::DependencyInfo::default()
+                    .buffer_memory_barriers(&buffer_barriers)
+                    .image_memory_barriers(&image_barriers)
+                    .dependency_flags(vk::DependencyFlags::BY_REGION),
+            );
+        };
+    }
+
+    fn barrier_before(&self) {
+        let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
+        let mut buffer_barriers = Vec::with_capacity(size);
+        self.upload_buffers.iter().for_each(|x| {
+            x.1.iter().for_each(|op| {
+                let barrier = vk::BufferMemoryBarrier2::default()
+                    .buffer(*x.0)
+                    .src_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .offset(op.dst_offset)
+                    .size(op.size);
+                buffer_barriers.push(barrier);
+            })
+        });
+        let size = self.upload_images.iter().map(|x| x.1.len()).sum::<usize>();
+        let mut image_barriers = Vec::with_capacity(size);
+        self.upload_images.iter().for_each(|x| {
+            x.1.iter().for_each(|op| {
+                let barrier = vk::ImageMemoryBarrier2::default()
+                    .src_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .image(*x.0)
@@ -377,56 +326,31 @@ impl Staging {
             })
         });
         unsafe {
-            self.device.get().cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::VERTEX_INPUT,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &buffer_barriers,
-                &[],
+            self.device.raw.cmd_pipeline_barrier2(
+                self.command_buffer,
+                &vk::DependencyInfo::default()
+                    .buffer_memory_barriers(&buffer_barriers)
+                    .image_memory_barriers(&image_barriers)
+                    .dependency_flags(vk::DependencyFlags::BY_REGION),
             );
-            self.device.get().cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &[],
-                &image_barriers,
-            )
         }
     }
 
-    fn defer_barrier_after(&mut self) {
-        self.upload_buffers.iter().for_each(|x| {
-            x.1.iter().for_each(|op| {
-                self.pending_buffer_barriers
-                    .push((*x.0, op.dst_offset, op.size));
-            })
-        });
-        self.upload_images.iter().for_each(|x| {
-            x.1.iter().for_each(|op| {
-                self.pending_image_barriers.push((*x.0, op.1));
-            })
-        });
-    }
-
-    fn copy_buffers(&self, cb: vk::CommandBuffer) {
+    fn copy_buffers(&self) {
         self.upload_buffers.iter().for_each(|x| unsafe {
             self.device
-                .get()
-                .cmd_copy_buffer(cb, self.buffer.as_vulkan(), *x.0, x.1)
+                .raw
+                .cmd_copy_buffer(self.command_buffer, self.staging.raw, *x.0, x.1)
         })
     }
 
-    fn copy_images(&self, cb: vk::CommandBuffer) {
+    fn copy_images(&self) {
         self.upload_images.iter().for_each(|x| {
             let regions = x.1.iter().map(|x| x.0).collect::<Vec<_>>();
             unsafe {
-                self.device.get().cmd_copy_buffer_to_image(
-                    cb,
-                    self.buffer.as_vulkan(),
+                self.device.raw.cmd_copy_buffer_to_image(
+                    self.command_buffer,
+                    self.staging.raw,
                     *x.0,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &regions,
@@ -440,25 +364,12 @@ impl Drop for Staging {
     fn drop(&mut self) {
         self.upload_impl(false).unwrap();
         unsafe {
-            self.device.get().device_wait_idle().unwrap();
+            self.device.raw.device_wait_idle().unwrap();
             self.device
-                .get()
+                .raw
                 .destroy_command_pool(self.command_pool, None);
-        }
-
-        self.command_buffers
-            .iter()
-            .for_each(|(_, fence)| unsafe { self.device.get().destroy_fence(*fence, None) });
-
-        for index in 0..PAGE_COUNT {
-            unsafe {
-                self.device
-                    .get()
-                    .destroy_semaphore(self.semaphores[index], None);
-                self.device
-                    .get()
-                    .destroy_semaphore(self.render_semaphores[index], None);
-            }
+            self.device.raw.destroy_semaphore(self.semaphore, None);
+            self.device.raw.destroy_fence(self.fence, None);
         }
     }
 }

@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{AsVulkan, RenderDevice};
+use crate::RenderDevice;
 
 use super::{error::Error, DropList, GpuMemory};
 
@@ -54,7 +54,7 @@ impl ImageViewDesc {
 
     fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
-            .format(self.format.unwrap_or(image.desc.format).into())
+            .format(self.format.unwrap_or(image.desc.format))
             .components(vk::ComponentMapping {
                 r: vk::ComponentSwizzle::R,
                 g: vk::ComponentSwizzle::G,
@@ -263,19 +263,20 @@ impl<'a> ImageCreateDesc<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageSubresource {
+    All,
+    Level(usize),
+    LevelAndMip(usize, usize),
+}
+
 #[derive(Debug)]
 pub struct Image {
     device: Arc<RenderDevice>,
-    raw: vk::Image,
-    desc: ImageDesc,
+    pub raw: vk::Image,
+    pub desc: ImageDesc,
     memory: Option<GpuMemory>,
     views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
-}
-
-impl AsVulkan<vk::Image> for Image {
-    fn as_vulkan(&self) -> vk::Image {
-        self.raw
-    }
 }
 
 impl Drop for Image {
@@ -286,11 +287,20 @@ impl Drop for Image {
                 drop_list.drop_image(self.raw);
                 self.clear_views_impl(drop_list);
             })
+        } else {
+            self.clear_views();
         }
     }
 }
 
+/// Wraps vulkan image
+///
+/// Keep all resources, everything will be freed as soon as image is dropped.
+/// Keeps tracking for associated image views.
 impl Image {
+    /// Wraps external image
+    ///
+    /// Image won't be destroyed when instance is dropped. But views will be freed.
     pub fn external(
         device: &Arc<RenderDevice>,
         image: vk::Image,
@@ -309,12 +319,16 @@ impl Image {
         }
     }
 
+    /// Creates new image
+    ///
+    /// Including memory allocation. All resources will be freed when instance
+    /// is dropped.    
     pub fn new(device: &Arc<RenderDevice>, desc: ImageCreateDesc) -> Result<Self, Error> {
-        let image = unsafe { device.get().create_image(&desc.build(), None) }?;
+        let image = unsafe { device.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             device.set_object_name(image, name);
         }
-        let mut requirements = unsafe { device.get().get_image_memory_requirements(image) };
+        let mut requirements = unsafe { device.raw.get_image_memory_requirements(image) };
         // Workaround - gpu_alloc returns wrong offset when size < aligment.
         requirements.size = requirements.size.max(requirements.alignment);
         let memory = device.allocate_memory(
@@ -324,7 +338,7 @@ impl Image {
         )?;
         unsafe {
             device
-                .get()
+                .raw
                 .bind_image_memory(image, *memory.memory(), memory.offset())
         }?;
 
@@ -351,6 +365,9 @@ impl Image {
             .for_each(|(_, view)| drop_list.drop_view(view))
     }
 
+    /// Gets or creates image view
+    ///
+    /// Image views are managed by image itself.
     pub fn view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, Error> {
         let views = self.views.upgradable_read();
         if let Some(view) = views.get(&desc) {
@@ -367,6 +384,7 @@ impl Image {
         }
     }
 
+    /// Clear all views created for this image
     pub fn clear_views(&self) {
         self.device.with_drop_list(|drop_list| {
             self.clear_views_impl(drop_list);
@@ -375,11 +393,27 @@ impl Image {
 
     fn create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, Error> {
         let create_info = desc.build(self);
-        let view = unsafe { self.device.get().create_image_view(&create_info, None) }?;
+        let view = unsafe { self.device.raw.create_image_view(&create_info, None) }?;
         Ok(view)
     }
 
-    pub fn desc(&self) -> ImageDesc {
-        self.desc
+    pub fn subresource(
+        &self,
+        aspect: vk::ImageAspectFlags,
+        range: ImageSubresource,
+    ) -> vk::ImageSubresourceRange {
+        match range {
+            ImageSubresource::All => vk::ImageSubresourceRange::default().aspect_mask(aspect),
+            ImageSubresource::Level(level) => vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect)
+                .base_array_layer(level as _)
+                .layer_count(1),
+            ImageSubresource::LevelAndMip(level, mip) => vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect)
+                .base_array_layer(level as _)
+                .level_count(1)
+                .base_mip_level(mip as _)
+                .level_count(1),
+        }
     }
 }

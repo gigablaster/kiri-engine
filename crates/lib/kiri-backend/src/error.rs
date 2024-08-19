@@ -38,16 +38,12 @@ pub enum Error {
     NoSuitableQueue,
     #[error("Failed to map memory")]
     MemoryMapFailed,
-    #[error("Array bindings aren't supported")]
-    ArrayBindingsArentSupported,
-    #[error("Image too big")]
-    ImageTooBig,
     #[error("Memory isn't allocated")]
     MemoryNotAllocated,
-    #[error("Descriptor pool fragmentation")]
-    Fragmentation,
     #[error("Sampler not found: {0:?}")]
     SamplerNotFound(SamplerDesc),
+    #[error("Shader reflection error: {0}")]
+    ShaderReflectionError(rspirv_reflect::ReflectError),
 }
 
 impl From<vk::Result> for Error {
@@ -99,12 +95,8 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     }
 }
 
-impl From<gpu_descriptor::AllocationError> for Error {
-    fn from(value: gpu_descriptor::AllocationError) -> Self {
-        match value {
-            gpu_descriptor::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
-            gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
-            gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
-        }
+impl From<rspirv_reflect::ReflectError> for Error {
+    fn from(value: rspirv_reflect::ReflectError) -> Self {
+        Self::ShaderReflectionError(value)
     }
 }

@@ -25,7 +25,65 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{AsVulkan, Error, Program, RenderDevice, RenderPass};
+use crate::{Error, Image, ImageViewDesc, Program, RenderDevice};
+
+#[derive(Debug, Clone, Copy)]
+pub enum AttachmentClearValue {
+    None,
+    Color([f32; 4]),
+    DepthStencil(f32, u32),
+}
+
+impl From<AttachmentClearValue> for vk::ClearValue {
+    fn from(value: AttachmentClearValue) -> Self {
+        match value {
+            AttachmentClearValue::Color(color) => vk::ClearValue {
+                color: vk::ClearColorValue { float32: color },
+            },
+            AttachmentClearValue::DepthStencil(depth, stencil) => vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
+            },
+            AttachmentClearValue::None => vk::ClearValue::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RenderAttachmentLayoutDesc<'a> {
+    pub color: &'a [vk::Format],
+    pub depth: Option<vk::Format>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderAttachmentDesc<'a> {
+    pub image: &'a Image,
+    pub layout: vk::ImageLayout,
+    pub load: vk::AttachmentLoadOp,
+    pub store: vk::AttachmentStoreOp,
+    pub clear: AttachmentClearValue,
+}
+
+impl<'a> RenderAttachmentLayoutDesc<'a> {
+    fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
+        let mut info =
+            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(self.color);
+        if let Some(depth) = self.depth {
+            info = info.depth_attachment_format(depth);
+        }
+        info
+    }
+}
+
+impl<'a> RenderAttachmentDesc<'a> {
+    fn build(self, aspect: vk::ImageAspectFlags) -> Result<vk::RenderingAttachmentInfo<'a>, Error> {
+        Ok(vk::RenderingAttachmentInfo::default()
+            .clear_value(self.clear.into())
+            .image_layout(self.layout)
+            .image_view(self.image.view(ImageViewDesc::new(aspect))?)
+            .load_op(self.load)
+            .store_op(self.store))
+    }
+}
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PipelineBlendDesc {
@@ -53,40 +111,6 @@ pub struct RasterPipelineCreateDesc {
     pub depth_test: Option<vk::CompareOp>,
     /// Depth writing
     pub depth_write: bool,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexAttrubuteDesc {
-    pub format: vk::Format,
-    pub offset: usize,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexStreamLayoutDesc<'a> {
-    pub streams: &'a [InputVertexAttrubuteDesc],
-    pub stride: usize,
-}
-
-pub trait PipelineVertex {
-    fn layout() -> &'static [InputVertexStreamLayoutDesc<'static>];
-}
-
-impl<'a> InputVertexStreamLayoutDesc<'a> {
-    fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
-        let attributes = self
-            .streams
-            .iter()
-            .enumerate()
-            .map(|(index, attr)| vk::VertexInputAttributeDescription {
-                location: index as u32,
-                binding: binding as u32,
-                format: attr.format.into(),
-                offset: attr.offset as u32,
-            })
-            .collect();
-
-        (self.stride as u32, attributes)
-    }
 }
 
 impl Default for RasterPipelineCreateDesc {
@@ -174,176 +198,100 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-#[derive(Debug)]
-pub struct Pipeline {
-    device: Arc<RenderDevice>,
-    _program: Arc<Program>,
-    raw: vk::Pipeline,
-}
-
-#[derive(Debug)]
-pub struct RasterPipeline {
-    base: Pipeline,
-    _render_pass: Arc<RenderPass>,
-}
-
-impl Drop for Pipeline {
-    fn drop(&mut self) {
-        unsafe { self.device.get().destroy_pipeline(self.raw, None) }
-    }
-}
-
-impl AsVulkan<vk::Pipeline> for Pipeline {
-    fn as_vulkan(&self) -> vk::Pipeline {
-        self.raw
-    }
-}
-
-impl AsVulkan<vk::Pipeline> for RasterPipeline {
-    fn as_vulkan(&self) -> vk::Pipeline {
-        self.base.as_vulkan()
-    }
-}
-
-impl Pipeline {
-    pub fn raster(
-        device: &Arc<RenderDevice>,
-        cache: vk::PipelineCache,
-        input: &[InputVertexStreamLayoutDesc],
-        program: &Arc<Program>,
-        render_pass: &Arc<RenderPass>,
-        subpass: usize,
-        desc: RasterPipelineCreateDesc,
-    ) -> Result<RasterPipeline, Error> {
-        let shader_create_info = program
-            .shaders()
-            .iter()
-            .map(|shader| {
-                vk::PipelineShaderStageCreateInfo::default()
-                    .stage(shader.stage())
-                    .module(shader.as_vulkan())
-                    .name(shader.entry())
-            })
-            .collect::<Vec<_>>();
-
-        let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
-            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-            .primitive_restart_enable(false);
-
-        let streams = input
-            .iter()
-            .enumerate()
-            .map(|(index, stream)| stream.build(index))
-            .collect::<Vec<_>>();
-
-        let strides = streams
-            .iter()
-            .map(|(stride, _)| stride)
-            .copied()
-            .collect::<Vec<_>>();
-        let attributes = streams
-            .iter()
-            .flat_map(|(_, attributes)| attributes)
-            .copied()
-            .collect::<Vec<_>>();
-        let vertex_binding_desc = strides
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                vk::VertexInputBindingDescription::default()
-                    .stride(strides[index] as _)
-                    .binding(attributes[index].binding)
-                    .input_rate(vk::VertexInputRate::VERTEX)
-            })
-            .collect::<Vec<_>>();
-
-        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
-            .vertex_binding_descriptions(&vertex_binding_desc)
-            .vertex_attribute_descriptions(&attributes);
-
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_create_info =
-            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-
-        let viewport_state = vk::PipelineViewportStateCreateInfo::default();
-
-        let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::default()
-            .depth_bias_enable(false)
-            .rasterizer_discard_enable(false)
-            .polygon_mode(vk::PolygonMode::FILL)
-            .line_width(1.0)
-            .depth_bias_clamp(0.0)
-            .depth_bias_slope_factor(0.0)
-            .cull_mode(desc.cull.unwrap_or(vk::CullModeFlags::NONE))
-            .front_face(vk::FrontFace::CLOCKWISE);
-
-        let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
-            .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
-            .min_sample_shading(1.0)
-            .alpha_to_coverage_enable(false)
-            .alpha_to_one_enable(false);
-
-        let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-            .stencil_test_enable(false)
-            .depth_write_enable(desc.depth_write);
-
-        if let Some(depth_compare) = desc.depth_test {
-            depthstencil_state = depthstencil_state
-                .depth_test_enable(true)
-                .depth_compare_op(depth_compare);
-        }
-
-        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA);
-
-        let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
-            color_blend_attachment
-                .blend_enable(true)
-                .src_color_blend_factor(color.src)
-                .dst_color_blend_factor(color.dst)
-                .color_blend_op(color.op)
-                .src_alpha_blend_factor(alpha.src)
-                .dst_alpha_blend_factor(alpha.dst)
-                .alpha_blend_op(alpha.op)
-        } else {
-            color_blend_attachment.blend_enable(false)
-        };
-        let blending_state = vk::PipelineColorBlendStateCreateInfo::default()
-            .attachments(slice::from_ref(&color_blend_attachment))
-            .logic_op_enable(false);
-
-        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
-            .layout(program.as_vulkan())
-            .stages(&shader_create_info)
-            .vertex_input_state(&vertex_input)
-            .dynamic_state(&dynamic_state_create_info)
-            .viewport_state(&viewport_state)
-            .multisample_state(&multisample_state)
-            .color_blend_state(&blending_state)
-            .input_assembly_state(&assembly_state_create_info)
-            .rasterization_state(&rasterizer_state)
-            .depth_stencil_state(&depthstencil_state)
-            .render_pass(render_pass.as_vulkan())
-            .subpass(subpass as _);
-
-        let pipeline = unsafe {
-            device.get().create_graphics_pipelines(
-                cache,
-                slice::from_ref(&pipeline_create_info),
-                None,
-            )
-        }?[0];
-
-        Ok(RasterPipeline {
-            base: Pipeline {
-                device: device.clone(),
-                _program: program.clone(),
-                raw: pipeline,
-            },
-            _render_pass: render_pass.clone(),
+pub fn compile_raster_pipeline<'a>(
+    device: &Arc<RenderDevice>,
+    cache: vk::PipelineCache,
+    program: &Arc<Program>,
+    layout: RenderAttachmentLayoutDesc<'a>,
+    desc: RasterPipelineCreateDesc,
+) -> Result<vk::Pipeline, Error> {
+    let shader_create_info = program
+        .shaders
+        .iter()
+        .map(|(shader, stage, entry)| {
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(*stage)
+                .module(*shader)
+                .name(entry)
         })
+        .collect::<Vec<_>>();
+
+    let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state_create_info =
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default();
+
+    let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::default()
+        .depth_bias_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .depth_bias_clamp(0.0)
+        .depth_bias_slope_factor(0.0)
+        .cull_mode(desc.cull.unwrap_or(vk::CullModeFlags::NONE))
+        .front_face(vk::FrontFace::CLOCKWISE);
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+        .min_sample_shading(1.0)
+        .alpha_to_coverage_enable(false)
+        .alpha_to_one_enable(false);
+
+    let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
+        .stencil_test_enable(false)
+        .depth_write_enable(desc.depth_write);
+
+    if let Some(depth_compare) = desc.depth_test {
+        depthstencil_state = depthstencil_state
+            .depth_test_enable(true)
+            .depth_compare_op(depth_compare);
     }
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+        .color_write_mask(vk::ColorComponentFlags::RGBA);
+
+    let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
+        color_blend_attachment
+            .blend_enable(true)
+            .src_color_blend_factor(color.src)
+            .dst_color_blend_factor(color.dst)
+            .color_blend_op(color.op)
+            .src_alpha_blend_factor(alpha.src)
+            .dst_alpha_blend_factor(alpha.dst)
+            .alpha_blend_op(alpha.op)
+    } else {
+        color_blend_attachment.blend_enable(false)
+    };
+    let blending_state = vk::PipelineColorBlendStateCreateInfo::default()
+        .attachments(slice::from_ref(&color_blend_attachment))
+        .logic_op_enable(false);
+
+    let mut rendering_info = layout.build();
+
+    let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
+        .stages(&shader_create_info)
+        .dynamic_state(&dynamic_state_create_info)
+        .viewport_state(&viewport_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&blending_state)
+        .input_assembly_state(&assembly_state_create_info)
+        .rasterization_state(&rasterizer_state)
+        .depth_stencil_state(&depthstencil_state)
+        .push_next(&mut rendering_info);
+
+    let pipeline = unsafe {
+        device
+            .raw
+            .create_graphics_pipelines(cache, slice::from_ref(&pipeline_create_info), None)
+    }?[0];
+
+    Ok(pipeline)
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";
@@ -483,13 +431,13 @@ pub fn load_or_create_pipeline_cache<P: AsRef<Path>>(
         vk::PipelineCacheCreateInfo::default()
     };
 
-    let cache = match unsafe { device.get().create_pipeline_cache(&create_info, None) } {
+    let cache = match unsafe { device.raw.create_pipeline_cache(&create_info, None) } {
         Ok(cache) => cache,
         Err(_) => {
             // Failed with initial data - so create empty cache.
             warn!("Failed to load pipeline cache. Create new one.");
             let create_info = vk::PipelineCacheCreateInfo::default();
-            unsafe { device.get().create_pipeline_cache(&create_info, None) }
+            unsafe { device.raw.create_pipeline_cache(&create_info, None) }
                 .map_err(|err| io::Error::other(err.to_string()))?
         }
     };
@@ -503,7 +451,7 @@ pub fn save_pipeline_cache<P: AsRef<Path>>(
     path: P,
 ) -> io::Result<()> {
     info!("Saving pipeline cache to {:?}", path.as_ref());
-    let data = unsafe { device.get().get_pipeline_cache_data(cache) }.map_err(|err| {
+    let data = unsafe { device.raw.get_pipeline_cache_data(cache) }.map_err(|err| {
         io::Error::new(
             io::ErrorKind::Other,
             format!("Failed to get pipeline cache data from device: {:?}", err),

@@ -71,13 +71,13 @@ impl Instance {
     pub(super) fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, Error> {
         unsafe {
             Ok(self
-                .get()
+                .raw
                 .enumerate_physical_devices()?
                 .into_iter()
                 .map(|pdevice| {
-                    let properties = self.get().get_physical_device_properties(pdevice);
+                    let properties = self.raw.get_physical_device_properties(pdevice);
                     let queue_families = self
-                        .get()
+                        .raw
                         .get_physical_device_queue_family_properties(pdevice)
                         .into_iter()
                         .enumerate()
@@ -88,7 +88,7 @@ impl Instance {
                         .collect();
 
                     let extension_properties = self
-                        .get()
+                        .raw
                         .enumerate_device_extension_properties(pdevice)
                         .unwrap();
                     let supported_extensions = extension_properties
@@ -121,7 +121,7 @@ impl Instance {
     ) -> Option<vk::Format> {
         formats.iter().find_map(|format| {
             let props = unsafe {
-                self.get()
+                self.raw
                     .get_physical_device_format_properties(pdevice.raw, *format)
             };
             if (tiling == vk::ImageTiling::LINEAR

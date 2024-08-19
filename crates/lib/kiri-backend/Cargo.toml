@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+kiri-common = { path = "../kiri-common" }
 arrayvec = "0.7.4"
 ash = "0.38.0"
 puffin = "0.19.0"
@@ -12,9 +13,8 @@ raw-window-handle = "0.6.2"
 log = "0.4.20"
 gpu-alloc = "0.6.0"
 gpu-alloc-ash = "0.7.0"
-gpu-descriptor = "0.3.0"
-gpu-descriptor-ash = "0.3.0"
 byte-slice-cast = "1.2.2"
 parking_lot = "0.12.3"
 thiserror = "1.0.61"
 byteorder = "1.5.0"
+rspirv-reflect = "0.8.0"

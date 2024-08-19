@@ -18,7 +18,7 @@ use std::{ptr::NonNull, sync::Arc};
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{AsVulkan, Error, RenderDevice};
+use crate::{Error, RenderDevice};
 
 use super::GpuMemory;
 
@@ -28,11 +28,14 @@ pub struct BufferDesc {
     pub usage: vk::BufferUsageFlags,
 }
 
+/// Wraps a vulkan buffer
+///
+/// Tracks it's own resources.
 #[derive(Debug)]
 pub struct Buffer {
     device: Arc<RenderDevice>,
-    raw: vk::Buffer,
-    desc: BufferDesc,
+    pub raw: vk::Buffer,
+    pub desc: BufferDesc,
     memory: Option<GpuMemory>,
 }
 
@@ -43,7 +46,7 @@ pub struct BufferCreateDesc<'a> {
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
-    memory_location: gpu_alloc::UsageFlags,
+    pub memory_location: gpu_alloc::UsageFlags,
 }
 
 impl<'a> BufferCreateDesc<'a> {
@@ -122,6 +125,11 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
+    pub fn indirect_draw(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::INDIRECT_BUFFER;
+        self
+    }
+
     pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
         self.usage = usage;
         self
@@ -143,8 +151,12 @@ impl<'a> BufferCreateDesc<'a> {
     }
 
     fn build(&self) -> vk::BufferCreateInfo {
+        let mut usage = self.usage;
+        if self.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        }
         vk::BufferCreateInfo::default()
-            .usage(self.usage)
+            .usage(usage)
             .size(self.size as _)
     }
 }
@@ -160,20 +172,19 @@ impl Drop for Buffer {
     }
 }
 
-impl AsVulkan<vk::Buffer> for Buffer {
-    fn as_vulkan(&self) -> vk::Buffer {
-        self.raw
-    }
-}
-
 impl Buffer {
     pub fn new(device: &Arc<RenderDevice>, desc: BufferCreateDesc) -> Result<Self, Error> {
-        let buffer = unsafe { device.get().create_buffer(&desc.build(), None) }?;
-        let requirements = unsafe { device.get().get_buffer_memory_requirements(buffer) };
-        let memory = device.allocate_memory(requirements, desc.memory_location, desc.dedicated)?;
+        let mut location = desc.memory_location;
+        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            location |= gpu_alloc::UsageFlags::DEVICE_ADDRESS;
+        }
+        let buffer = unsafe { device.raw.create_buffer(&desc.build(), None) }?;
+        let requirements = unsafe { device.raw.get_buffer_memory_requirements(buffer) };
+
+        let memory = device.allocate_memory(requirements, location, desc.dedicated)?;
         unsafe {
             device
-                .get()
+                .raw
                 .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
         }?;
         if let Some(name) = desc.name {
@@ -193,7 +204,7 @@ impl Buffer {
     pub fn map(&mut self) -> Result<NonNull<u8>, Error> {
         Ok(unsafe {
             self.memory.as_mut().unwrap().map(
-                AshMemoryDevice::wrap(self.device.get()),
+                AshMemoryDevice::wrap(&self.device.raw),
                 0,
                 self.desc.size as _,
             )
@@ -205,11 +216,15 @@ impl Buffer {
             self.memory
                 .as_mut()
                 .unwrap()
-                .unmap(AshMemoryDevice::wrap(self.device.get()))
+                .unmap(AshMemoryDevice::wrap(&self.device.raw))
         };
     }
 
-    pub fn desc(&self) -> &BufferDesc {
-        &self.desc
+    pub fn device_address(&self) -> vk::DeviceAddress {
+        unsafe {
+            self.device
+                .raw
+                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(self.raw))
+        }
     }
 }

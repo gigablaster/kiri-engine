@@ -20,9 +20,7 @@ use std::{
     time::SystemTime,
 };
 
-use ash::vk;
 use gltf::mesh::Mode;
-use kiri_backend::{InputVertexAttrubuteDesc, InputVertexStreamLayoutDesc, PipelineVertex};
 use normalize_path::NormalizePath;
 use siphasher::sip::SipHasher;
 use speedy::{Readable, Writable};
@@ -83,38 +81,6 @@ pub struct StaticMeshVertex {
     pub uv2: [u16; 2],
 }
 
-const STATIC_MESH_INPUT_LAYOUT: &[InputVertexStreamLayoutDesc] = &[InputVertexStreamLayoutDesc {
-    streams: &[
-        InputVertexAttrubuteDesc {
-            format: vk::Format::R16G16B16_UNORM,
-            offset: 0,
-        },
-        InputVertexAttrubuteDesc {
-            format: vk::Format::R16G16_UNORM,
-            offset: 8,
-        },
-        InputVertexAttrubuteDesc {
-            format: vk::Format::R16G16_UNORM,
-            offset: 12,
-        },
-        InputVertexAttrubuteDesc {
-            format: vk::Format::R16G16_UNORM,
-            offset: 16,
-        },
-        InputVertexAttrubuteDesc {
-            format: vk::Format::R16G16_UNORM,
-            offset: 20,
-        },
-    ],
-    stride: 24,
-}];
-
-impl PipelineVertex for StaticMeshVertex {
-    fn layout() -> &'static [InputVertexStreamLayoutDesc<'static>] {
-        STATIC_MESH_INPUT_LAYOUT
-    }
-}
-
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 pub enum MeshMaterialBlend {
     Opaque,
@@ -124,7 +90,11 @@ pub enum MeshMaterialBlend {
 
 #[derive(Debug, Clone, Readable, Writable)]
 pub struct MeshMaterialAsset {
-    pub images: HashMap<String, (AssetReference, ImageAssetType)>,
+    pub base_color: AssetReference,
+    pub normals: AssetReference,
+    pub metallic_roughness: AssetReference,
+    pub occlusion: AssetReference,
+    pub emissive: AssetReference,
     pub emissive_power: f32,
     pub blend: MeshMaterialBlend,
 }
@@ -327,19 +297,13 @@ fn process_material(
         )
     };
     MeshMaterialAsset {
-        images: [
-            ("base_color".into(), (base_color, ImageAssetType::Color)),
-            ("normals".into(), (normals, ImageAssetType::Normal)),
-            (
-                "metallic_roughness".into(),
-                (metallic_roughness, ImageAssetType::MetallicRoughness),
-            ),
-            ("occlusion".into(), (occlusion, ImageAssetType::Occlusion)),
-            ("emissive".into(), (emissive, ImageAssetType::Emissive)),
-        ]
-        .into(),
         emissive_power: material.emissive_strength().unwrap_or(1.0),
         blend: process_blend(&material),
+        base_color,
+        normals,
+        metallic_roughness,
+        occlusion,
+        emissive,
     }
 }
 

@@ -25,14 +25,10 @@ mod physical_device;
 mod pipeline;
 mod program;
 mod render_device;
-mod render_pass;
-// mod staging;
 mod swapchain;
 
 use ash::vk::{self, Handle};
 pub use buffer::*;
-// pub use descriptors::*;
-// pub use draw_stream::*;
 use drop_list::*;
 pub use error::*;
 pub use frame::*;
@@ -42,39 +38,7 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
 pub use render_device::*;
-pub use render_pass::*;
 pub use swapchain::*;
 
 type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
-pub type GpuDescriptor = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-pub type GpuDescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
-
-pub trait AsVulkan<T: Handle> {
-    fn as_vulkan(&self) -> T;
-}
-
-impl AsVulkan<vk::Buffer> for vk::Buffer {
-    fn as_vulkan(&self) -> vk::Buffer {
-        *self
-    }
-}
-
-impl AsVulkan<vk::Image> for vk::Image {
-    fn as_vulkan(&self) -> vk::Image {
-        *self
-    }
-}
-
-impl AsVulkan<vk::RenderPass> for vk::RenderPass {
-    fn as_vulkan(&self) -> vk::RenderPass {
-        *self
-    }
-}
-
-impl AsVulkan<vk::Pipeline> for vk::Pipeline {
-    fn as_vulkan(&self) -> vk::Pipeline {
-        *self
-    }
-}

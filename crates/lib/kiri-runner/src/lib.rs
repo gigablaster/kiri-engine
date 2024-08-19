@@ -15,11 +15,12 @@
 
 mod runner;
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
-use kiri::{RenderTargetManager, ResourceManager};
-use kiri_backend::{RenderContext, RenderPassHandle, RenderPassLayout};
+use kiri::ResourceManager;
+use kiri_backend::Image;
 use kiri_common::GameTime;
+use kiri_gfx::{RenderContext, BindlessManager};
 pub use runner::*;
 
 pub enum GameTickState {
@@ -30,14 +31,15 @@ pub enum GameTickState {
 #[derive(Debug, thiserror::Error)]
 pub enum GameError<E: Error> {
     GameFailure(E),
-    GraphicsFailure(kiri_backend::Error),
+    BackendFailure(kiri_backend::Error),
+    GfxError(kiri_gfx::Error),
+    EngineError(kiri::Error),
     LoopError(String),
-    GfxError(kiri::Error),
 }
 
 impl<E: Error> From<kiri_backend::Error> for GameError<E> {
     fn from(value: kiri_backend::Error) -> Self {
-        Self::GraphicsFailure(value)
+        Self::BackendFailure(value)
     }
 }
 
@@ -50,33 +52,28 @@ impl<E: Error> From<String> for GameError<E> {
 impl<E: Error> From<kiri::Error> for GameError<E> {
     fn from(value: kiri::Error) -> Self {
         match value {
-            kiri::Error::BackendError(err) => Self::GraphicsFailure(err),
+            kiri::Error::BackendError(err) => Self::BackendFailure(err),
+            kiri::Error::RendererError(err) => Self::GfxError(err),
+            err => Self::EngineError(err),
+        }
+    }
+}
+
+impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
+    fn from(value: kiri_gfx::Error) -> Self {
+        match value {
+            kiri_gfx::Error::BackendError(err) => Self::BackendFailure(err),
             err => Self::GfxError(err),
         }
     }
 }
 
-pub struct DrawContext<'a, 'b> {
-    resource_manager: &'a ResourceManager,
-    pub render: &'a RenderContext<'a, 'b>,
-    pub targets: &'a RenderTargetManager,
-}
-
-impl<'a, 'b> DrawContext<'a, 'b> {
-    pub fn get_or_create_render_pass(
-        &self,
-        layout: RenderPassLayout,
-    ) -> Result<RenderPassHandle, kiri_backend::Error> {
-        self.resource_manager.get_or_create_render_pass(layout)
-    }
-}
-
 pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn new(resource_manager: &ResourceManager) -> Result<Self, GameError<E>>;
-    fn info() -> (&'static str, &'static str, &'static str);
+    fn new(renderer: &Arc<BindlessManager>) -> Result<Self, GameError<E>>;
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn draw(&self, time: GameTime, context: DrawContext) -> Result<(), kiri_backend::Error>;
+    fn render(&self, time: GameTime, context: RenderContext)
+        -> Result<Arc<Image>, kiri_gfx::Error>;
     fn resumed(&mut self) -> Result<(), GameError<E>> {
         Ok(())
     }

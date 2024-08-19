@@ -8,6 +8,7 @@ kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
 kiri = { path = "../kiri" }
 kiri-assets = { path = "../kiri-assets" }
+kiri-gfx = { path = "../kiri-gfx" }
 thiserror = "1.0.61"
 directories = "5.0.1"
 raw-window-handle = "0.6.2"
@@ -17,6 +18,7 @@ winit = "0.30.5"
 
 [dev-dependencies]
 simple_logger = "5.0.0"
+ash = "0.38.0"
 
 [build-dependencies]
 winres = "0.1.3"

@@ -25,10 +25,10 @@ use raw_window_handle::RawDisplayHandle;
 use crate::Error;
 
 pub struct Instance {
-    entry: ash::Entry,
-    raw: ash::Instance,
+    pub entry: ash::Entry,
+    pub raw: ash::Instance,
+    pub display_handle: RawDisplayHandle,
     debug_utils: Option<ash::ext::debug_utils::Instance>,
-    display_handle: RawDisplayHandle,
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
 
@@ -104,7 +104,7 @@ impl Instance {
     }
 
     pub(super) fn vulkan_version() -> u32 {
-        vk::make_api_version(0, 1, 1, 0)
+        vk::make_api_version(0, 1, 3, 0)
     }
 
     fn new(builder: InstanceBuilder) -> Result<Self, Error> {
@@ -202,20 +202,8 @@ impl Instance {
         vk::FALSE
     }
 
-    pub fn get(&self) -> &ash::Instance {
-        &self.raw
-    }
-
-    pub fn entry(&self) -> &ash::Entry {
-        &self.entry
-    }
-
     pub fn debug_utils(&self) -> Option<&ash::ext::debug_utils::Instance> {
         self.debug_utils.as_ref()
-    }
-
-    pub fn display(&self) -> RawDisplayHandle {
-        self.display_handle
     }
 }
 
