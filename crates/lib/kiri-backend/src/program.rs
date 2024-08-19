@@ -37,7 +37,7 @@ pub const DYNAMIC_BINDING_SLOT: usize = 3;
 pub(super) const MAX_DESCRIPTOR_SETS: usize = 4;
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct DescritproSetSlotDesc<'a> {
+pub struct DescritptorSetSlotDesc<'a> {
     pub slot: usize,
     pub name: &'a str,
     pub ty: vk::DescriptorType,
@@ -46,7 +46,7 @@ pub struct DescritproSetSlotDesc<'a> {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorSetLayoutDesc<'a> {
     pub stage: vk::ShaderStageFlags,
-    pub set: &'a [DescritproSetSlotDesc<'a>],
+    pub set: &'a [DescritptorSetSlotDesc<'a>],
 }
 
 #[derive(Debug)]
@@ -168,7 +168,7 @@ impl DescriptorSetLayout {
 
     fn create_binding<'a>(
         stage: vk::ShaderStageFlags,
-        binding: &'a DescritproSetSlotDesc<'a>,
+        binding: &'a DescritptorSetSlotDesc<'a>,
     ) -> vk::DescriptorSetLayoutBinding<'a> {
         vk::DescriptorSetLayoutBinding::default()
             .binding(binding.slot as _)

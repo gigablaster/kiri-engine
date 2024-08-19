@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::{AsVulkan, RenderDevice};
 
@@ -52,7 +52,7 @@ impl ImageViewDesc {
         }
     }
 
-    pub(super) fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
+    fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
             .format(self.format.unwrap_or(image.desc.format).into())
             .components(vk::ComponentMapping {
