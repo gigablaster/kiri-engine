@@ -13,14 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io;
-
 use ash::vk;
 use thiserror::Error;
 
-use crate::{BufferHandle, ImageHandle, ProgramHandle};
-
-use super::{BindGroupHandle, DrawStreamError, PipelineHandle, RenderPassHandle};
+use crate::SamplerDesc;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -42,40 +38,16 @@ pub enum Error {
     NoSuitableQueue,
     #[error("Failed to map memory")]
     MemoryMapFailed,
-    #[error("IO error: {0}")]
-    Io(io::Error),
     #[error("Array bindings aren't supported")]
     ArrayBindingsArentSupported,
-    #[error("Image handle {0} isn't valid")]
-    InvalidImageHandle(ImageHandle),
-    #[error("Buffer handle {0} isn't valid")]
-    InvalidBufferHandle(BufferHandle),
-    #[error("Program handle {0:?} isn't valid")]
-    InvalidProgramHandle(ProgramHandle),
-    #[error("Program handle {0:?} isn't valid")]
-    InvalidPipelineHandle(PipelineHandle),
-    #[error("Bind group handle {0:?} isn't valid")]
-    InvalidBindGroupHandle(BindGroupHandle),
-    #[error("Render pass handle {0:?} isn't valid")]
-    InvalidRenderPassHandle(RenderPassHandle),
     #[error("Image too big")]
     ImageTooBig,
     #[error("Memory isn't allocated")]
     MemoryNotAllocated,
-    #[error("Out of temp memory")]
-    OutOfTempMemory,
     #[error("Descriptor pool fragmentation")]
     Fragmentation,
-    #[error("No more space in static uniform buffer")]
-    OutOfUniformBuffer,
-    #[error("Can't find descriptor set {0} for program {1:?}")]
-    NoDescriptorSetInProgram(usize, ProgramHandle),
-    #[error("Bind slot with name {0} doesn't exist")]
-    BindSlotWithNameDoesntExist(String),
-    #[error("Bind slot with index {0} doesn't exist")]
-    BindSlotWithIndexDoesntExist(usize),
-    #[error("Empty slot {1} for bind group {0:?}")]
-    EmptyBindGroupSlot(BindGroupHandle, usize),
+    #[error("Sampler not found: {0:?}")]
+    SamplerNotFound(SamplerDesc),
 }
 
 impl From<vk::Result> for Error {
@@ -127,45 +99,12 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     }
 }
 
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl From<DrawStreamError> for Error {
-    fn from(value: DrawStreamError) -> Self {
-        match value {
-            DrawStreamError::EndOfStream => {
-                panic!("Internal error, draw stram shouldn't suddenly end")
-            }
-            DrawStreamError::InvalidPipelineHandle(handle) => Error::InvalidPipelineHandle(handle),
-        }
-    }
-}
-
 impl From<gpu_descriptor::AllocationError> for Error {
     fn from(value: gpu_descriptor::AllocationError) -> Self {
         match value {
             gpu_descriptor::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
             gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
             gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
-        }
-    }
-}
-
-pub trait SkipMissingSlots {
-    fn skip_missing_slots(self) -> Self;
-}
-
-impl SkipMissingSlots for Result<(), Error> {
-    fn skip_missing_slots(self) -> Self {
-        match self {
-            Ok(_) => self,
-            Err(err) => match err {
-                Error::BindSlotWithNameDoesntExist(_) => Ok(()),
-                _ => Err(err),
-            },
         }
     }
 }

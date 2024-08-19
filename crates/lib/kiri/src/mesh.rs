@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use kiri_assets::NodeIndex;
-use kiri_backend::{BindGroupHandle, BufferSlice, ImageHandle};
+use kiri_backend::{DescriptorSetHandle, BufferSlice, ImageHandle};
 
 use crate::StaticMeshHandle;
 
@@ -36,7 +36,7 @@ pub(crate) struct PbrMaterialShaderData {
 
 #[derive(Debug)]
 pub struct RenderMeshMaterial {
-    pub bind_group: BindGroupHandle,
+    pub bind_group: DescriptorSetHandle,
     pub images: Vec<ImageHandle>,
 }
 

@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-kiri-common = { path = "../kiri-common" }
 arrayvec = "0.7.4"
 ash = "0.38.0"
 puffin = "0.19.0"
@@ -17,12 +16,5 @@ gpu-descriptor = "0.3.0"
 gpu-descriptor-ash = "0.3.0"
 byte-slice-cast = "1.2.2"
 parking_lot = "0.12.3"
-bytes = "1.6.0"
-glam = "0.28.0"
 thiserror = "1.0.61"
 byteorder = "1.5.0"
-uuid = "1.9.1"
-directories = "5.0.1"
-bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
-speedy = { version = "0.8.7", features = ["speedy-derive", "uuid"] }
-bitflags = "2.6.0"

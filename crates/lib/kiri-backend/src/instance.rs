@@ -25,11 +25,10 @@ use raw_window_handle::RawDisplayHandle;
 use crate::Error;
 
 pub struct Instance {
-    pub(crate) entry: ash::Entry,
-    pub(crate) raw: ash::Instance,
-    pub(crate) debug_utils: Option<ash::ext::debug_utils::Instance>,
-    pub(crate) display_handle: RawDisplayHandle,
-    pub(crate) title: [String; 3],
+    entry: ash::Entry,
+    raw: ash::Instance,
+    debug_utils: Option<ash::ext::debug_utils::Instance>,
+    display_handle: RawDisplayHandle,
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
 
@@ -41,17 +40,15 @@ pub struct InstanceBuilder {
     pub display_handle: RawDisplayHandle,
     pub debug: bool,
     pub trace: bool,
-    pub title: [String; 3],
 }
 
 impl InstanceBuilder {
-    pub fn new(display_handle: RawDisplayHandle, title: (&str, &str, &str)) -> Self {
+    pub fn new(display_handle: RawDisplayHandle) -> Self {
         Self {
             extensions: Vec::new(),
             display_handle,
             debug: false,
             trace: false,
-            title: [title.0.to_owned(), title.1.to_owned(), title.2.to_owned()],
         }
     }
     pub fn extensions(mut self, extensions: &[&'static CStr]) -> Self {
@@ -106,7 +103,7 @@ impl Instance {
         names
     }
 
-    pub(crate) fn vulkan_version() -> u32 {
+    pub(super) fn vulkan_version() -> u32 {
         vk::make_api_version(0, 1, 1, 0)
     }
 
@@ -164,7 +161,6 @@ impl Instance {
             debug_utils,
             debug_messenger,
             display_handle: builder.display_handle,
-            title: builder.title,
         })
     }
 
@@ -210,8 +206,16 @@ impl Instance {
         &self.raw
     }
 
-    pub fn get_entry(&self) -> &ash::Entry {
+    pub fn entry(&self) -> &ash::Entry {
         &self.entry
+    }
+
+    pub fn debug_utils(&self) -> Option<&ash::ext::debug_utils::Instance> {
+        self.debug_utils.as_ref()
+    }
+
+    pub fn display(&self) -> RawDisplayHandle {
+        self.display_handle
     }
 }
 

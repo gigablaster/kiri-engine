@@ -20,8 +20,9 @@ use std::{
     time::SystemTime,
 };
 
+use ash::vk;
 use gltf::mesh::Mode;
-use kiri_backend::{Format, InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
+use kiri_backend::{InputVertexAttrubuteDesc, InputVertexStreamLayoutDesc, PipelineVertex};
 use normalize_path::NormalizePath;
 use siphasher::sip::SipHasher;
 use speedy::{Readable, Writable};
@@ -82,33 +83,34 @@ pub struct StaticMeshVertex {
     pub uv2: [u16; 2],
 }
 
-const STATIC_MESH_INPUT_LAYOUT: &[InputVertexStreamLayout] = &[InputVertexStreamLayout {
+const STATIC_MESH_INPUT_LAYOUT: &[InputVertexStreamLayoutDesc] = &[InputVertexStreamLayoutDesc {
     streams: &[
-        InputVertexAttrubute {
-            format: Format::RGB16_UNORM,
+        InputVertexAttrubuteDesc {
+            format: vk::Format::R16G16B16_UNORM,
             offset: 0,
         },
-        InputVertexAttrubute {
-            format: Format::RG16_UNORM,
+        InputVertexAttrubuteDesc {
+            format: vk::Format::R16G16_UNORM,
             offset: 8,
         },
-        InputVertexAttrubute {
-            format: Format::RG16_UNORM,
+        InputVertexAttrubuteDesc {
+            format: vk::Format::R16G16_UNORM,
             offset: 12,
         },
-        InputVertexAttrubute {
-            format: Format::RG16_UNORM,
+        InputVertexAttrubuteDesc {
+            format: vk::Format::R16G16_UNORM,
             offset: 16,
         },
-        InputVertexAttrubute {
-            format: Format::RG16_UNORM,
+        InputVertexAttrubuteDesc {
+            format: vk::Format::R16G16_UNORM,
             offset: 20,
         },
     ],
+    stride: 24,
 }];
 
 impl PipelineVertex for StaticMeshVertex {
-    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
+    fn layout() -> &'static [InputVertexStreamLayoutDesc<'static>] {
         STATIC_MESH_INPUT_LAYOUT
     }
 }

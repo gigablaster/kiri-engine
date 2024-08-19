@@ -13,63 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use core::slice;
 use std::{
     collections::HashMap,
-    mem,
-    ptr::{copy_nonoverlapping, NonNull},
     thread::{self, ThreadId},
 };
 
 use ash::vk::{self};
-use kiri_common::BumpAllocator;
 use parking_lot::Mutex;
 
 use crate::Error;
 
-use super::{DropList, GpuAllocator, GpuDescriptorAllocator, PhysicalDevice, Uniforms};
-
-#[derive(Debug)]
-struct TempBuffer {
-    offset: usize,
-    allocator: BumpAllocator,
-    memory: NonNull<u8>,
-}
-
-impl TempBuffer {
-    pub fn new(size: usize, offset: usize, pdevice: &PhysicalDevice, memory: NonNull<u8>) -> Self {
-        Self {
-            offset,
-            allocator: BumpAllocator::new(
-                size,
-                pdevice
-                    .properties
-                    .limits
-                    .min_storage_buffer_offset_alignment as _,
-            ),
-            memory,
-        }
-    }
-
-    pub fn push(&self, data: &[u8]) -> Result<u32, Error> {
-        let offset = self
-            .allocator
-            .allocate(data.len())
-            .ok_or(Error::OutOfTempMemory)?;
-        unsafe {
-            copy_nonoverlapping(
-                data.as_ptr(),
-                self.memory.byte_add(offset).as_ptr(),
-                data.len(),
-            )
-        }
-        Ok((self.offset + offset) as u32)
-    }
-
-    pub fn reset(&self) {
-        self.allocator.reset();
-    }
-}
+use super::{DropList, GpuAllocator, GpuDescriptorAllocator};
 
 #[derive(Debug, Default)]
 struct SecondaryCommandBufferPool {
@@ -121,34 +75,23 @@ impl SecondaryCommandBufferPool {
     }
 }
 #[derive(Debug)]
-pub(crate) struct Frame {
+pub struct Frame {
     pool: vk::CommandPool,
-    pub cb: vk::CommandBuffer,
-    pub fence: vk::Fence,
-    pub finished: vk::Semaphore,
+    cb: vk::CommandBuffer,
+    fence: vk::Fence,
+    finished: vk::Semaphore,
     drop_list: DropList,
-    temp: TempBuffer,
     per_thread_pools: Mutex<HashMap<ThreadId, SecondaryCommandBufferPool>>,
 }
 
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
-pub(crate) const TEMP_BUFFER_SIZE: usize = 16 * 1024 * 1024;
-
 impl Frame {
-    pub fn new(
-        device: &ash::Device,
-        pdevice: &PhysicalDevice,
-        queue_family_index: u32,
-        temp_memory: NonNull<u8>,
-        temp_memory_offset: usize,
-    ) -> Result<Self, Error> {
+    pub fn new(device: &ash::Device) -> Result<Self, Error> {
         unsafe {
             let pool = device.create_command_pool(
-                &vk::CommandPoolCreateInfo::default()
-                    .queue_family_index(queue_family_index)
-                    .flags(vk::CommandPoolCreateFlags::TRANSIENT),
+                &vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT),
                 None,
             )?;
             let cb = device.allocate_command_buffers(
@@ -169,32 +112,24 @@ impl Frame {
                 fence,
                 finished,
                 drop_list,
-                temp: TempBuffer::new(
-                    TEMP_BUFFER_SIZE,
-                    temp_memory_offset,
-                    pdevice,
-                    temp_memory.add(temp_memory_offset as _),
-                ),
                 per_thread_pools: Default::default(),
             })
         }
     }
 
-    pub fn reset(
+    pub(super) fn reset(
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
         descriptor_allocator: &mut GpuDescriptorAllocator,
-        uniforms: &mut Uniforms,
     ) -> Result<(), Error> {
         self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator, uniforms);
+            .purge(device, memory_allocator, descriptor_allocator);
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         unsafe {
             device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
             device.reset_fences(&[self.fence])?;
         }
-        self.temp.reset();
         self.per_thread_pools
             .lock()
             .iter_mut()
@@ -203,12 +138,11 @@ impl Frame {
         Ok(())
     }
 
-    pub fn free(
+    pub(super) fn free(
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
         descriptor_allocator: &mut GpuDescriptorAllocator,
-        uniforms: &mut Uniforms,
     ) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
@@ -216,7 +150,7 @@ impl Frame {
             device.destroy_semaphore(self.finished, None);
         }
         self.drop_list
-            .purge(device, memory_allocator, descriptor_allocator, uniforms);
+            .purge(device, memory_allocator, descriptor_allocator);
         self.per_thread_pools
             .lock()
             .drain()
@@ -227,13 +161,10 @@ impl Frame {
         self.drop_list = drop_list;
     }
 
-    pub fn push_temp<T: Copy + Sized>(&self, data: &[T]) -> Result<u32, Error> {
-        let data =
-            unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, mem::size_of_val(data)) };
-        self.temp.push(data)
-    }
-
-    pub fn secondary_buffer(&self, device: &ash::Device) -> Result<vk::CommandBuffer, Error> {
+    pub fn secondary_command_buffer(
+        &self,
+        device: &ash::Device,
+    ) -> Result<vk::CommandBuffer, Error> {
         let therad_id = thread::current().id();
         let mut pools = self.per_thread_pools.lock();
         if let Some(pool) = pools.get_mut(&therad_id) {
@@ -244,5 +175,13 @@ impl Frame {
             pools.insert(therad_id, pool);
             Ok(cb)
         }
+    }
+
+    pub fn main_command_buffer(&self) -> vk::CommandBuffer {
+        self.cb
+    }
+
+    pub(super) fn fence(&self) -> vk::Fence {
+        self.fence
     }
 }

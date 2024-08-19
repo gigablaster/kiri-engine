@@ -4,7 +4,8 @@ use std::{error::Error, fmt::Display};
 
 use kiri::ResourceManager;
 use kiri_backend::{
-    ImageLayout, RenderPassLayout, RenderTarget, RenderTargetClear, RenderTargetDesc, SubpassLayout,
+    AttachmentClearValue, ImageLayout, RenderPassAttachment, RenderPassAttachmentDesc,
+    RenderPassLayout, SubpassLayout,
 };
 use kiri_runner::{run_game, DrawContext, GameClient, GameError, GameTickState};
 
@@ -45,11 +46,13 @@ impl GameClient<LoopError> for Loop {
         context: DrawContext,
     ) -> Result<(), kiri_backend::Error> {
         let layout = RenderPassLayout {
-            color_targets: &[RenderTargetDesc::new(context.render.backbuffer_desc.format)
-                .clear_input()
-                .store_output()
-                .initial_layout(ImageLayout::Undefined)
-                .final_layout(ImageLayout::Present)],
+            color_targets: &[
+                RenderPassAttachmentDesc::new(context.render.backbuffer_desc.format)
+                    .clear_input()
+                    .store_output()
+                    .initial_layout(ImageLayout::Undefined)
+                    .final_layout(ImageLayout::Present),
+            ],
             depth_target: None,
             subpasses: &[SubpassLayout {
                 depth_write: false,
@@ -58,8 +61,8 @@ impl GameClient<LoopError> for Loop {
                 color_reads: &[],
             }],
         };
-        let targets = [RenderTarget::color(context.render.backbuffer)
-            .clear(RenderTargetClear::Color([0.25, 0.25, 0.75, 1.0]))];
+        let targets = [RenderPassAttachment::color(context.render.backbuffer)
+            .clear(AttachmentClearValue::Color([0.25, 0.25, 0.75, 1.0]))];
         let render_pass = context.get_or_create_render_pass(layout)?;
         let recorder = context.render.record(render_pass, 0, &targets);
         recorder.finish();

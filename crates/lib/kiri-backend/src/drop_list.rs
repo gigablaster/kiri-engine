@@ -17,9 +17,7 @@ use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor_ash::AshDescriptorDevice;
 
-use super::{
-    GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory, ShaderUniform, Uniforms,
-};
+use super::{GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemory};
 
 #[derive(Debug, Default)]
 pub struct DropList {
@@ -28,7 +26,6 @@ pub struct DropList {
     images: Vec<vk::Image>,
     buffers: Vec<vk::Buffer>,
     descriptors: Vec<GpuDescriptor>,
-    uniforms: Vec<ShaderUniform>,
 }
 
 impl DropList {
@@ -52,16 +49,11 @@ impl DropList {
         self.descriptors.push(descriptor);
     }
 
-    pub fn drop_uniform(&mut self, uniform: ShaderUniform) {
-        self.uniforms.push(uniform);
-    }
-
     pub fn purge(
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
         descriptor_allocator: &mut GpuDescriptorAllocator,
-        uniforms: &mut Uniforms,
     ) {
         self.memory
             .drain(..)
@@ -75,7 +67,6 @@ impl DropList {
         self.images
             .drain(..)
             .for_each(|x| unsafe { device.destroy_image(x, None) });
-        self.uniforms.drain(..).for_each(|x| uniforms.deallocate(x));
         unsafe {
             descriptor_allocator.free(
                 AshDescriptorDevice::wrap(device),

@@ -18,24 +18,43 @@ use std::{
     time::SystemTime,
 };
 
+use ash::vk;
 use bytes::Bytes;
 use image::{imageops::FilterType, ImageBuffer};
 use intel_tex_2::{bc5, bc7};
-use kiri_backend::Format;
-use speedy::{Readable, Writable};
+use speedy::{Context, Readable, Writable};
 
 use crate::{
     get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetImportContext, AssetSource,
     Error, ImportAsset,
 };
 
-#[derive(Debug, Readable, Writable)]
+#[derive(Debug)]
 pub struct ImageAsset {
-    pub format: Format,
+    pub format: vk::Format,
     pub dims: [u32; 2],
     pub mips: Vec<Vec<u8>>,
 }
 
+impl<'a, C: Context> Readable<'a, C> for ImageAsset {
+    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
+        let format = vk::Format::from_raw(reader.read_i32()?);
+        Ok(Self {
+            format,
+            dims: reader.read_value()?,
+            mips: reader.read_value()?,
+        })
+    }
+}
+
+impl<'a, C: Context> Writable<C> for ImageAsset {
+    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        writer.write_i32(self.format.as_raw())?;
+        writer.write_value(&self.dims)?;
+        writer.write_value(&self.mips)?;
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ImageData {
     Path(String),
@@ -58,18 +77,18 @@ impl ImageAssetType {
         self == Self::Color
     }
 
-    pub fn uncompressed_format(self) -> Format {
+    pub fn uncompressed_format(self) -> vk::Format {
         match self {
-            ImageAssetType::Color => Format::RGBA8_SRGB,
-            _ => Format::RGBA8_UNORM,
+            ImageAssetType::Color => vk::Format::R8G8B8A8_SRGB,
+            _ => vk::Format::R8G8B8A8_UNORM,
         }
     }
 
-    pub fn compressed_format(self) -> Format {
+    pub fn compressed_format(self) -> vk::Format {
         match self {
-            ImageAssetType::Color => Format::BC7_SRGB,
-            ImageAssetType::Normal => Format::BC5_UNORM,
-            _ => Format::BC7_UNORM,
+            ImageAssetType::Color => vk::Format::BC7_SRGB_BLOCK,
+            ImageAssetType::Normal => vk::Format::BC5_UNORM_BLOCK,
+            _ => vk::Format::BC7_UNORM_BLOCK,
         }
     }
 

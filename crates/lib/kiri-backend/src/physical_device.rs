@@ -22,7 +22,7 @@ use crate::{Error, Surface};
 use super::Instance;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct QueueFamily {
+pub(super) struct QueueFamily {
     pub index: u32,
     pub properties: vk::QueueFamilyProperties,
 }
@@ -42,13 +42,13 @@ pub struct PhysicalDevice {
 }
 
 impl PhysicalDevice {
-    pub(crate) fn is_queue_flag_supported(&self, flags: vk::QueueFlags) -> bool {
+    pub(super) fn is_queue_flag_supported(&self, flags: vk::QueueFlags) -> bool {
         self.queue_families
             .iter()
             .any(|queue_family| queue_family.is_supported(flags))
     }
 
-    pub(crate) fn find_queue(&self, flags: vk::QueueFlags, exclude: &[u32]) -> Option<QueueFamily> {
+    pub(super) fn find_queue(&self, flags: vk::QueueFlags, exclude: &[u32]) -> Option<QueueFamily> {
         self.queue_families
             .iter()
             .filter(|x| !exclude.contains(&x.index) && x.is_supported(flags))
@@ -68,16 +68,16 @@ impl Debug for PhysicalDevice {
 }
 
 impl Instance {
-    pub(crate) fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, Error> {
+    pub(super) fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, Error> {
         unsafe {
             Ok(self
-                .raw
+                .get()
                 .enumerate_physical_devices()?
                 .into_iter()
                 .map(|pdevice| {
-                    let properties = self.raw.get_physical_device_properties(pdevice);
+                    let properties = self.get().get_physical_device_properties(pdevice);
                     let queue_families = self
-                        .raw
+                        .get()
                         .get_physical_device_queue_family_properties(pdevice)
                         .into_iter()
                         .enumerate()
@@ -88,7 +88,7 @@ impl Instance {
                         .collect();
 
                     let extension_properties = self
-                        .raw
+                        .get()
                         .enumerate_device_extension_properties(pdevice)
                         .unwrap();
                     let supported_extensions = extension_properties
@@ -121,7 +121,7 @@ impl Instance {
     ) -> Option<vk::Format> {
         formats.iter().find_map(|format| {
             let props = unsafe {
-                self.raw
+                self.get()
                     .get_physical_device_format_properties(pdevice.raw, *format)
             };
             if (tiling == vk::ImageTiling::LINEAR

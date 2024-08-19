@@ -32,10 +32,7 @@ use kiri_assets::{
     StaticMeshAsset,
 };
 use kiri_backend::{
-    BindGroupDesc, BindGroupSlotDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice,
-    ImageAspect, ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayout,
-    PipelineHandle, PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice,
-    RenderPassHandle, RenderPassLayout, ShaderDesc, ShaderStage,
+    DescriptorSetBuilder, DescriptorSetLayoutDesc, DescritproSetSlotDesc, BindType, BufferCreateDesc, BufferHandle, BufferSlice, ImageAspect, ImageCreateDesc, ImageHandle, ImageSubresourceData, InputVertexStreamLayoutDesc, PipelineHandle, PipelineVertex, ProgramHandle, RasterPipelineCreateDesc, RenderDevice, RenderPassHandle, RenderPassLayout, ShaderDesc, ShaderStage
 };
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_vfs::vfs_load;
@@ -90,15 +87,15 @@ impl<T: Hash + Eq + PartialEq> AssetLifetimeTracker<T> {
 pub struct RasterPipelineDesc {
     pub vertex_shader: Option<String>,
     pub fragment_shader: Option<String>,
-    pub layout: &'static [BindGroupDesc<'static>],
-    pub streams: &'static [InputVertexStreamLayout<'static>],
+    pub layout: &'static [DescriptorSetLayoutDesc<'static>],
+    pub streams: &'static [InputVertexStreamLayoutDesc<'static>],
     pub pass: RenderPassHandle,
     pub subpass: u32,
     pub desc: RasterPipelineCreateDesc,
 }
 
 impl RasterPipelineDesc {
-    pub fn new<T: PipelineVertex>(layout: &'static [BindGroupDesc<'static>]) -> Self {
+    pub fn new<T: PipelineVertex>(layout: &'static [DescriptorSetLayoutDesc<'static>]) -> Self {
         Self {
             vertex_shader: None,
             fragment_shader: None,
@@ -135,7 +132,7 @@ impl RasterPipelineDesc {
 struct ProgramKey {
     vertex_shader: Option<String>,
     fragment_shader: Option<String>,
-    layout: &'static [BindGroupDesc<'static>],
+    layout: &'static [DescriptorSetLayoutDesc<'static>],
 }
 
 #[derive(Debug)]
@@ -160,35 +157,35 @@ pub struct ResourceManager {
 
 const MESH_POOL_SIZE: usize = 256 * 1024 * 1024;
 
-pub const PBR_MATERIAL_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
+pub const PBR_MATERIAL_BIND_GROUP_DESC: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 0,
             name: "material",
             ty: BindType::Uniform,
         },
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 1,
             name: "base_color",
             ty: BindType::CombinedSampledImage,
         },
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 2,
             name: "normals",
             ty: BindType::CombinedSampledImage,
         },
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 3,
             name: "metallic_roughness",
             ty: BindType::CombinedSampledImage,
         },
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 4,
             name: "occlusion",
             ty: BindType::CombinedSampledImage,
         },
-        BindGroupSlotDesc {
+        DescritproSetSlotDesc {
             slot: 5,
             name: "emissive",
             ty: BindType::CombinedSampledImage,
@@ -196,9 +193,9 @@ pub const PBR_MATERIAL_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
     ],
 };
 
-pub const RENDER_PASS_BIND_GROUP_DESC: BindGroupDesc = BindGroupDesc {
+pub const RENDER_PASS_BIND_GROUP_DESC: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     stage: ShaderStage::Graphics,
-    set: &[BindGroupSlotDesc {
+    set: &[DescritproSetSlotDesc {
         slot: 0,
         name: "pass",
         ty: BindType::Uniform,
@@ -211,7 +208,7 @@ impl Drop for ResourceManager {
         self.static_meshes.write().drain().for_each(|mesh| {
             mesh.materials
                 .iter()
-                .for_each(|material| self.device.destroy_bind_group(material.bind_group));
+                .for_each(|material| self.device.destroy_descriptor_set(material.bind_group));
         });
         self.image_assets
             .write()
@@ -434,10 +431,11 @@ impl ResourceManager {
         let mut surfaces = Vec::with_capacity(asset.surfaces.len());
         let mut materials = Vec::with_capacity(asset.materials.len());
         for material in &asset.materials {
+            let mut builder = DescriptorSetBuilder::new(&PBR_MATERIAL_BIND_GROUP_DESC).uniform_buffer(slot, buffer, size)
             materials.push((
                 material.clone(),
                 self.device
-                    .create_bind_group(&PBR_MATERIAL_BIND_GROUP_DESC)?,
+                    .create_descriptor_set()?,
             ));
         }
         for surface in &asset.surfaces {
@@ -496,7 +494,7 @@ impl ResourceManager {
         if let Some(handle) = self.static_mesh_assets.write().remove(&reference) {
             if let Some(mesh) = self.static_meshes.write().remove(handle) {
                 mesh.materials.iter().for_each(|material| {
-                    self.device.destroy_bind_group(material.bind_group);
+                    self.device.destroy_descriptor_set(material.bind_group);
                     material
                         .images
                         .iter()
@@ -575,7 +573,7 @@ impl ResourceManager {
         &self,
         vertex_shader: Option<String>,
         fragment_shader: Option<String>,
-        layout: &'static [BindGroupDesc<'static>],
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Result<ProgramHandle, Error> {
         let key = ProgramKey {
             vertex_shader: vertex_shader.clone(),

@@ -20,8 +20,8 @@ use parking_lot::Mutex;
 use crate::{vulkan::DYNAMIC_BINDING_SLOT, PipelineHandle};
 
 use super::{
-    BindGroupHandle, BindGroupPool, BindGroupUpdateContext, BufferHandle, BufferPool, BufferSlice,
-    Error, Frame, ImageDesc, ImageHandle, PipelinePool, RenderPassHandle, RenderTarget,
+    DescriptorSetBuilder, BufferPool, BufferSlice, DescriptorSetHandle, DescriptorSetManager, Error,
+    Frame, ImageDesc, ImageHandle, PipelinePool, RenderDevice, RenderPassHandle, RenderPassAttachment,
     MAX_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
 };
 
@@ -38,7 +38,7 @@ struct DrawState {
     vertex_offset: u32,
     streams: [BufferSlice; MAX_VERTEX_STREAMS],
     indices: BufferSlice,
-    bind_groups: [BindGroupHandle; MAX_DESCRIPTOR_SETS],
+    descriptor_sets: [DescriptorSetHandle; MAX_DESCRIPTOR_SETS],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
 }
 
@@ -62,14 +62,14 @@ struct DrawStreamReader<'a> {
 const PIPELINE_MASK: u16 = 1 << 0;
 const VERTEX_STREAM_MASK: u16 = 1 << 1;
 const INDEX_STREAM_MASK: u16 = VERTEX_STREAM_MASK << MAX_VERTEX_STREAMS;
-const BIND_GROUP_MASK: u16 = INDEX_STREAM_MASK << 1;
-const DYANMIC_OFFSET_MASK: u16 = BIND_GROUP_MASK << MAX_DESCRIPTOR_SETS;
+const DESCRIPTOR_SET_MASK: u16 = INDEX_STREAM_MASK << 1;
+const DYANMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_DESCRIPTOR_SETS;
 const FIRST_INDEX_MASK: u16 = DYANMIC_OFFSET_MASK << 1;
 const INDEX_COUNT_MASK: u16 = FIRST_INDEX_MASK << 1;
 const FIRST_INSTANCE_MASK: u16 = INDEX_COUNT_MASK << 1;
 const INSTANCE_COUNT_MASK: u16 = FIRST_INSTANCE_MASK << 1;
 const VERTEX_OFFSET_MASK: u16 = INSTANCE_COUNT_MASK << 1;
-const ALL_BIND_GROUPS_MASK: u16 = ((1 << MAX_DESCRIPTOR_SETS) - 1) << 4;
+const ALL_DESCRIPTOR_SETS_MASK: u16 = ((1 << MAX_DESCRIPTOR_SETS) - 1) << 4;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DrawStreamError {
@@ -106,7 +106,7 @@ impl<'a> DrawStreamReader<'a> {
         Ok(BufferSlice(handle, offset))
     }
 
-    fn read_bind_group(&mut self) -> Result<BindGroupHandle, DrawStreamError> {
+    fn read_descriptor_set(&mut self) -> Result<DescriptorSetHandle, DrawStreamError> {
         Ok(self.read_u32()?.into())
     }
 }
@@ -129,13 +129,13 @@ impl DrawStreamRecorder {
         self.write_u32(value.1);
     }
 
-    /// Resets bind groups and dynamic offsets
+    /// Resets descriptor sets and dynamic offsets
     pub fn pipeline(&mut self, pipeline: PipelineHandle) {
         if self.current.pipeline != pipeline {
             self.mask |= PIPELINE_MASK;
             self.current.pipeline = pipeline;
             for i in 0..MAX_DESCRIPTOR_SETS {
-                self.bind_group(i, None);
+                self.descriptor_set(i, None);
             }
             for i in 0..MAX_DYNAMIC_OFFSETS {
                 self.dynamic_offset(i, None);
@@ -159,12 +159,12 @@ impl DrawStreamRecorder {
         }
     }
 
-    pub fn bind_group(&mut self, slot: usize, group: Option<BindGroupHandle>) {
+    pub fn descriptor_set(&mut self, slot: usize, group: Option<DescriptorSetHandle>) {
         debug_assert!(slot < MAX_DESCRIPTOR_SETS);
         let group = group.unwrap_or_default();
-        if self.current.bind_groups[slot] != group {
-            self.mask |= BIND_GROUP_MASK << slot;
-            self.current.bind_groups[slot] = group;
+        if self.current.descriptor_sets[slot] != group {
+            self.mask |= DESCRIPTOR_SET_MASK << slot;
+            self.current.descriptor_sets[slot] = group;
         }
     }
 
@@ -217,8 +217,8 @@ impl DrawStreamRecorder {
             }
         }
         for i in 0..MAX_DESCRIPTOR_SETS {
-            if self.mask & (BIND_GROUP_MASK << i) == (BIND_GROUP_MASK << i) {
-                self.write_u32(self.current.bind_groups[i].into());
+            if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
+                self.write_u32(self.current.descriptor_sets[i].into());
             }
         }
         for i in 0..MAX_DYNAMIC_OFFSETS {
@@ -258,19 +258,19 @@ impl Default for DrawState {
             vertex_offset: 0,
             streams: Default::default(),
             indices: Default::default(),
-            bind_groups: Default::default(),
+            descriptor_sets: Default::default(),
             dynamic_offsets: [0, 0],
         }
     }
 }
 
-pub(crate) struct DrawStreamExecuteContext<'a> {
+pub(super) struct DrawStreamExecuteContext<'a> {
     pub device: &'a ash::Device,
     pub frame: &'a Frame,
     pub pipelines: &'a PipelinePool,
-    pub bind_groups: &'a BindGroupPool,
+    pub descriptor_manager: &'a DescriptorSetManager,
     pub buffers: &'a BufferPool,
-    pub empty: vk::DescriptorSet,
+    pub empty: DescriptorSetHandle,
     pub fbo: vk::Framebuffer,
     pub pass: vk::RenderPass,
     pub subpass: u32,
@@ -278,7 +278,7 @@ pub(crate) struct DrawStreamExecuteContext<'a> {
 }
 
 impl DrawStream {
-    pub(crate) fn execute(
+    pub(super) fn execute(
         &self,
         context: DrawStreamExecuteContext,
     ) -> Result<vk::CommandBuffer, Error> {
@@ -315,7 +315,7 @@ impl DrawStream {
         let mut instance_count = 0;
         let mut pipeline_layout = vk::PipelineLayout::null();
         let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
-        let mut bind_groups = [BindGroupHandle::invalid(); MAX_DESCRIPTOR_SETS];
+        let mut descriptor_sets = [DescriptorSetHandle::invalid(); MAX_DESCRIPTOR_SETS];
         let mut vertex_offset = 0;
         let mut dynamic_offset_changed = false;
         let mut rebind_all = false;
@@ -379,38 +379,34 @@ impl DrawStream {
                     )
                 }
             }
-            rebind_all |= (mask & ALL_BIND_GROUPS_MASK) == ALL_BIND_GROUPS_MASK;
-            for (i, target) in bind_groups
+            rebind_all |= (mask & ALL_DESCRIPTOR_SETS_MASK) == ALL_DESCRIPTOR_SETS_MASK;
+            for (i, target) in descriptor_sets
                 .iter_mut()
                 .enumerate()
                 .take(MAX_DESCRIPTOR_SETS - 1)
             {
-                if mask & (BIND_GROUP_MASK << i) == (BIND_GROUP_MASK << i) {
-                    let bind_group = reader.read_bind_group()?;
-                    *target = bind_group;
+                if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
+                    let descriptor_set = reader.read_descriptor_set()?;
+                    *target = descriptor_set;
                     if !rebind_all {
-                        let bind_group = context
-                            .bind_groups
-                            .get(bind_group)
-                            .copied()
-                            .ok_or(Error::InvalidBindGroupHandle(bind_group))?;
+                        let ds = context.descriptor_manager.resolve(descriptor_set)?;
                         unsafe {
                             context.device.cmd_bind_descriptor_sets(
                                 cb,
                                 vk::PipelineBindPoint::GRAPHICS,
                                 pipeline_layout,
                                 i as _,
-                                &[bind_group],
+                                &[ds],
                                 &[],
                             )
                         };
                     }
                 }
             }
-            if mask & (BIND_GROUP_MASK << DYNAMIC_BINDING_SLOT)
-                == BIND_GROUP_MASK << DYNAMIC_BINDING_SLOT
+            if mask & (DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT)
+                == DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT
             {
-                bind_groups[DYNAMIC_BINDING_SLOT] = reader.read_bind_group()?;
+                descriptor_sets[DYNAMIC_BINDING_SLOT] = reader.read_descriptor_set()?;
                 dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
                 dynamic_offset_changed = true;
             }
@@ -441,14 +437,11 @@ impl DrawStream {
                 vertex_offset = reader.read_u32()?;
             }
             if rebind_all {
-                let mut descriptors = [context.empty; MAX_DESCRIPTOR_SETS];
-                for (index, bind_group) in bind_groups.iter().enumerate() {
-                    if bind_group.is_valid() {
-                        descriptors[index] = context
-                            .bind_groups
-                            .get(*bind_group)
-                            .copied()
-                            .ok_or(Error::InvalidBindGroupHandle(*bind_group))?;
+                let mut descriptors =
+                    [context.descriptor_manager.resolve(context.empty)?; MAX_DESCRIPTOR_SETS];
+                for (index, descriptor_set) in descriptor_sets.iter().enumerate() {
+                    if descriptor_set.is_valid() {
+                        descriptors[index] = context.descriptor_manager.resolve(*descriptor_set)?;
                     }
                 }
                 let offsets = dynamic_offsets
@@ -470,12 +463,8 @@ impl DrawStream {
             }
             if dynamic_offset_changed {
                 let descriptor = context
-                    .bind_groups
-                    .get(bind_groups[DYNAMIC_BINDING_SLOT])
-                    .copied()
-                    .ok_or(Error::InvalidBindGroupHandle(
-                        bind_groups[DYNAMIC_BINDING_SLOT],
-                    ))?;
+                    .descriptor_manager
+                    .resolve(descriptor_sets[DYNAMIC_BINDING_SLOT])?;
                 let offsets = dynamic_offsets
                     .iter()
                     .filter_map(|x| (*x != u32::MAX).then_some(*x))
@@ -509,43 +498,44 @@ impl DrawStream {
 }
 
 #[derive(Debug)]
-pub struct RenderPassRecorder<'a, 'b> {
-    context: &'a RenderContext<'a, 'b>,
-    pub targets: &'a [RenderTarget],
+pub struct RenderPassRecorder<'a> {
+    context: &'a RenderContext<'a>,
+    pub targets: &'a [RenderPassAttachment],
     pass: RenderPassHandle,
     subpass: u32,
     streams: Mutex<Vec<DrawStream>>,
 }
 
 #[derive(Debug)]
-pub(crate) struct RecordedRenderPass {
-    pub targets: ArrayVec<RenderTarget, MAX_ATTACHMENTS>,
+pub(super) struct RecordedRenderPass {
+    pub targets: ArrayVec<RenderPassAttachment, MAX_ATTACHMENTS>,
     pub pass: RenderPassHandle,
     pub subpass: u32,
     pub streams: Vec<DrawStream>,
 }
 
 #[derive(Debug)]
-pub struct RenderContext<'a, 'b> {
-    pub(crate) frame: &'a Frame,
-    pub(crate) passes: Mutex<Vec<RecordedRenderPass>>,
+pub struct RenderContext<'a> {
+    pub(super) device: &'a RenderDevice,
+    pub(super) _frame: &'a Frame,
+    pub(super) passes: Mutex<Vec<RecordedRenderPass>>,
     pub backbuffer: ImageHandle,
     pub backbuffer_desc: ImageDesc,
-    pub(crate) temp_buffer: BufferHandle,
-    pub(crate) binds: &'b mut BindGroupUpdateContext<'b>,
+    pub(super) descriptor_manager: &'a mut DescriptorSetManager,
+    pub(super) temp_descriptor_sets: Vec<DescriptorSetHandle>,
 }
 
-impl<'a, 'b> RenderContext<'a, 'b> {
-    pub(crate) fn finish(self) -> Vec<RecordedRenderPass> {
-        self.passes.into_inner()
+impl<'a> RenderContext<'a> {
+    pub(super) fn finish(self) -> (Vec<RecordedRenderPass>, Vec<DescriptorSetHandle>) {
+        (self.passes.into_inner(), self.temp_descriptor_sets)
     }
 
     pub fn record(
         &'a self,
         pass: RenderPassHandle,
         subpass: u32,
-        targets: &'a [RenderTarget],
-    ) -> RenderPassRecorder<'a, 'b> {
+        targets: &'a [RenderPassAttachment],
+    ) -> RenderPassRecorder<'a> {
         RenderPassRecorder {
             context: self,
             targets,
@@ -555,24 +545,22 @@ impl<'a, 'b> RenderContext<'a, 'b> {
         }
     }
 
-    pub fn dynamic_data<T: Sized + Copy>(&self, data: &[T]) -> Result<u32, Error> {
-        self.frame.push_temp(data)
-    }
-
-    pub fn dynamic_buffer<T: Sized + Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
-        let offset = self.dynamic_data(data)?;
-        Ok(BufferSlice(self.temp_buffer, offset))
-    }
-
-    pub fn update_bind_groups<CB: FnOnce(&mut BindGroupUpdateContext) -> Result<(), Error>>(
+    /// Creates temporary descriptor set, it will be invalidated at the end of the frame
+    pub fn create_frame_descriptor_set<'b>(
         &mut self,
-        cb: CB,
-    ) -> Result<(), Error> {
-        cb(self.binds)
+        builder: DescriptorSetBuilder<'static, 'b>,
+    ) -> Result<DescriptorSetHandle, Error> {
+        let handle = self.descriptor_manager.create_descriptor_set(
+            &self.device.device,
+            &self.device.samplers,
+            builder,
+        )?;
+        self.temp_descriptor_sets.push(handle);
+        Ok(handle)
     }
 }
 
-impl<'a, 'b> RenderPassRecorder<'a, 'b> {
+impl<'a, 'b> RenderPassRecorder<'a> {
     pub fn record(&self, stream: DrawStreamRecorder) {
         self.streams.lock().push(stream.finish());
     }
@@ -592,13 +580,13 @@ impl<'a, 'b> RenderPassRecorder<'a, 'b> {
 }
 
 impl RecordedRenderPass {
-    pub(crate) fn consume(
+    pub(super) fn consume(
         self,
     ) -> (
         RenderPassHandle,
         u32,
         Vec<DrawStream>,
-        ArrayVec<RenderTarget, MAX_ATTACHMENTS>,
+        ArrayVec<RenderPassAttachment, MAX_ATTACHMENTS>,
     ) {
         (self.pass, self.subpass, self.streams, self.targets)
     }

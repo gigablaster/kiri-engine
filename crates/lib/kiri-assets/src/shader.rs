@@ -20,7 +20,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use kiri_backend::ShaderStage;
+use ash::vk;
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
@@ -87,7 +87,6 @@ fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> Result<
 
 #[derive(Debug, Readable, Writable)]
 pub struct ShaderAsset {
-    pub ty: ShaderType,
     pub bytecode: Vec<u8>,
 }
 
@@ -100,11 +99,11 @@ impl ShaderType {
     }
 }
 
-impl From<ShaderType> for ShaderStage {
+impl From<ShaderType> for vk::ShaderStageFlags {
     fn from(value: ShaderType) -> Self {
         match value {
-            ShaderType::Vertex => Self::Vertex,
-            ShaderType::Fragment => Self::Fragment,
+            ShaderType::Vertex => Self::VERTEX,
+            ShaderType::Fragment => Self::FRAGMENT,
         }
     }
 }
@@ -189,7 +188,6 @@ impl ImportAsset<ShaderAssetSource> for ShaderAsset {
             .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
         if result.status.success() {
             Ok(ShaderAsset {
-                ty: source.ty,
                 bytecode: result.stdout,
             })
         } else {
