@@ -149,6 +149,18 @@ impl DescriptorSetLayoutDesc {
             .iter()
             .find_map(|(x, data)| if slot == *x { Some(data) } else { None })
     }
+
+    /// Remove names and sort by slot.
+    ///
+    /// This way same layouts but woth different slot names will be seen as same.
+    pub(super) fn normalize(&self) -> DescriptorSetLayoutDesc {
+        let mut normalized = self.clone();
+        normalized.layout.iter_mut().for_each(|x| {
+            x.1.name = Default::default();
+        });
+        normalized.layout.sort_by(|a, b| a.0.cmp(&b.0));
+        normalized
+    }
 }
 
 impl From<ReflectedDescriptorSetDesc> for DescriptorSetLayoutDesc {
