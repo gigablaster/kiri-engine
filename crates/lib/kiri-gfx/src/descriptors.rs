@@ -75,14 +75,15 @@ pub enum Slot<'a> {
 
 impl<'a> DescriptorSetBuilder<'a> {
     pub fn new(stages: vk::ShaderStageFlags, layout: &'a DescriptorSetLayoutDesc) -> Self {
+        let count = layout.get_descriptor_count();
         Self {
             layout,
             stages,
-            images: Default::default(),
-            unifom_buffers: Default::default(),
-            storage_buffers: Default::default(),
-            dynamic_uniform_buffers: Default::default(),
-            dynamic_storage_buffers: Default::default(),
+            images: Vec::with_capacity((count.sampled_images + count.combined_image_samplers) as _),
+            unifom_buffers: Vec::with_capacity(count.unifroms_buffers as _),
+            storage_buffers: Vec::with_capacity(count.storage_buffers as _),
+            dynamic_uniform_buffers: Vec::with_capacity(count.dynamic_uniform_buffers as _),
+            dynamic_storage_buffers: Vec::with_capacity(count.dynamic_storage_buffers as _),
         }
     }
 
