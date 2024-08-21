@@ -198,11 +198,46 @@ impl RasterPipelineCreateDesc {
     }
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexAttrubute {
+    pub format: vk::Format,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexStreamLayout<'a> {
+    pub streams: &'a [InputVertexAttrubute],
+    pub stride: usize,
+}
+
+pub trait PipelineVertex {
+    fn layout() -> &'static [InputVertexStreamLayout<'static>];
+}
+
+impl<'a> InputVertexStreamLayout<'a> {
+    fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
+        let attributes = self
+            .streams
+            .iter()
+            .enumerate()
+            .map(|(index, attr)| vk::VertexInputAttributeDescription {
+                location: index as u32,
+                binding: binding as u32,
+                format: attr.format.into(),
+                offset: attr.offset as u32,
+            })
+            .collect();
+
+        (self.stride as u32, attributes)
+    }
+}
+
 pub fn compile_raster_pipeline<'a>(
     device: &Arc<RenderDevice>,
     cache: vk::PipelineCache,
     program: &Arc<Program>,
     layout: RenderAttachmentLayoutDesc<'a>,
+    streams: &[InputVertexStreamLayout<'a>],
     desc: RasterPipelineCreateDesc,
 ) -> Result<vk::Pipeline, Error> {
     let shader_create_info = program
@@ -215,6 +250,37 @@ pub fn compile_raster_pipeline<'a>(
                 .name(entry)
         })
         .collect::<Vec<_>>();
+
+    let streams = streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| stream.build(index))
+        .collect::<Vec<_>>();
+
+    let strides = streams
+        .iter()
+        .map(|(stride, _)| stride)
+        .copied()
+        .collect::<Vec<_>>();
+    let attributes = streams
+        .iter()
+        .flat_map(|(_, attributes)| attributes)
+        .copied()
+        .collect::<Vec<_>>();
+    let vertex_binding_desc = strides
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            vk::VertexInputBindingDescription::default()
+                .stride(strides[index] as _)
+                .binding(attributes[index].binding)
+                .input_rate(vk::VertexInputRate::VERTEX)
+        })
+        .collect::<Vec<_>>();
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&vertex_binding_desc)
+        .vertex_attribute_descriptions(&attributes);
 
     let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -283,6 +349,7 @@ pub fn compile_raster_pipeline<'a>(
         .input_assembly_state(&assembly_state_create_info)
         .rasterization_state(&rasterizer_state)
         .depth_stencil_state(&depthstencil_state)
+        .vertex_input_state(&vertex_input)
         .push_next(&mut rendering_info);
 
     let pipeline = unsafe {
