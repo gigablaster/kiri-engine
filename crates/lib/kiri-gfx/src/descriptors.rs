@@ -68,11 +68,6 @@ pub struct DescriptorSetBuilder<'a> {
     dynamic_storage_buffers: Vec<Binding<DynamicBufferBindingData>>,
 }
 
-pub enum Slot<'a> {
-    Index(u32),
-    Name(&'a str),
-}
-
 impl<'a> DescriptorSetBuilder<'a> {
     pub fn new(stages: vk::ShaderStageFlags, layout: &'a DescriptorSetLayoutDesc) -> Self {
         let count = layout.get_descriptor_count();
@@ -93,11 +88,10 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_image(
         mut self,
-        slot: Slot,
+        slot: u32,
         image: ImageHandle,
         aspect: vk::ImageAspectFlags,
-    ) -> Result<Self, Error> {
-        let slot = self.get_slot(slot)?;
+    ) -> Self {
         self.images.push(Binding {
             slot,
             element: 0,
@@ -108,17 +102,16 @@ impl<'a> DescriptorSetBuilder<'a> {
                 view: vk::ImageView::null(),
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_uniform_buffer(
         mut self,
-        slot: Slot,
+        slot: u32,
         buffer: BufferHandle,
         offset: usize,
         size: usize,
-    ) -> Result<Self, Error> {
-        let slot = self.get_slot(slot)?;
+    ) -> Self {
         self.unifom_buffers.push(Binding {
             slot,
             element: 0,
@@ -129,17 +122,16 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: size as u32,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_storage_buffer(
         mut self,
-        slot: Slot,
+        slot: u32,
         buffer: BufferHandle,
         offset: usize,
         size: usize,
-    ) -> Result<Self, Error> {
-        let slot = self.get_slot(slot)?;
+    ) -> Self {
         self.storage_buffers.push(Binding {
             slot,
             element: 0,
@@ -150,16 +142,15 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: size as u32,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_dynamic_uniform_buffer(
         mut self,
-        slot: Slot,
+        slot: u32,
         buffer: BufferHandle,
         size: usize,
-    ) -> Result<Self, Error> {
-        let slot = self.get_slot(slot)?;
+    ) -> Self {
         self.dynamic_uniform_buffers.push(Binding {
             slot,
             element: 0,
@@ -169,16 +160,15 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: size as u32,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_dynamic_storage_buffer(
         mut self,
-        slot: Slot,
+        slot: u32,
         buffer: BufferHandle,
         size: usize,
-    ) -> Result<Self, Error> {
-        let slot = self.get_slot(slot)?;
+    ) -> Self {
         self.dynamic_storage_buffers.push(Binding {
             slot,
             element: 0,
@@ -188,17 +178,7 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: size as u32,
             },
         });
-        Ok(self)
-    }
-
-    fn get_slot(&self, slot: Slot) -> Result<u32, Error> {
-        match slot {
-            Slot::Index(index) => Ok(index),
-            Slot::Name(name) => self
-                .layout
-                .get_slot_by_name(name)
-                .ok_or(Error::BindingSlotNotFound(name.to_owned())),
-        }
+        self
     }
 
     pub(super) fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
