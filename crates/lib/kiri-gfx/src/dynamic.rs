@@ -19,41 +19,38 @@ use std::{
     sync::Arc,
 };
 
-use ash::vk::{self};
-use kiri_backend::{Buffer, BufferCreateDesc, RenderDevice};
+use kiri_backend::BufferCreateDesc;
 use kiri_common::BumpAllocator;
 
-use crate::Error;
+use crate::{BufferHandle, Error, Renderer};
 
 #[derive(Debug)]
 pub struct DynamicGpuMemory {
-    _device: Arc<RenderDevice>,
-    _buffer: Buffer,
-    address: vk::DeviceAddress,
+    buffer: BufferHandle,
     mapping: NonNull<u8>,
     allocator: BumpAllocator,
 }
 
 impl DynamicGpuMemory {
-    pub fn new(device: &Arc<RenderDevice>, size: usize) -> Result<Self, Error> {
-        let mut buffer = Buffer::new(
-            device,
+    pub fn new(renderer: &Renderer, size: usize) -> Result<Self, Error> {
+        let buffer = renderer.create_buffer(
             BufferCreateDesc::shared(size)
-                .name("Dynamic")
+                .name("Dynamic data")
                 .storage_buffer()
                 .indirect_draw()
-                .dedicated(true),
+                .uniform_buffer()
+                .veretex_buffer()
+                .index_buffer()
+                .dedicated(),
         )?;
-        let mapping = buffer.map()?;
-        let address = buffer.device_address();
+        let mapping = renderer.map_buffer(buffer)?;
         Ok(Self {
-            _device: device.clone(),
-            _buffer: buffer,
-            address,
+            buffer,
             mapping,
             allocator: BumpAllocator::new(
                 size,
-                device
+                renderer
+                    .device
                     .physical_device
                     .properties
                     .limits
@@ -62,7 +59,7 @@ impl DynamicGpuMemory {
         })
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<vk::DeviceAddress, Error> {
+    pub fn push<T: Copy>(&self, data: &[T]) -> Result<usize, Error> {
         let size = mem::size_of_val(data);
         if let Some(offset) = self.allocator.allocate(size) {
             unsafe {
@@ -72,10 +69,14 @@ impl DynamicGpuMemory {
                     size,
                 )
             }
-            Ok(self.address + size as u64)
+            Ok(offset)
         } else {
             Err(Error::OutOfDynamicMemory)
         }
+    }
+
+    pub fn get_buffer_handle(&self) -> BufferHandle {
+        self.buffer
     }
 
     pub fn recycle(&self) {
@@ -83,9 +84,8 @@ impl DynamicGpuMemory {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DynamicGpuMemoryPool {
-    device: Arc<RenderDevice>,
     pool: Vec<Arc<DynamicGpuMemory>>,
     used: Vec<Arc<DynamicGpuMemory>>,
     recycle: Vec<Arc<DynamicGpuMemory>>,
@@ -94,21 +94,12 @@ pub struct DynamicGpuMemoryPool {
 const DYNAMIC_PAGE_SIZE: usize = 16 * 1024 * 1024;
 
 impl DynamicGpuMemoryPool {
-    pub fn new(device: &Arc<RenderDevice>) -> Result<Self, Error> {
-        Ok(Self {
-            device: device.clone(),
-            pool: Default::default(),
-            used: Default::default(),
-            recycle: Default::default(),
-        })
-    }
-
-    pub fn get(&mut self) -> Result<Arc<DynamicGpuMemory>, Error> {
+    pub fn get(&mut self, renderer: &Renderer) -> Result<Arc<DynamicGpuMemory>, Error> {
         if let Some(page) = self.pool.pop() {
             self.used.push(page.clone());
             Ok(page)
         } else {
-            let page = Arc::new(DynamicGpuMemory::new(&self.device, DYNAMIC_PAGE_SIZE)?);
+            let page = Arc::new(DynamicGpuMemory::new(renderer, DYNAMIC_PAGE_SIZE)?);
             self.used.push(page.clone());
             Ok(page)
         }

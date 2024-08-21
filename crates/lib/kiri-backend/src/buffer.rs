@@ -130,6 +130,11 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
+    pub fn device_address(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        self
+    }
+
     pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
         self.usage = usage;
         self
@@ -140,8 +145,8 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
-    pub fn dedicated(mut self, value: bool) -> Self {
-        self.dedicated = value;
+    pub fn dedicated(mut self) -> Self {
+        self.dedicated = true;
         self
     }
 
@@ -151,12 +156,8 @@ impl<'a> BufferCreateDesc<'a> {
     }
 
     fn build(&self) -> vk::BufferCreateInfo {
-        let mut usage = self.usage;
-        if self.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
-            usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-        }
         vk::BufferCreateInfo::default()
-            .usage(usage)
+            .usage(self.usage)
             .size(self.size as _)
     }
 }
@@ -175,7 +176,10 @@ impl Drop for Buffer {
 impl Buffer {
     pub fn new(device: &Arc<RenderDevice>, desc: BufferCreateDesc) -> Result<Self, Error> {
         let mut location = desc.memory_location;
-        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+        if desc
+            .usage
+            .contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
+        {
             location |= gpu_alloc::UsageFlags::DEVICE_ADDRESS;
         }
         let buffer = unsafe { device.raw.create_buffer(&desc.build(), None) }?;

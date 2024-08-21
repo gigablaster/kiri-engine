@@ -25,7 +25,7 @@ use kiri_assets::{
 use kiri_backend::{Image, ImageCreateDesc, RenderDevice};
 use kiri_common::{DynamicAllocator, Handle, Pool};
 use kiri_gfx::{
-    BindlessManager, BufferHandle, BufferManager, BufferSlice, ImageHandle, ImageSubresourceData,
+    BindlessManager, BufferHandle, BufferManager, BufferSlice, ImageHandle, ImageUploadData,
     Staging,
 };
 use kiri_vfs::{vfs_load, AssetReference};
@@ -128,7 +128,7 @@ fn do_load_image(
     let data = asset
         .mips
         .iter()
-        .map(|data| ImageSubresourceData { data })
+        .map(|data| ImageUploadData { data })
         .collect::<Vec<_>>();
     manager.staging.lock().upload_image(&image, &data)?;
     manager.bindless.write().update_image(
@@ -279,7 +279,7 @@ impl ResourceManager {
             )?;
             staging.upload_image(
                 &image,
-                &[ImageSubresourceData {
+                &[ImageUploadData {
                     data: &ty.default_values(),
                 }],
             )?;

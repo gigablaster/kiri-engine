@@ -12,21 +12,23 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-mod bindless;
-mod buffers;
+mod context;
+mod descriptors;
+mod draw_stream;
 mod dynamic;
 mod error;
-mod pipeline_cache;
+mod renderer;
 mod staging;
 
-pub use bindless::*;
-pub use buffers::*;
-pub use dynamic::*;
+pub use context::*;
+pub use descriptors::*;
+pub use draw_stream::*;
+use dynamic::*;
 pub use error::*;
-pub use pipeline_cache::*;
-pub use staging::*;
+pub use renderer::*;
+use staging::*;
 
 #[derive(Debug, Clone, Copy)]
-pub struct ImageSubresourceData<'a> {
+pub struct ImageUploadData<'a> {
     pub data: &'a [u8],
 }

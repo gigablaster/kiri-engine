@@ -97,10 +97,10 @@ impl Swapchain {
         let surface_capabilities = unsafe {
             surface
                 .loader
-                .get_physical_device_surface_capabilities(device.physical_device().raw, surface.raw)
+                .get_physical_device_surface_capabilities(device.physical_device.raw, surface.raw)
         }?;
 
-        let formats = Self::enumerate_surface_formats(device.physical_device(), surface)?;
+        let formats = Self::enumerate_surface_formats(&device.physical_device, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
             None => return Err(Error::NotSupported),
@@ -129,10 +129,9 @@ impl Swapchain {
         let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
 
         let present_modes = unsafe {
-            surface.loader.get_physical_device_surface_present_modes(
-                device.physical_device().raw,
-                surface.raw,
-            )
+            surface
+                .loader
+                .get_physical_device_surface_present_modes(device.physical_device.raw, surface.raw)
         }?;
 
         info!("Swapchain format: {:?}", format);

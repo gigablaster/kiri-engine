@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::error;
-
 use ash::vk;
 use thiserror::Error;
 
@@ -23,7 +21,7 @@ use crate::{BufferHandle, ImageHandle};
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Backend error {0}")]
-    BackendError(kiri_backend::Error),
+    BackendError(#[from] kiri_backend::Error),
     #[error("Slot with name {0} not found")]
     SlotWithNameNotFound(String),
     #[error("Slot with index {0} not found")]
@@ -36,12 +34,8 @@ pub enum Error {
     InvalidImageHandle(ImageHandle),
     #[error("Invalid buffer handle {0}")]
     InvaludBufferHandle(BufferHandle),
-}
-
-impl From<kiri_backend::Error> for Error {
-    fn from(value: kiri_backend::Error) -> Self {
-        Self::BackendError(value)
-    }
+    #[error("Descriptor binding slot with name {0} not found")]
+    BindingSlotNotFound(String),
 }
 
 impl From<vk::Result> for Error {

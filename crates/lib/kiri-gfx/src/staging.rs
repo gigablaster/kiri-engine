@@ -24,7 +24,7 @@ use ash::vk::{self};
 use kiri_backend::{Buffer, BufferCreateDesc, Image, RenderDevice};
 use kiri_common::BumpAllocator;
 
-use crate::{Error, ImageSubresourceData};
+use crate::{Error, ImageUploadData};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
@@ -76,7 +76,7 @@ impl Staging {
             device,
             BufferCreateDesc::shared(STAGING_SIZE)
                 .transfer_source()
-                .dedicated(true),
+                .dedicated(),
         )?;
         let mapping = staging.map()?;
 
@@ -88,7 +88,7 @@ impl Staging {
             allocator: BumpAllocator::new(
                 STAGING_SIZE as _,
                 device
-                    .physical_device()
+                    .physical_device
                     .properties
                     .limits
                     .buffer_image_granularity as _,
@@ -125,11 +125,7 @@ impl Staging {
         }
     }
 
-    pub fn upload_image(
-        &mut self,
-        target: &Image,
-        data: &[ImageSubresourceData],
-    ) -> Result<(), Error> {
+    pub fn upload_image(&mut self, target: &Image, data: &[ImageUploadData]) -> Result<(), Error> {
         for (mip, data) in data.iter().enumerate() {
             while !self.try_push_mip(target, mip as _, data)? {
                 self.upload_impl(false)?;
@@ -142,7 +138,7 @@ impl Staging {
         &mut self,
         target: &Image,
         mip: u32,
-        data: &ImageSubresourceData,
+        data: &ImageUploadData,
     ) -> Result<bool, Error> {
         let size = data.data.len();
         if size > STAGING_SIZE {

@@ -17,7 +17,8 @@ use std::{
     cmp,
     fmt::{Debug, Display},
     hash::Hash,
-    marker::PhantomData, mem::MaybeUninit,
+    marker::PhantomData,
+    mem::MaybeUninit,
 };
 
 pub trait PoolLimits {
@@ -45,7 +46,6 @@ pub trait PoolLimits {
 
     fn max_generation() -> u32 {
         1 << Self::generation_bits()
-
     }
 }
 
@@ -116,7 +116,7 @@ impl<T, Limits: PoolLimits> Handle<T, Limits> {
         Handle {
             data: self.data,
             _phantom1: PhantomData,
-            _phantom2: PhantomData
+            _phantom2: PhantomData,
         }
     }
 
@@ -126,7 +126,7 @@ impl<T, Limits: PoolLimits> Handle<T, Limits> {
         Self {
             data: (generation << Limits::index_bits()) | index,
             _phantom1: PhantomData,
-            _phantom2: PhantomData
+            _phantom2: PhantomData,
         }
     }
 
@@ -134,7 +134,7 @@ impl<T, Limits: PoolLimits> Handle<T, Limits> {
         Self {
             data: u32::MAX,
             _phantom1: PhantomData,
-            _phantom2: PhantomData
+            _phantom2: PhantomData,
         }
     }
 
@@ -174,7 +174,7 @@ impl<T> From<u32> for Handle<T> {
         Handle {
             data: value,
             _phantom1: PhantomData,
-            _phantom2: PhantomData
+            _phantom2: PhantomData,
         }
     }
 }
@@ -268,11 +268,12 @@ impl<T: Default + Copy + Eq + Debug> PoolValueWrapper<T> for SentinelPoolStrateg
     }
 }
 
+#[derive(Debug)]
 pub struct MaybeUninitVauleWrapper<T> {
-    _phantom: PhantomData<T>
+    _phantom: PhantomData<T>,
 }
 
-impl<T: Copy> PoolValueWrapper<T> for MaybeUninitVauleWrapper<T> {
+impl<T: Copy + Debug> PoolValueWrapper<T> for MaybeUninitVauleWrapper<T> {
     type Wrapped = MaybeUninit<T>;
 
     fn wrap(value: T) -> Self::Wrapped {
@@ -284,16 +285,14 @@ impl<T: Copy> PoolValueWrapper<T> for MaybeUninitVauleWrapper<T> {
     }
 
     fn get_mut(wrapped: &mut Self::Wrapped) -> Option<&mut T> {
-        Some(unsafe {wrapped.assume_init_mut()})
+        Some(unsafe { wrapped.assume_init_mut() })
     }
 
     fn unwrap(wrapped: Self::Wrapped) -> Option<T> {
-        Some(unsafe {
-            wrapped.assume_init()
-        })
+        Some(unsafe { wrapped.assume_init() })
     }
 
-    fn has_value(wrapped: &Self::Wrapped) -> bool {
+    fn has_value(_wrapped: &Self::Wrapped) -> bool {
         true
     }
 
@@ -308,13 +307,16 @@ impl<T: Copy> PoolValueWrapper<T> for MaybeUninitVauleWrapper<T> {
     }
 }
 
-
 #[derive(Debug)]
-pub struct Pool<T, Wrapper: PoolValueWrapper<T> = OptionPoolStrategy<T>, Limits: PoolLimits = DefaultPoolLimits> {
+pub struct Pool<
+    T,
+    Wrapper: PoolValueWrapper<T> = OptionPoolStrategy<T>,
+    Limits: PoolLimits = DefaultPoolLimits,
+> {
     data: Vec<Wrapper::Wrapped>,
     generations: Vec<u32>,
     empty: Vec<u32>,
-    _phantom: PhantomData<Limits>
+    _phantom: PhantomData<Limits>,
 }
 
 impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limits> {
@@ -323,7 +325,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
             data: Vec::with_capacity(Limits::DEFAULT_SPACE),
             generations: Vec::with_capacity(Limits::DEFAULT_SPACE),
             empty: Vec::with_capacity(Limits::DEFAULT_SPACE),
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 
@@ -372,7 +374,8 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
     pub fn remove(&mut self, handle: Handle<T, Limits>) -> Option<T> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
-            self.generations[index] = self.generations[index].wrapping_add(1) % Limits::max_generation();
+            self.generations[index] =
+                self.generations[index].wrapping_add(1) % Limits::max_generation();
             self.empty.push(index as _);
             return Some(Wrapper::take(&mut self.data[index]));
         }
@@ -396,7 +399,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         EnumerateHandlesIter {
             container: self,
             current: 0,
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 
@@ -404,7 +407,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         Drain {
             data: std::mem::take(&mut self.data),
             current: 0,
-            _phantom: PhantomData
+            _phantom: PhantomData,
         }
     }
 
@@ -431,16 +434,18 @@ pub struct Iter<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
 pub struct EnumerateHandlesIter<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
     container: &'a Pool<T, Wrapper, Limits>,
     current: usize,
-    _phantom: PhantomData<Limits>
+    _phantom: PhantomData<Limits>,
 }
 
 pub struct Drain<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
     data: Vec<Wrapper::Wrapped>,
     current: usize,
-    _phantom: PhantomData<Limits>
+    _phantom: PhantomData<Limits>,
 }
 
-impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator for Iter<'a, T, Wrapper, Limits> {
+impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
+    for Iter<'a, T, Wrapper, Limits>
+{
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -465,7 +470,9 @@ impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator for Iter<
     }
 }
 
-impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator for EnumerateHandlesIter<'a, T, Wrapper, Limits> {
+impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
+    for EnumerateHandlesIter<'a, T, Wrapper, Limits>
+{
     type Item = (Handle<T, Limits>, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -621,6 +628,16 @@ where
             hot: std::mem::take(&mut self.hot.data),
             cold: std::mem::take(&mut self.cold.data),
             current: 0,
+        }
+    }
+
+    pub fn for_each_mut<CB: Fn(&mut T, &mut U)>(&mut self, op: CB) {
+        for index in 0..self.hot.data.len() {
+            if let Some(hot) = WrapperT::get_mut(&mut self.hot.data[index]) {
+                if let Some(cold) = WrapperU::get_mut(&mut self.cold.data[index]) {
+                    op(hot, cold);
+                }
+            }
         }
     }
 }

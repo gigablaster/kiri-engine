@@ -18,10 +18,12 @@ use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::{Error, Image, ImageSubresource, Instance};
+use crate::{
+    create_descriptor_layout, DescriptorSetLayoutDesc, Error, Image, ImageSubresource, Instance,
+};
 
 use super::{
     drop_list::DropList, frame::Frame, physical_device::PhysicalDevice, FindSuitableDevice,
@@ -48,6 +50,7 @@ pub struct RenderDevice {
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
+    layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
 }
 
 impl Debug for RenderDevice {
@@ -176,6 +179,7 @@ impl RenderDevice {
             current_drop_list: Mutex::default(),
             raw: device,
             debug,
+            layouts: Default::default(),
         }))
     }
 
@@ -464,8 +468,24 @@ impl RenderDevice {
         }
     }
 
-    pub fn physical_device(&self) -> &PhysicalDevice {
-        &self.physical_device
+    pub fn get_or_create_layout(
+        &self,
+        stage: vk::ShaderStageFlags,
+        desc: &DescriptorSetLayoutDesc,
+    ) -> Result<vk::DescriptorSetLayout, Error> {
+        let layouts = self.layouts.upgradable_read();
+        if let Some(layout) = layouts.get(desc) {
+            Ok(*layout)
+        } else {
+            let mut layouts = RwLockUpgradableReadGuard::upgrade(layouts);
+            if let Some(layout) = layouts.get(desc) {
+                Ok(*layout)
+            } else {
+                let layout = create_descriptor_layout(&self, stage, desc)?;
+                layouts.insert(desc.clone(), layout);
+                Ok(layout)
+            }
+        }
     }
 }
 

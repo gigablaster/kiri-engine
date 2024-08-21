@@ -27,9 +27,11 @@ use log::{info, warn};
 
 use crate::{Error, Image, ImageViewDesc, Program, RenderDevice};
 
+pub const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+
 #[derive(Debug, Clone, Copy)]
 pub enum AttachmentClearValue {
-    None,
     Color([f32; 4]),
     DepthStencil(f32, u32),
 }
@@ -43,7 +45,6 @@ impl From<AttachmentClearValue> for vk::ClearValue {
             AttachmentClearValue::DepthStencil(depth, stencil) => vk::ClearValue {
                 depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
             },
-            AttachmentClearValue::None => vk::ClearValue::default(),
         }
     }
 }
@@ -54,13 +55,13 @@ pub struct RenderAttachmentLayoutDesc<'a> {
     pub depth: Option<vk::Format>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RenderAttachmentDesc<'a> {
     pub image: &'a Image,
     pub layout: vk::ImageLayout,
     pub load: vk::AttachmentLoadOp,
     pub store: vk::AttachmentStoreOp,
-    pub clear: AttachmentClearValue,
+    pub clear: vk::ClearValue,
 }
 
 impl<'a> RenderAttachmentLayoutDesc<'a> {
@@ -412,7 +413,7 @@ struct PipelineDiskCache {
 
 impl PipelineDiskCache {
     pub fn new(device: &RenderDevice, data: &[u8]) -> Self {
-        let pdevice = device.physical_device();
+        let pdevice = &device.physical_device;
         let vendor_id = pdevice.properties.vendor_id;
         let device_id = pdevice.properties.device_id;
         let driver_version = pdevice.properties.driver_version;
@@ -473,7 +474,7 @@ pub fn load_or_create_pipeline_cache<P: AsRef<Path>>(
     path: P,
 ) -> io::Result<vk::PipelineCache> {
     info!("Loading pipeline cache from {:?}", path.as_ref());
-    let pdevice = device.physical_device();
+    let pdevice = &device.physical_device;
     let data = if let Ok(file) = File::open(path) {
         if let Ok(cache) = PipelineDiskCache::read(file) {
             if cache.vendor_id == pdevice.properties.vendor_id
