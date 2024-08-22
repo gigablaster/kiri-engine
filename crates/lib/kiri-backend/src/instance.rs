@@ -34,6 +34,7 @@ pub struct Instance {
 
 unsafe impl Send for Instance {}
 unsafe impl Sync for Instance {}
+
 #[derive(Debug)]
 pub struct InstanceBuilder {
     pub extensions: Vec<&'static CStr>,

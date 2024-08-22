@@ -32,6 +32,17 @@ pub struct ImageDesc {
     pub array_elements: u32,
 }
 
+trait IsRenderTarget {
+    fn is_render_target(&self) -> bool;
+}
+
+impl IsRenderTarget for vk::ImageUsageFlags {
+    fn is_render_target(&self) -> bool {
+        self.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            || self.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc {
     pub ty: Option<vk::ImageViewType>,
@@ -288,6 +299,11 @@ impl Drop for Image {
                 self.clear_views_impl(drop_list);
             })
         } else {
+            if self.desc.usage.is_render_target() {
+                self.device.with_drop_list(|drop_list| {
+                    drop_list.drop_image(self.raw);
+                })
+            }
             self.clear_views();
         }
     }
@@ -307,6 +323,7 @@ impl Image {
         desc: ImageDesc,
         name: Option<&str>,
     ) -> Self {
+        assert!(!desc.usage.is_render_target());
         if let Some(name) = name {
             device.set_object_name(image, name);
         }
@@ -329,19 +346,25 @@ impl Image {
             device.set_object_name(image, name);
         }
         let mut requirements = unsafe { device.raw.get_image_memory_requirements(image) };
-        // Workaround - gpu_alloc returns wrong offset when size < aligment.
-        requirements.size = requirements.size.max(requirements.alignment);
-        let memory = device.allocate_memory(
-            requirements,
-            gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
-            desc.dedicated,
-        )?;
-        unsafe {
-            device
-                .raw
-                .bind_image_memory(image, *memory.memory(), memory.offset())
-        }?;
-
+        let memory = if desc.usage.is_render_target() {
+            let (memory, offset) = device.allocate_render_target(requirements)?;
+            unsafe { device.raw.bind_image_memory(image, memory, offset) }?;
+            None
+        } else {
+            // Workaround - gpu_alloc returns wrong offset when size < aligment.
+            requirements.size = requirements.size.max(requirements.alignment);
+            let memory = device.allocate_memory(
+                requirements,
+                gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
+                desc.dedicated,
+            )?;
+            unsafe {
+                device
+                    .raw
+                    .bind_image_memory(image, *memory.memory(), memory.offset())
+            }?;
+            Some(memory)
+        };
         Ok(Self {
             device: device.clone(),
             raw: image,
@@ -353,7 +376,7 @@ impl Image {
                 mip_levels: desc.mip_levels as u32,
                 array_elements: desc.array_elements as u32,
             },
-            memory: Some(memory),
+            memory,
             views: Default::default(),
         })
     }

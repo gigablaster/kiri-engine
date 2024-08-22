@@ -18,11 +18,13 @@ use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk::{self, ImageSubresourceLayers};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
     create_descriptor_layout, DescriptorSetLayoutDesc, Error, Image, ImageSubresource, Instance,
+    RenderTargetAllocator,
 };
 
 use super::{
@@ -51,6 +53,7 @@ pub struct RenderDevice {
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
     layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
+    render_target_allocator: RenderTargetAllocator,
 }
 
 impl Debug for RenderDevice {
@@ -58,6 +61,8 @@ impl Debug for RenderDevice {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.raw.handle()))
     }
 }
+
+const RENDER_TARGET_MEMORY: u64 = 256 * 1024 * 1024;
 
 impl RenderDevice {
     pub fn new(
@@ -169,6 +174,12 @@ impl RenderDevice {
         Ok(Arc::new(Self {
             instance: instance.clone(),
             samplers,
+            render_target_allocator: RenderTargetAllocator::new(
+                &device,
+                &instance.raw,
+                &pdevice,
+                RENDER_TARGET_MEMORY,
+            )?,
             physical_device: pdevice,
             memory_allocator: Mutex::new(GpuAllocator::new(allocator_config, allocator_props)),
             universal_queue,
@@ -259,6 +270,16 @@ impl RenderDevice {
         } else {
             unsafe { allocator.alloc(AshMemoryDevice::wrap(&self.raw), request) }
         }?)
+    }
+
+    pub(super) fn allocate_render_target(
+        &self,
+        requirements: vk::MemoryRequirements,
+    ) -> Result<(vk::DeviceMemory, u64), Error> {
+        Ok((
+            self.render_target_allocator.memory,
+            self.render_target_allocator.allocate(requirements)?,
+        ))
     }
 
     pub(super) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
@@ -502,6 +523,11 @@ impl RenderDevice {
             }
         }
     }
+
+    pub(super) fn reset_render_targets(&self) {
+        debug!("Reset render target pool");
+        self.render_target_allocator.reset();
+    }
 }
 
 impl Drop for RenderDevice {
@@ -527,6 +553,7 @@ impl Drop for RenderDevice {
         self.layouts.write().drain().for_each(|(_, layout)| unsafe {
             self.raw.destroy_descriptor_set_layout(layout, None)
         });
+        self.render_target_allocator.free(&self.raw);
         unsafe {
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
             self.raw.destroy_device(None);

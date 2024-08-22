@@ -44,6 +44,8 @@ pub enum Error {
     SamplerNotFound(SamplerDesc),
     #[error("Shader reflection error: {0}")]
     ShaderReflectionError(rspirv_reflect::ReflectError),
+    #[error("Can't allocate memory for render targets")]
+    NoRenderTargetMemory,
 }
 
 impl From<vk::Result> for Error {

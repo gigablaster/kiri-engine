@@ -177,7 +177,7 @@ impl Swapchain {
                     *image,
                     ImageDesc {
                         ty: vk::ImageType::TYPE_2D,
-                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                        usage: vk::ImageUsageFlags::TRANSFER_DST,
                         format: format.format,
                         dims: [surface_resolution.width, surface_resolution.height],
                         mip_levels: 1,
@@ -206,6 +206,7 @@ impl Swapchain {
             acquire_semaphores.push(acquire_semaphore);
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
+        device.reset_render_targets();
         Ok(Self {
             device: device.clone(),
             raw: swapchain,

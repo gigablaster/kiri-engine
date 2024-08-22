@@ -25,6 +25,7 @@ mod physical_device;
 mod pipeline;
 mod program;
 mod render_device;
+mod render_target;
 mod swapchain;
 
 use ash::vk::{self};
@@ -38,6 +39,7 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
 pub use render_device::*;
+use render_target::*;
 pub use swapchain::*;
 
 type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
