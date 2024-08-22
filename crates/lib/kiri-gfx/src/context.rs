@@ -25,11 +25,11 @@ use crate::{
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
-    image: ImageHandle,
-    layout: vk::ImageLayout,
-    load: vk::AttachmentLoadOp,
-    store: vk::AttachmentStoreOp,
-    clear: vk::ClearValue,
+    pub image: ImageHandle,
+    pub layout: vk::ImageLayout,
+    pub load: vk::AttachmentLoadOp,
+    pub store: vk::AttachmentStoreOp,
+    pub clear: vk::ClearValue,
 }
 
 pub struct RenderPassRecorder<'a> {
