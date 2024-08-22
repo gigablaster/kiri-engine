@@ -15,12 +15,12 @@
 
 use arrayvec::ArrayVec;
 use ash::vk;
-use kiri_backend::{AttachmentClearValue, RenderDevice, MAX_COLOR_ATTACHMENTS};
+use kiri_backend::{AttachmentClearValue, Image, MAX_COLOR_ATTACHMENTS};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, Error, ImageHandle,
+    DynamicGpuMemory, Error, ImageHandle, Renderer, Resolution, TempImageGuard, TempImagePool,
 };
 
 #[derive(Clone, Copy)]
@@ -79,13 +79,28 @@ impl<'a> RenderPassRecorder<'a> {
             .extend(self.temp_descriptors.iter());
     }
 
+    pub fn get_image(
+        &self,
+        resolution: Resolution,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+    ) -> Result<TempImageGuard<'a>, Error> {
+        self.context.image_pool.get(
+            &self.context.renderer,
+            resolution,
+            format,
+            usage,
+            self.context.backbuffer,
+        )
+    }
+
     pub fn allocate_descriptor_set(
         &mut self,
         builder: DescriptorSetBuilder,
     ) -> Result<DescriptorHandle, Error> {
         let handle = self.context.descriptors.write().push(
             vk::DescriptorSet::null(),
-            builder.build(&self.context.device)?,
+            builder.build(&self.context.renderer.device)?,
         );
         self.temp_descriptors.push(handle);
         Ok(handle)
@@ -99,7 +114,9 @@ struct RenderPass {
 }
 
 pub struct RenderContext<'a> {
-    device: &'a RenderDevice,
+    renderer: &'a Renderer,
+    image_pool: &'a TempImagePool,
+    backbuffer: &'a Image,
     dynamic: &'a DynamicGpuMemory,
     passes: Mutex<Vec<RenderPass>>,
     descriptors: &'a RwLock<DescriptorPool>,
@@ -144,16 +161,20 @@ impl RenderTarget {
 
 impl<'a> RenderContext<'a> {
     pub(crate) fn new(
-        device: &'a RenderDevice,
+        renderer: &'a Renderer,
+        image_pool: &'a TempImagePool,
         dynamic: &'a DynamicGpuMemory,
         descriptors: &'a RwLock<DescriptorPool>,
+        backbuffer: &'a Image,
     ) -> Self {
         Self {
-            device,
+            renderer,
+            image_pool,
             dynamic,
             passes: Default::default(),
             descriptors,
             temp_descriptors: Default::default(),
+            backbuffer,
         }
     }
 

@@ -33,7 +33,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, ImageUploadData,
-    RenderContext, Staging,
+    RenderContext, Resolution, Staging, TempImagePool,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -87,6 +87,7 @@ pub struct Renderer {
     staging: Mutex<Staging>,
     pipelines_to_compile: Mutex<HashMap<PipelineHandle, PipelineCompilationData>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
+    image_pool: TempImagePool,
 }
 
 impl Renderer {
@@ -100,6 +101,7 @@ impl Renderer {
             descriptors: Default::default(),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
+            image_pool: Default::default(),
         }))
     }
 
@@ -245,6 +247,7 @@ impl Renderer {
     pub fn render<RenderCB: FnOnce(&RenderContext)>(
         &self,
         swapchain: &Swapchain,
+        format: vk::Format,
         render: RenderCB,
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
@@ -265,7 +268,13 @@ impl Renderer {
         let dynamic = dynamic_memory.get(self)?;
         drop(dynamic_memory);
         // Generate render streams
-        let context = RenderContext::new(&self.device, &dynamic, &self.descriptors);
+        let context = RenderContext::new(
+            self,
+            &self.image_pool,
+            &dynamic,
+            &self.descriptors,
+            target.image,
+        );
         render(&context);
         // Prepare
         let images = self.images.read();
@@ -282,6 +291,13 @@ impl Renderer {
         // Actual rendering
         let command_buffer =
             frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
+        let image = self.image_pool.get(
+            &self,
+            Resolution::Full,
+            format,
+            vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            target.image,
+        )?;
         // TODO!
         // Submit
         if let Some(semaphore) = semaphore {
@@ -307,6 +323,7 @@ impl Renderer {
         }
         // Present
         // self.device.present(target, image, frame)
+        drop(image);
         // Cleanup
         let mut descriptors = self.descriptors.write();
         context.temp_descriptors.lock().drain(..).for_each(|x| {
@@ -315,6 +332,10 @@ impl Renderer {
         self.device.end_frame(frame);
 
         Ok(FrameState::Rendered)
+    }
+
+    pub fn backbuffer_changed(&self) {
+        self.image_pool.purge(&self);
     }
 
     async fn compile_pipelines(
