@@ -44,7 +44,7 @@ pub(super) struct TempImagePool {
 pub struct TempImageGuard<'a> {
     pool: &'a TempImagePool,
     key: TempImageKey,
-    image: ImageHandle,
+    pub handle: ImageHandle,
 }
 
 impl Resolution {
@@ -77,7 +77,7 @@ impl TempImagePool {
             Ok(TempImageGuard {
                 pool: self,
                 key,
-                image,
+                handle: image,
             })
         } else {
             let image = renderer.create_image(
@@ -88,7 +88,7 @@ impl TempImagePool {
             Ok(TempImageGuard {
                 pool: self,
                 key,
-                image,
+                handle: image,
             })
         }
     }
@@ -107,14 +107,8 @@ impl TempImagePool {
     }
 }
 
-impl<'a> AsRef<ImageHandle> for TempImageGuard<'a> {
-    fn as_ref(&self) -> &ImageHandle {
-        &self.image
-    }
-}
-
 impl<'a> Drop for TempImageGuard<'a> {
     fn drop(&mut self) {
-        self.pool.recycle(self.image, self.key);
+        self.pool.recycle(self.handle, self.key);
     }
 }

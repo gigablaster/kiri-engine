@@ -15,12 +15,13 @@
 
 use arrayvec::ArrayVec;
 use ash::vk;
-use kiri_backend::{AttachmentClearValue, Image, MAX_COLOR_ATTACHMENTS};
+use kiri_backend::{AttachmentClearValue, Image, ImageViewDesc, MAX_COLOR_ATTACHMENTS};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, Error, ImageHandle, Renderer, Resolution, TempImageGuard, TempImagePool,
+    DynamicGpuMemory, Error, ImageHandle, ImagePool, Renderer, Resolution, TempImageGuard,
+    TempImagePool,
 };
 
 #[derive(Clone, Copy)]
@@ -59,7 +60,7 @@ impl<'a> RenderPassRecorder<'a> {
         self.streams.push(stream);
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<usize, Error> {
+    pub fn push<T: Copy>(&self, data: &[T]) -> Result<u32, Error> {
         self.context.dynamic.push(data)
     }
 
@@ -107,10 +108,10 @@ impl<'a> RenderPassRecorder<'a> {
     }
 }
 
-struct RenderPass {
-    color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    depth: Option<RenderTarget>,
-    streams: Vec<DrawStream>,
+pub(super) struct RenderPass {
+    pub color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+    pub depth: Option<RenderTarget>,
+    pub streams: Vec<DrawStream>,
 }
 
 pub struct RenderContext<'a> {
@@ -118,7 +119,7 @@ pub struct RenderContext<'a> {
     image_pool: &'a TempImagePool,
     backbuffer: &'a Image,
     dynamic: &'a DynamicGpuMemory,
-    passes: Mutex<Vec<RenderPass>>,
+    pub(super) passes: Mutex<Vec<RenderPass>>,
     descriptors: &'a RwLock<DescriptorPool>,
     pub(super) temp_descriptors: Mutex<Vec<DescriptorHandle>>,
 }
@@ -156,6 +157,23 @@ impl RenderTarget {
         self.load = vk::AttachmentLoadOp::CLEAR;
         self.clear = value.into();
         self
+    }
+
+    pub(super) fn build(
+        &self,
+        images: &ImagePool,
+        aspect: vk::ImageAspectFlags,
+    ) -> Result<vk::RenderingAttachmentInfo, Error> {
+        let image = images
+            .get(self.image)
+            .ok_or(Error::InvalidImageHandle(self.image))?;
+        let view = image.view(ImageViewDesc::new(aspect))?;
+        Ok(vk::RenderingAttachmentInfo::default()
+            .clear_value(self.clear)
+            .image_layout(self.layout)
+            .image_view(view)
+            .load_op(self.load)
+            .store_op(self.store))
     }
 }
 

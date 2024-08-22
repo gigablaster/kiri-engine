@@ -25,7 +25,7 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Image, ImageViewDesc, Program, RenderDevice};
+use crate::{Error, Program, RenderDevice};
 
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -55,15 +55,6 @@ pub struct RenderAttachmentLayoutDesc<'a> {
     pub depth: Option<vk::Format>,
 }
 
-#[derive(Clone, Copy)]
-pub struct RenderAttachmentDesc<'a> {
-    pub image: &'a Image,
-    pub layout: vk::ImageLayout,
-    pub load: vk::AttachmentLoadOp,
-    pub store: vk::AttachmentStoreOp,
-    pub clear: vk::ClearValue,
-}
-
 impl<'a> RenderAttachmentLayoutDesc<'a> {
     fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
         let mut info =
@@ -72,17 +63,6 @@ impl<'a> RenderAttachmentLayoutDesc<'a> {
             info = info.depth_attachment_format(depth);
         }
         info
-    }
-}
-
-impl<'a> RenderAttachmentDesc<'a> {
-    fn build(self, aspect: vk::ImageAspectFlags) -> Result<vk::RenderingAttachmentInfo<'a>, Error> {
-        Ok(vk::RenderingAttachmentInfo::default()
-            .clear_value(self.clear.into())
-            .image_layout(self.layout)
-            .image_view(self.image.view(ImageViewDesc::new(aspect))?)
-            .load_op(self.load)
-            .store_op(self.store))
     }
 }
 

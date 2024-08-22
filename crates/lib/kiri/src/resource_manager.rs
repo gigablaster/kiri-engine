@@ -341,7 +341,7 @@ impl ResourceManager {
     }
 
     pub fn upload_buffer<T: Copy>(&self, buffer: BufferSlice, data: &[T]) -> Result<(), Error> {
-        let gpu_buffer = self.buffers.read().resolve(buffer.buffer)?;
+        let gpu_buffer = self.buffers.read().resolve(buffer.handle)?;
         self.staging
             .lock()
             .upload_buffer(&gpu_buffer, buffer.offset as _, data)?;

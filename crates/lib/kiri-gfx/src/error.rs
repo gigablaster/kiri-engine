@@ -16,7 +16,7 @@
 use ash::vk;
 use thiserror::Error;
 
-use crate::{BufferHandle, ImageHandle};
+use crate::{BufferHandle, DescriptorHandle, ImageHandle, PipelineHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -33,9 +33,13 @@ pub enum Error {
     #[error("Invalid image handle {0}")]
     InvalidImageHandle(ImageHandle),
     #[error("Invalid buffer handle {0}")]
-    InvaludBufferHandle(BufferHandle),
+    InvalidBufferHandle(BufferHandle),
     #[error("Descriptor binding slot with name {0} not found")]
     BindingSlotNotFound(String),
+    #[error("Invalid pipeline handle {0}")]
+    InvalidPipelineHandle(PipelineHandle),
+    #[error("Invalid descriptor handle {0}")]
+    InvalidDescriptorHandle(DescriptorHandle),
 }
 
 impl From<vk::Result> for Error {

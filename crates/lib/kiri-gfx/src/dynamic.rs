@@ -59,7 +59,7 @@ impl DynamicGpuMemory {
         })
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<usize, Error> {
+    pub fn push<T: Copy>(&self, data: &[T]) -> Result<u32, Error> {
         let size = mem::size_of_val(data);
         if let Some(offset) = self.allocator.allocate(size) {
             unsafe {
@@ -69,7 +69,7 @@ impl DynamicGpuMemory {
                     size,
                 )
             }
-            Ok(offset)
+            Ok(offset as u32)
         } else {
             Err(Error::OutOfDynamicMemory)
         }

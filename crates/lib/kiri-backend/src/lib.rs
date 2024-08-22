@@ -27,7 +27,7 @@ mod program;
 mod render_device;
 mod swapchain;
 
-use ash::vk::{self, Handle};
+use ash::vk::{self};
 pub use buffer::*;
 use drop_list::*;
 pub use error::*;

@@ -21,19 +21,21 @@ use std::{
     sync::Arc,
 };
 
+use arrayvec::ArrayVec;
 use ash::vk::{self};
 use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
-    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, Frame, Image,
-    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
-    RenderAttachmentLayoutDesc, RenderDevice, Swapchain,
+    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
+    DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
+    Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc, RenderDevice, Swapchain,
+    MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, ImageUploadData,
-    RenderContext, Resolution, Staging, TempImagePool,
+    DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext, DynamicGpuMemoryPool, Error,
+    ImageUploadData, RenderContext, Resolution, Staging, TempImagePool,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -56,14 +58,14 @@ pub enum FrameState {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice {
-    pub buffer: BufferHandle,
+    pub handle: BufferHandle,
     pub offset: u32,
 }
 
 impl BufferSlice {
-    pub fn new(buffer: BufferHandle, offset: usize) -> BufferSlice {
+    pub fn new(buffer: BufferHandle, offset: u32) -> BufferSlice {
         Self {
-            buffer,
+            handle: buffer,
             offset: offset as u32,
         }
     }
@@ -175,7 +177,7 @@ impl Renderer {
         let buffers = self.buffers.read();
         let buffer = buffers
             .get_cold(handle)
-            .ok_or(Error::InvaludBufferHandle(handle))?;
+            .ok_or(Error::InvalidBufferHandle(handle))?;
         self.staging.lock().upload_buffer(buffer, offset, data)?;
         Ok(())
     }
@@ -189,7 +191,7 @@ impl Renderer {
             .buffers
             .write()
             .get_cold_mut(handle)
-            .ok_or(Error::InvaludBufferHandle(handle))?
+            .ok_or(Error::InvalidBufferHandle(handle))?
             .map()?)
     }
 
@@ -298,7 +300,69 @@ impl Renderer {
             vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             target.image,
         )?;
-        // TODO!
+        // TODO:: barriers
+        let passes = context.passes.into_inner();
+        unsafe {
+            self.device.raw.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+        }
+        let descriptors = self.descriptors.read();
+        let empty_descriptor_set = frame.allocate_descriptor(
+            &self.device.raw,
+            self.device.get_or_create_layout(
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                &DescriptorSetLayoutDesc::default(),
+            )?,
+            DescriptorCount::default(),
+        )?;
+        for pass in passes {
+            let color_attachments = pass
+                .color
+                .iter()
+                .map(|x| x.build(&images, vk::ImageAspectFlags::COLOR).unwrap())
+                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
+            let area = vk::Rect2D::default().extent(
+                vk::Extent2D::default()
+                    .width(target.image.desc.dims[0])
+                    .height(target.image.desc.dims[1]),
+            );
+            let mut render_info = vk::RenderingInfo::default()
+                .render_area(area)
+                .color_attachments(&color_attachments);
+            let depth = pass
+                .depth
+                .iter()
+                .map(|x| x.build(&images, vk::ImageAspectFlags::DEPTH).unwrap())
+                .next();
+            if let Some(depth) = &depth {
+                render_info = render_info.depth_attachment(depth);
+            }
+            unsafe {
+                self.device
+                    .raw
+                    .cmd_begin_rendering(command_buffer, &render_info);
+            }
+            let context = DrawStreamExecuteContext {
+                device: &self.device.raw,
+                pipelines: &pipelines,
+                descriptors: &descriptors,
+                buffers: &buffers,
+                empty: empty_descriptor_set,
+                render_area: area,
+            };
+            for stream in pass.streams {
+                stream.execute(&context, command_buffer)?;
+            }
+            unsafe {
+                self.device.raw.cmd_end_rendering(command_buffer);
+            }
+        }
+        unsafe {
+            self.device.raw.end_command_buffer(command_buffer)?;
+        }
         // Submit
         if let Some(semaphore) = semaphore {
             self.device.submit(
@@ -322,7 +386,8 @@ impl Renderer {
             )?;
         }
         // Present
-        // self.device.present(target, image, frame)
+        self.device
+            .present(target, images.get(image.handle).unwrap(), &frame)?;
         drop(image);
         // Cleanup
         let mut descriptors = self.descriptors.write();
@@ -430,7 +495,7 @@ impl Renderer {
                                 buffer_writes.add(
                                     vk::DescriptorBufferInfo::default()
                                         .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvaludBufferHandle(buffer.data.handle),
+                                            Error::InvalidBufferHandle(buffer.data.handle),
                                         )?)
                                         .offset(buffer.data.offset as _)
                                         .range(buffer.data.size as _),
@@ -451,7 +516,7 @@ impl Renderer {
                                 buffer_writes.add(
                                     vk::DescriptorBufferInfo::default()
                                         .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvaludBufferHandle(buffer.data.handle),
+                                            Error::InvalidBufferHandle(buffer.data.handle),
                                         )?)
                                         .offset(buffer.data.offset as _)
                                         .range(buffer.data.size as _),
@@ -472,7 +537,7 @@ impl Renderer {
                                 buffer_writes.add(
                                     vk::DescriptorBufferInfo::default()
                                         .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvaludBufferHandle(buffer.data.handle),
+                                            Error::InvalidBufferHandle(buffer.data.handle),
                                         )?)
                                         .range(buffer.data.size as _),
                                 ),
@@ -492,7 +557,7 @@ impl Renderer {
                                 buffer_writes.add(
                                     vk::DescriptorBufferInfo::default()
                                         .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvaludBufferHandle(buffer.data.handle),
+                                            Error::InvalidBufferHandle(buffer.data.handle),
                                         )?)
                                         .range(buffer.data.size as _),
                                 ),
