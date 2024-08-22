@@ -33,29 +33,15 @@ pub struct RenderTarget {
     pub clear: vk::ClearValue,
 }
 
-pub struct RenderPassRecorder<'a> {
+pub struct RenderPassBuilder<'a> {
     context: &'a RenderContext<'a>,
     color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth: Option<RenderTarget>,
     streams: Vec<DrawStream>,
-    temp_descriptors: Vec<DescriptorHandle>,
+    descriptor_sets: Vec<DescriptorHandle>,
 }
 
-impl<'a> RenderPassRecorder<'a> {
-    fn new(
-        context: &'a RenderContext<'a>,
-        color: &[RenderTarget],
-        depth: Option<RenderTarget>,
-    ) -> Self {
-        Self {
-            context,
-            color: color.iter().copied().collect(),
-            depth,
-            streams: Default::default(),
-            temp_descriptors: Default::default(),
-        }
-    }
-
+impl<'a> RenderPassBuilder<'a> {
     pub fn draw(&mut self, stream: DrawStream) {
         self.streams.push(stream);
     }
@@ -66,18 +52,6 @@ impl<'a> RenderPassRecorder<'a> {
 
     pub fn get_temprary_buffer(&self) -> BufferHandle {
         self.context.dynamic.get_buffer_handle()
-    }
-
-    pub fn submit(self) {
-        self.context.passes.lock().push(RenderPass {
-            color: self.color,
-            depth: self.depth,
-            streams: self.streams,
-        });
-        self.context
-            .temp_descriptors
-            .lock()
-            .extend(self.temp_descriptors.iter());
     }
 
     pub fn get_image(
@@ -103,15 +77,25 @@ impl<'a> RenderPassRecorder<'a> {
             vk::DescriptorSet::null(),
             builder.build(&self.context.renderer.device)?,
         );
-        self.temp_descriptors.push(handle);
+        self.descriptor_sets.push(handle);
         Ok(handle)
+    }
+
+    pub fn build(self) -> RenderPass {
+        RenderPass {
+            color: self.color,
+            depth: self.depth,
+            streams: self.streams,
+            descriptor_sets: self.descriptor_sets,
+        }
     }
 }
 
-pub(super) struct RenderPass {
-    pub color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    pub depth: Option<RenderTarget>,
-    pub streams: Vec<DrawStream>,
+pub struct RenderPass {
+    pub(super) color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+    pub(super) depth: Option<RenderTarget>,
+    pub(super) streams: Vec<DrawStream>,
+    pub(super) descriptor_sets: Vec<DescriptorHandle>,
 }
 
 pub struct RenderContext<'a> {
@@ -121,7 +105,6 @@ pub struct RenderContext<'a> {
     dynamic: &'a DynamicGpuMemory,
     pub(super) passes: Mutex<Vec<RenderPass>>,
     descriptors: &'a RwLock<DescriptorPool>,
-    pub(super) temp_descriptors: Mutex<Vec<DescriptorHandle>>,
 }
 
 impl RenderTarget {
@@ -191,7 +174,6 @@ impl<'a> RenderContext<'a> {
             dynamic,
             passes: Default::default(),
             descriptors,
-            temp_descriptors: Default::default(),
             backbuffer,
         }
     }
@@ -200,8 +182,8 @@ impl<'a> RenderContext<'a> {
         &'a self,
         color: &[RenderTarget],
         depth: Option<RenderTarget>,
-    ) -> RenderPassRecorder {
-        RenderPassRecorder {
+    ) -> RenderPassBuilder {
+        RenderPassBuilder {
             context: self,
             color: color
                 .iter()
@@ -209,7 +191,11 @@ impl<'a> RenderContext<'a> {
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth,
             streams: Default::default(),
-            temp_descriptors: Default::default(),
+            descriptor_sets: Default::default(),
         }
+    }
+
+    pub fn submit(&self, pass: RenderPass) {
+        self.passes.lock().push(pass);
     }
 }

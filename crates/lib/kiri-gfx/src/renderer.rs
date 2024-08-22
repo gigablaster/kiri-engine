@@ -318,7 +318,9 @@ impl Renderer {
             )?,
             DescriptorCount::default(),
         )?;
+        let mut descriptors_to_clean = Vec::new();
         for pass in passes {
+            descriptors_to_clean.extend(&pass.descriptor_sets);
             let color_attachments = pass
                 .color
                 .iter()
@@ -391,7 +393,7 @@ impl Renderer {
         drop(image);
         // Cleanup
         let mut descriptors = self.descriptors.write();
-        context.temp_descriptors.lock().drain(..).for_each(|x| {
+        descriptors_to_clean.drain(..).for_each(|x| {
             descriptors.remove(x);
         });
         self.device.end_frame(frame);

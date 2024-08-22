@@ -40,7 +40,7 @@ struct DrawState {
 }
 
 #[derive(Debug, Default)]
-pub struct DrawStreamRecorder {
+pub struct DrawStreamBuilder {
     current: DrawState,
     mask: u16,
     stream: Vec<u16>,
@@ -99,8 +99,8 @@ impl<'a> DrawStreamReader<'a> {
     }
 }
 
-impl DrawStreamRecorder {
-    pub fn finish(self) -> DrawStream {
+impl DrawStreamBuilder {
+    pub fn build(self) -> DrawStream {
         DrawStream {
             stream: self.stream,
             commands: self.commands,
