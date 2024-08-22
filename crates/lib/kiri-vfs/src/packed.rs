@@ -17,10 +17,11 @@ use bytes::Bytes;
 use kiri_common::Align;
 use memmap2::{Mmap, MmapOptions};
 use speedy::{Readable, Writable};
+use core::slice;
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, Seek, Write},
+    io::{self, Cursor, Read, Seek, Write},
     mem,
     path::Path,
 };
@@ -65,8 +66,9 @@ pub struct PackageBuilder {
 
 const DATA_ALIGMENT: u64 = 4096;
 const COMPRESS_LEVEL: i32 = 17;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAGICK: [u8; 4] = *b"KRPK";
+
 #[derive(Debug, Readable, Writable)]
 struct ArchiveHeader {
     pub offset: u64,
@@ -96,7 +98,8 @@ impl PackageBuilder {
         })
     }
 
-    pub fn pack(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()> {
+    pub fn pack(&mut self, reference: &AssetReference, data: Bytes) -> io::Result<()> {
+        let reference = reference.normalize();
         let offset = self.align_file()?;
         if data.len() <= (DATA_ALIGMENT as usize) {
             self.file.write_all(&data)?;
@@ -109,7 +112,9 @@ impl PackageBuilder {
                 },
             );
         } else {
-            let packed = zstd::bulk::compress(&data, COMPRESS_LEVEL)?;
+            let mut packer = zstd::stream::Encoder::new(Cursor::new(Vec::new()), COMPRESS_LEVEL)?;
+            packer.write_all(&data)?;
+            let packed = packer.finish()?.into_inner();
             self.file.write_all(&packed)?;
             self.directory.assets.insert(
                 reference,
@@ -156,22 +161,27 @@ impl PackedArchive {
 }
 
 impl Archive for PackedArchive {
-    fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
+    fn load(&self, reference: &AssetReference) -> io::Result<Box<dyn Read>> {
+        let reference = reference.normalize();
         let header = self.directory.assets.get(&reference).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Asset {} not found", reference),
         ))?;
         if let Some(packed) = header.packed {
             let data = &self.mmap[header.offset as usize..(header.offset + packed) as usize];
-            let unpacked = zstd::bulk::decompress(data, header.size as _)?;
-            Ok(unpacked.into())
+            let data = Cursor::new(unsafe { slice::from_raw_parts(data.as_ptr(), data.len()) });
+            Ok(Box::new(zstd::stream::Decoder::new(data)?))
         } else {
             let data = &self.mmap[header.offset as usize..(header.offset + header.size) as usize];
-            Ok(Bytes::copy_from_slice(data))
+            Ok(Box::new(Cursor::new(unsafe { slice::from_raw_parts(data.as_ptr(), data.len()) })))
         }
     }
 
-    fn save(&self, _reference: AssetReference, _data: Bytes) -> io::Result<()> {
-        Err(io::Error::other("Can't write to packed archive"))
+    fn save(&self, _reference: &AssetReference) -> io::Result<Box<dyn io::Write>> {
+        Err(io::Error::other("Can't write to packed archive."))
+    }
+
+    fn exist(&self, reference: &AssetReference) -> bool {
+        self.directory.assets.get(reference).is_some()
     }
 }

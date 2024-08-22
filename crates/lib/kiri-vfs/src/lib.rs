@@ -19,27 +19,60 @@ use std::{
     fmt::Display,
     fs::File,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{self, Path, PathBuf},
 };
 
-use bytes::Bytes;
 use lazy_static::lazy_static;
 pub use packed::*;
 use parking_lot::RwLock;
 use speedy::{Readable, Writable};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
-pub struct AssetReference(u64);
-
-impl From<u64> for AssetReference {
-    fn from(value: u64) -> Self {
-        Self(value)
-    }
-}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
+pub struct AssetReference(String);
 
 impl Display for AssetReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:8.8x}", self.0)
+        write!(f, "({})", self.0)
+    }
+}
+
+impl AssetReference {
+    pub fn new(name: &str) -> AssetReference {
+        Self(name.replace('\\', "/"))
+    }
+
+    pub fn normalize(&self) -> AssetReference {
+        self.0.to_ascii_lowercase().into()
+    }
+}
+
+impl From<&Path> for AssetReference {
+    fn from(value: &Path) -> Self {
+        Self::new(value.to_str().unwrap())
+    }
+}
+
+impl From<PathBuf> for AssetReference {
+    fn from(value: PathBuf) -> Self {
+        Self::new(value.to_str().unwrap())
+    }
+}
+
+impl From<&str> for AssetReference {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for AssetReference {
+    fn from(value: String) -> Self {
+        Self::new(&value)
+    }
+}
+
+impl AsRef<str> for AssetReference {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -47,27 +80,31 @@ unsafe impl Send for AssetReference {}
 unsafe impl Sync for AssetReference {}
 
 pub trait Archive: Send + Sync {
-    fn load(&self, reference: AssetReference) -> io::Result<Bytes>;
-    fn save(&self, reference: AssetReference, data: Bytes) -> io::Result<()>;
+    fn load(&self, reference: &AssetReference) -> io::Result<Box<dyn Read>>;
+    fn save(&self, reference: &AssetReference) -> io::Result<Box<dyn Write>>;
+    fn exist(&self, reference: &AssetReference) -> bool;
 }
 
 lazy_static! {
     static ref ARCHIVES: RwLock<Vec<Box<dyn Archive>>> = {
         let mut archives = Vec::<Box<dyn Archive>>::default();
+        // Data pack
         if let Ok(pack) = PackedArchive::open("data.bin") {
             archives.push(Box::new(pack));
         }
-        archives.push(Box::new(LocalCache::default()));
+        // Compiled assets
+        archives.push(Box::new(FileSystemArchive::new("data")));
+        // Raw assets
+        archives.push(Box::new(FileSystemArchive::new("assets")));
         RwLock::new(archives)
     };
-    static ref LOCAL_CACHE: LocalCache = Default::default();
 }
 
 pub fn vfs_register_archive(archive: Box<dyn Archive>) {
     ARCHIVES.write().insert(0, archive);
 }
 
-pub fn vfs_load(reference: AssetReference) -> io::Result<Bytes> {
+pub fn vfs_load(reference: &AssetReference) -> io::Result<Box<dyn Read>> {
     let archives = ARCHIVES.read();
     archives
         .iter()
@@ -75,26 +112,48 @@ pub fn vfs_load(reference: AssetReference) -> io::Result<Bytes> {
         .ok_or(io::Error::other(format!("Asset {} not found", reference)))
 }
 
-#[derive(Debug, Default)]
-pub struct LocalCache {}
+pub fn vfs_exist(reference: &AssetReference) -> bool {
+    let archives = ARCHIVES.read();
+    archives
+        .iter()
+        .any(|x| x.exist(reference))
+}
 
-const LOCAL_CACHE_PATH: &str = ".cache";
+#[derive(Debug)]
+pub struct FileSystemArchive {
+    root: PathBuf
+}
 
-impl Archive for LocalCache {
-    fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
-        let path = PathBuf::from(LOCAL_CACHE_PATH).join(format!("{}.bin", reference));
-        let mut file = File::open(path)?;
-        let size = file.metadata()?.len() as usize;
-        let size = if size == 0 { 1 } else { size };
-        let mut data = vec![0u8; size];
-        file.read_exact(&mut data)?;
-        Ok(data.into())
+impl Archive for FileSystemArchive {
+    fn load(&self, reference: &AssetReference) -> io::Result<Box<dyn Read>> {
+        Ok(Box::new(File::open(self.path(reference)?)?))
     }
 
-    fn save(&self, reference: AssetReference, data: Bytes) -> io::Result<()> {
-        let path = PathBuf::from(LOCAL_CACHE_PATH).join(format!("{}.bin", reference));
-        let mut file = File::create(path)?;
-        file.write_all(&data)?;
-        Ok(())
+    fn save(&self, reference: &AssetReference) -> io::Result<Box<dyn Write>> {
+        Ok(Box::new(File::create(self.path(reference)?)?))
+    }
+
+    fn exist(&self, reference: &AssetReference) -> bool {
+        if let Ok(result) = self.path(reference) {
+            result.exists()
+        } else {
+            false
+        }
+    }
+}
+
+impl FileSystemArchive {
+    pub fn new<P: AsRef<Path>>(root: P) -> Self {
+        Self {
+            root: path::absolute(root).unwrap()
+        }
+    }
+    fn path(&self, reference: &AssetReference) -> io::Result<PathBuf> {
+        let path = self.root.join(reference.as_ref()).canonicalize()?;
+        if !path.starts_with(&self.root) {
+            return Err(io::Error::other("Can't access resources outside of root path"));
+        }
+
+        Ok(path)
     }
 }
