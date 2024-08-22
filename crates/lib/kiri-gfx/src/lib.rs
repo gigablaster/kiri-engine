@@ -12,6 +12,7 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+mod barriers;
 mod context;
 mod descriptors;
 mod draw_stream;
@@ -21,6 +22,7 @@ mod image_pool;
 mod renderer;
 mod staging;
 
+pub use barriers::*;
 pub use context::*;
 pub use descriptors::*;
 pub use draw_stream::*;
@@ -29,7 +31,6 @@ pub use error::*;
 pub use image_pool::*;
 pub use renderer::*;
 use staging::*;
-
 #[derive(Debug, Clone, Copy)]
 pub struct ImageUploadData<'a> {
     pub data: &'a [u8],

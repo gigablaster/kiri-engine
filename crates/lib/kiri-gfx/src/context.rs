@@ -20,8 +20,8 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, Error, ImageHandle, ImagePool, Renderer, Resolution, TempImageGuard,
-    TempImagePool,
+    DynamicGpuMemory, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool, Renderer,
+    Resolution, TempImageGuard, TempImagePool,
 };
 
 #[derive(Clone, Copy)]
@@ -39,6 +39,7 @@ pub struct RenderPassBuilder<'a> {
     depth: Option<RenderTarget>,
     streams: Vec<DrawStream>,
     descriptor_sets: Vec<DescriptorHandle>,
+    image_barriers: Vec<ImageBarrier>,
 }
 
 impl<'a> RenderPassBuilder<'a> {
@@ -54,21 +55,6 @@ impl<'a> RenderPassBuilder<'a> {
         self.context.dynamic.get_buffer_handle()
     }
 
-    pub fn get_image(
-        &self,
-        resolution: Resolution,
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-    ) -> Result<TempImageGuard<'a>, Error> {
-        self.context.image_pool.get(
-            &self.context.renderer,
-            resolution,
-            format,
-            usage,
-            self.context.backbuffer,
-        )
-    }
-
     pub fn allocate_descriptor_set(
         &mut self,
         builder: DescriptorSetBuilder,
@@ -81,12 +67,22 @@ impl<'a> RenderPassBuilder<'a> {
         Ok(handle)
     }
 
+    pub fn image_barrier(
+        &mut self,
+        image: ImageHandle,
+        ty: ImageBarrierType,
+        aspect: vk::ImageAspectFlags,
+    ) {
+        self.image_barriers.push(ImageBarrier(image, ty, aspect));
+    }
+
     pub fn build(self) -> RenderPass {
         RenderPass {
             color: self.color,
             depth: self.depth,
             streams: self.streams,
             descriptor_sets: self.descriptor_sets,
+            image_barriers: self.image_barriers,
         }
     }
 }
@@ -96,12 +92,14 @@ pub struct RenderPass {
     pub(super) depth: Option<RenderTarget>,
     pub(super) streams: Vec<DrawStream>,
     pub(super) descriptor_sets: Vec<DescriptorHandle>,
+    pub(super) image_barriers: Vec<ImageBarrier>,
 }
 
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
     image_pool: &'a TempImagePool,
     backbuffer: &'a Image,
+    pub target: ImageHandle,
     dynamic: &'a DynamicGpuMemory,
     pub(super) passes: Mutex<Vec<RenderPass>>,
     descriptors: &'a RwLock<DescriptorPool>,
@@ -167,6 +165,7 @@ impl<'a> RenderContext<'a> {
         dynamic: &'a DynamicGpuMemory,
         descriptors: &'a RwLock<DescriptorPool>,
         backbuffer: &'a Image,
+        target: ImageHandle,
     ) -> Self {
         Self {
             renderer,
@@ -175,10 +174,11 @@ impl<'a> RenderContext<'a> {
             passes: Default::default(),
             descriptors,
             backbuffer,
+            target,
         }
     }
 
-    pub fn create_pass(
+    pub fn create_render_pass(
         &'a self,
         color: &[RenderTarget],
         depth: Option<RenderTarget>,
@@ -192,7 +192,20 @@ impl<'a> RenderContext<'a> {
             depth,
             streams: Default::default(),
             descriptor_sets: Default::default(),
+            image_barriers: Default::default(),
         }
+    }
+
+    pub fn get_image(
+        &mut self,
+        resolution: Resolution,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+    ) -> Result<TempImageGuard<'a>, Error> {
+        let image =
+            self.image_pool
+                .get(&self.renderer, resolution, format, usage, self.backbuffer)?;
+        Ok(image)
     }
 
     pub fn submit(&self, pass: RenderPass) {

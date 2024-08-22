@@ -34,8 +34,9 @@ use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext, DynamicGpuMemoryPool, Error,
-    ImageUploadData, RenderContext, Resolution, Staging, TempImagePool,
+    record_barriers, DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext,
+    DynamicGpuMemoryPool, Error, ImageBarrier, ImageBarrierType, ImageUploadData, RenderContext,
+    Resolution, Staging, TempImagePool,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -270,12 +271,20 @@ impl Renderer {
         let dynamic = dynamic_memory.get(self)?;
         drop(dynamic_memory);
         // Generate render streams
+        let image = self.image_pool.get(
+            &self,
+            Resolution::Full,
+            format,
+            vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            target.image,
+        )?;
         let context = RenderContext::new(
             self,
             &self.image_pool,
             &dynamic,
             &self.descriptors,
             target.image,
+            image.handle,
         );
         render(&context);
         // Prepare
@@ -293,14 +302,6 @@ impl Renderer {
         // Actual rendering
         let command_buffer =
             frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
-        let image = self.image_pool.get(
-            &self,
-            Resolution::Full,
-            format,
-            vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            target.image,
-        )?;
-        // TODO:: barriers
         let passes = context.passes.into_inner();
         unsafe {
             self.device.raw.begin_command_buffer(
@@ -320,6 +321,12 @@ impl Renderer {
         )?;
         let mut descriptors_to_clean = Vec::new();
         for pass in passes {
+            record_barriers(
+                &self.device.raw,
+                command_buffer,
+                &images,
+                &pass.image_barriers,
+            )?;
             descriptors_to_clean.extend(&pass.descriptor_sets);
             let color_attachments = pass
                 .color
