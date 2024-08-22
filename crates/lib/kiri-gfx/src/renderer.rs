@@ -31,6 +31,7 @@ use kiri_backend::{
     MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
+use log::debug;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -247,7 +248,7 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
-    pub fn render<RenderCB: FnOnce(&RenderContext)>(
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
         &self,
         swapchain: &Swapchain,
         format: vk::Format,
@@ -286,7 +287,7 @@ impl Renderer {
             target.image,
             image.handle,
         );
-        render(&context);
+        render(&context)?;
         // Prepare
         let images = self.images.read();
         let buffers = self.buffers.read();
@@ -310,7 +311,7 @@ impl Renderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
         }
-        let descriptors = self.descriptors.read();
+        let mut descriptors = self.descriptors.write();
         let empty_descriptor_set = frame.allocate_descriptor(
             &self.device.raw,
             self.device.get_or_create_layout(
@@ -340,7 +341,8 @@ impl Renderer {
             );
             let mut render_info = vk::RenderingInfo::default()
                 .render_area(area)
-                .color_attachments(&color_attachments);
+                .color_attachments(&color_attachments)
+                .layer_count(1);
             let depth = pass
                 .depth
                 .iter()
@@ -386,7 +388,7 @@ impl Renderer {
         } else {
             self.device.submit(
                 &[command_buffer],
-                vk::Fence::null(),
+                frame.render_fence,
                 &[],
                 &[(
                     frame.render_finished,
@@ -399,7 +401,6 @@ impl Renderer {
             .present(target, images.get(image.handle).unwrap(), &frame)?;
         drop(image);
         // Cleanup
-        let mut descriptors = self.descriptors.write();
         descriptors_to_clean.drain(..).for_each(|x| {
             descriptors.remove(x);
         });
@@ -409,6 +410,7 @@ impl Renderer {
     }
 
     pub fn backbuffer_changed(&self) {
+        debug!("Clear all temprary images");
         self.image_pool.purge(&self);
     }
 
@@ -582,8 +584,7 @@ impl Renderer {
             unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
             Ok(())
         })?;
-
-        todo!()
+        Ok(())
     }
 
     fn invalidate_image_views(&self, image: ImageHandle) {

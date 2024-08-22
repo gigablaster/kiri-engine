@@ -17,6 +17,7 @@ use std::{borrow::Borrow, collections::HashMap, ops::Deref};
 
 use ash::vk;
 use kiri_backend::{Image, ImageCreateDesc};
+use log::debug;
 use parking_lot::Mutex;
 
 use crate::{Error, ImageHandle, Renderer};
@@ -80,8 +81,16 @@ impl TempImagePool {
                 handle: image,
             })
         } else {
+            debug!(
+                "Create render taget resolution: {:?} format: {:?} usage: {:?} dims: {:?}",
+                resolution,
+                format,
+                usage,
+                resolution.get_dims(backbuffer.desc.dims)
+            );
             let image = renderer.create_image(
                 ImageCreateDesc::new(format, resolution.get_dims(backbuffer.desc.dims))
+                    .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
                 None,
             )?;

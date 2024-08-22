@@ -69,6 +69,8 @@ pub struct Frame {
     per_thread_pools: Mutex<HashMap<ThreadId, CommandBufferPool>>,
     descriptor_allocators: Mutex<DescriptorAllocatorPool>,
     pub(super) present_fence: vk::Fence,
+    /// Submit this fence when submit rendering
+    pub render_fence: vk::Fence,
     /// Signal this semaphore when finsihed rendering
     pub render_finished: vk::Semaphore,
 }
@@ -122,11 +124,16 @@ impl Frame {
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
             )?;
+            let render_fence = device.create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )?;
             let render_finished =
                 device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
             let drop_list = DropList::default();
             Ok(Self {
                 present_fence,
+                render_fence,
                 render_finished,
                 drop_list,
                 per_thread_pools: Default::default(),
@@ -142,7 +149,7 @@ impl Frame {
     ) -> Result<(), Error> {
         self.drop_list.purge(device, memory_allocator);
         unsafe {
-            device.reset_fences(&[self.present_fence])?;
+            device.reset_fences(&[self.present_fence, self.render_fence])?;
         }
         self.per_thread_pools
             .lock()
@@ -156,6 +163,7 @@ impl Frame {
     pub(super) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
         unsafe {
             device.destroy_fence(self.present_fence, None);
+            device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.render_finished, None);
         }
         self.drop_list.purge(device, memory_allocator);
@@ -217,36 +225,49 @@ impl Frame {
 
 impl DescriptorAllocator {
     pub fn new(device: &ash::Device, count: DescriptorCount, sets: u32) -> Result<Self, Error> {
-        let sizes = [
-            vk::DescriptorPoolSize {
+        let mut sizes = Vec::with_capacity(7);
+        if count.sampled_images > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: count.sampled_images * sets,
-            },
-            vk::DescriptorPoolSize {
+            })
+        }
+        if count.storage_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: count.storage_buffers * sets,
-            },
-            vk::DescriptorPoolSize {
+            })
+        }
+        if count.unifroms_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: count.unifroms_buffers * sets,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                descriptor_count: count.dynamic_uniform_buffers * sets,
-            },
-            vk::DescriptorPoolSize {
+            })
+        }
+        if count.dynamic_storage_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
                 descriptor_count: count.dynamic_storage_buffers * sets,
-            },
-            vk::DescriptorPoolSize {
+            })
+        }
+        if count.dynamic_uniform_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                descriptor_count: count.dynamic_uniform_buffers * sets,
+            })
+        }
+        if count.combined_image_samplers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: count.combined_image_samplers * sets,
-            },
-            vk::DescriptorPoolSize {
+            })
+        }
+        if count.storage_images > 0 {
+            sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
                 descriptor_count: count.storage_images * sets,
-            },
-        ];
+            })
+        }
         let pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()

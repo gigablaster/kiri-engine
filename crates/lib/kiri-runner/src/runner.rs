@@ -15,11 +15,11 @@
 
 use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
+use ash::vk;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
-use kiri::ResourceManager;
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::TimeFilter;
-use kiri_gfx::{FrameState, BindlessManager};
+use kiri_gfx::{FrameState, Renderer};
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
@@ -37,7 +37,7 @@ struct InnerData<E: Error, G: GameClient<E>> {
     swapchain: Option<Swapchain>,
     surface: Surface,
     device: Arc<RenderDevice>,
-    renderer: Arc<BindlessManager>,
+    renderer: Arc<Renderer>,
     _marker1: PhantomData<E>,
     _marker2: PhantomData<G>,
 }
@@ -80,9 +80,9 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
         let device = RenderDevice::new(
             &instance,
             &surface,
-            &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
+            &[PhysicalDeviceType::Integrated, PhysicalDeviceType::Discrete, ],
         )?;
-        let renderer = BindlessManager::new(&device)?;
+        let renderer = Renderer::new(&device)?;
         Ok(Self {
             window,
             renderer,
@@ -157,12 +157,13 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                     if dims[0] > 0 && dims[1] > 0 {
                         if inner.swapchain.is_none() {
                             inner.swapchain =
-                                Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap())
+                                Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap());
+                            inner.renderer.backbuffer_changed();
                         }
                         let swapchain = inner.swapchain.as_ref().unwrap();
                         if let FrameState::NeedRecreateSwapchain = inner
                             .renderer
-                            .render(swapchain, |context| {
+                            .render(swapchain, vk::Format::A8B8G8R8_UNORM_PACK32, |context| {
                                 game.render(self.game_time.game_time(), context)
                             })
                             .unwrap()

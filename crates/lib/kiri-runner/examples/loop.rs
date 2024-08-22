@@ -3,16 +3,12 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri::ResourceManager;
-use kiri_backend::{Image, ImageCreateDesc};
-use kiri_gfx::{BindlessManager, RenderContext};
+use kiri_backend::{AttachmentClearValue, Image, ImageCreateDesc};
+use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
-struct Loop {
-    image: Arc<Image>,
-    resource_manager: Arc<ResourceManager>,
-}
+struct Loop {}
 
 #[derive(Debug)]
 enum LoopError {}
@@ -25,20 +21,8 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(renderer: &Arc<BindlessManager>) -> Result<Self, GameError<LoopError>> {
-        let resource_manager = ResourceManager::new(renderer)?;
-        resource_manager.get_or_load_static_mesh("PBR/gun.gltf#Mesh")?;
-        resource_manager.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        Ok(Self {
-            image: Arc::new(Image::new(
-                &renderer.device,
-                ImageCreateDesc::new(vk::Format::R8G8B8A8_UNORM, [1280, 720])
-                    .trasfer_source()
-                    .sampled()
-                    .samples(vk::SampleCountFlags::TYPE_1),
-            )?),
-            resource_manager,
-        })
+    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
+        Ok(Self {})
     }
     fn title(&self) -> &str {
         "Loop Demo"
@@ -51,9 +35,20 @@ impl GameClient<LoopError> for Loop {
     fn render(
         &self,
         _time: kiri_common::GameTime,
-        _context: RenderContext,
-    ) -> Result<Arc<Image>, kiri_gfx::Error> {
-        Ok(self.image.clone())
+        context: &RenderContext,
+    ) -> Result<(), kiri_gfx::Error> {
+        let mut pass = context.create_render_pass(
+            &[RenderTarget::color(context.target)
+                .clear(AttachmentClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
+            None,
+        );
+        pass.image_barrier(
+            context.target,
+            ImageBarrierType::DiscardToWriteColor,
+            vk::ImageAspectFlags::COLOR,
+        );
+        context.submit(pass.build());
+        Ok(())
     }
 }
 fn main() {

@@ -1015,26 +1015,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiri"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "ash",
- "bevy_tasks",
- "bytes",
- "glam",
- "kiri-assets",
- "kiri-backend",
- "kiri-common",
- "kiri-gfx",
- "kiri-vfs",
- "log",
- "parking_lot",
- "puffin",
- "thiserror",
-]
-
-[[package]]
 name = "kiri-assets"
 version = "0.1.0"
 dependencies = [
@@ -1094,6 +1074,7 @@ dependencies = [
  "kiri-backend",
  "kiri-common",
  "lazy_static",
+ "log",
  "parking_lot",
  "puffin",
  "thiserror",
@@ -1106,7 +1087,6 @@ dependencies = [
  "ash",
  "bevy_tasks",
  "directories",
- "kiri",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",

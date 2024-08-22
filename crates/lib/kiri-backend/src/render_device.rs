@@ -16,7 +16,7 @@
 use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
 
 use arrayvec::ArrayVec;
-use ash::vk::{self};
+use ash::vk::{self, ImageSubresourceLayers};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
@@ -327,7 +327,7 @@ impl RenderDevice {
             let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
             unsafe {
                 self.raw
-                    .wait_for_fences(&[frame.present_fence], true, u64::MAX)?
+                    .wait_for_fences(&[frame.present_fence, frame.render_fence], true, u64::MAX)?
             };
             frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
         }
@@ -378,7 +378,7 @@ impl RenderDevice {
                     .image(target.image.raw)
                     .subresource_range(target.image.subresource(
                         vk::ImageAspectFlags::COLOR,
-                        ImageSubresource::LevelAndMip(1, 1),
+                        ImageSubresource::LevelAndMip(0, 0),
                     )),
                 vk::ImageMemoryBarrier2::default()
                     .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
@@ -390,7 +390,7 @@ impl RenderDevice {
                     .image(image.raw)
                     .subresource_range(image.subresource(
                         vk::ImageAspectFlags::COLOR,
-                        ImageSubresource::LevelAndMip(1, 1),
+                        ImageSubresource::LevelAndMip(0, 0),
                     )),
             ];
             self.raw.cmd_pipeline_barrier2(
@@ -406,11 +406,22 @@ impl RenderDevice {
                     .dst_image(target.image.raw)
                     .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .regions(&[vk::ImageCopy2::default().extent(vk::Extent3D {
-                        width: image.desc.dims[0],
-                        height: image.desc.dims[1],
-                        depth: 1,
-                    })]),
+                    .regions(&[vk::ImageCopy2::default()
+                        .extent(vk::Extent3D {
+                            width: image.desc.dims[0],
+                            height: image.desc.dims[1],
+                            depth: 1,
+                        })
+                        .src_subresource(
+                            ImageSubresourceLayers::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .layer_count(1),
+                        )
+                        .dst_subresource(
+                            ImageSubresourceLayers::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .layer_count(1),
+                        )]),
             );
             let barrier = vk::ImageMemoryBarrier2::default()
                 .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE) // ?
@@ -422,7 +433,7 @@ impl RenderDevice {
                 .image(target.image.raw)
                 .subresource_range(target.image.subresource(
                     vk::ImageAspectFlags::COLOR,
-                    ImageSubresource::LevelAndMip(1, 1),
+                    ImageSubresource::LevelAndMip(0, 0),
                 ));
             self.raw.cmd_pipeline_barrier2(
                 cb,
@@ -510,6 +521,9 @@ impl Drop for RenderDevice {
         self.samplers
             .drain()
             .for_each(|(_, sampler)| unsafe { self.raw.destroy_sampler(sampler, None) });
+        self.layouts.write().drain().for_each(|(_, layout)| unsafe {
+            self.raw.destroy_descriptor_set_layout(layout, None)
+        });
         unsafe {
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
             self.raw.destroy_device(None);

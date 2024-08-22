@@ -49,9 +49,9 @@ impl ImageBarrierType {
             .subresource_range(ImageSubresourceRange {
                 aspect_mask: aspect,
                 base_mip_level: 0,
-                level_count: 0,
+                level_count: vk::REMAINING_MIP_LEVELS,
                 base_array_layer: 0,
-                layer_count: 0,
+                layer_count: vk::REMAINING_ARRAY_LAYERS,
             })
             .old_layout(old)
             .new_layout(new)

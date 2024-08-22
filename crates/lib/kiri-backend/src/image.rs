@@ -411,7 +411,7 @@ impl Image {
             ImageSubresource::LevelAndMip(level, mip) => vk::ImageSubresourceRange::default()
                 .aspect_mask(aspect)
                 .base_array_layer(level as _)
-                .level_count(1)
+                .layer_count(1)
                 .base_mip_level(mip as _)
                 .level_count(1),
         }
