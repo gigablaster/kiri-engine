@@ -16,6 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
+use log::warn;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::RenderDevice;
@@ -346,13 +347,32 @@ impl Image {
             device.set_object_name(image, name);
         }
         let mut requirements = unsafe { device.raw.get_image_memory_requirements(image) };
+        // Workaround - gpu_alloc returns wrong offset when size < aligment.
+        requirements.size = requirements.size.max(requirements.alignment);
+
         let memory = if desc.usage.is_render_target() {
-            let (memory, offset) = device.allocate_render_target(requirements)?;
-            unsafe { device.raw.bind_image_memory(image, memory, offset) }?;
-            None
+            match device.allocate_render_target(requirements) {
+                Ok((memory, offset)) => {
+                    unsafe { device.raw.bind_image_memory(image, memory, offset) }?;
+                    None
+                }
+                Err(Error::OutOfDeviceMemory) => {
+                    warn!("Failed to allocate from main render target pool - fallback to normal allocator");
+                    let memory = device.allocate_memory(
+                        requirements,
+                        gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
+                        desc.dedicated,
+                    )?;
+                    unsafe {
+                        device
+                            .raw
+                            .bind_image_memory(image, *memory.memory(), memory.offset())
+                    }?;
+                    Some(memory)
+                }
+                Err(other) => return Err(other),
+            }
         } else {
-            // Workaround - gpu_alloc returns wrong offset when size < aligment.
-            requirements.size = requirements.size.max(requirements.alignment);
             let memory = device.allocate_memory(
                 requirements,
                 gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
