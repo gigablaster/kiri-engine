@@ -31,6 +31,9 @@ pub struct DynamicGpuMemory {
     allocator: BumpAllocator,
 }
 
+unsafe impl Send for DynamicGpuMemory {}
+unsafe impl Sync for DynamicGpuMemory {}
+
 impl DynamicGpuMemory {
     pub fn new(renderer: &Renderer, size: usize) -> Result<Self, Error> {
         let buffer = renderer.create_buffer(

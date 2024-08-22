@@ -184,7 +184,7 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub(super) fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
         Ok(DescriptorSetData {
             count: self.layout.get_descriptor_count(),
-            layout: device.get_or_create_layout(self.stages, &self.layout)?,
+            layout: device.get_or_create_layout(self.stages, self.layout)?,
             images: self.images,
             unifom_buffers: self.unifom_buffers,
             storage_buffers: self.storage_buffers,

@@ -204,7 +204,7 @@ impl<'a> InputVertexStreamLayout<'a> {
             .map(|(index, attr)| vk::VertexInputAttributeDescription {
                 location: index as u32,
                 binding: binding as u32,
-                format: attr.format.into(),
+                format: attr.format,
                 offset: attr.offset as u32,
             })
             .collect();

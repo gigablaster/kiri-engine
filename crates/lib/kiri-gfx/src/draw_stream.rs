@@ -16,7 +16,6 @@
 use arrayvec::ArrayVec;
 use ash::vk::{self, Rect2D};
 use kiri_backend::{DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS};
-use parking_lot::Mutex;
 
 use crate::{
     BufferPool, BufferSlice, DescriptorHandle, DescriptorPool, Error, PipelineHandle, PipelinePool,
@@ -295,7 +294,7 @@ impl DrawStream {
         let mut dynamic_offset_changed = false;
         let mut rebind_all = false;
 
-        for i in 0..self.commands {
+        for _ in 0..self.commands {
             let mask = reader.read();
             if mask & PIPELINE_MASK == PIPELINE_MASK {
                 let handle = reader.read_u32().into();

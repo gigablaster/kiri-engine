@@ -36,8 +36,8 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     record_barriers, DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext,
-    DynamicGpuMemoryPool, Error, ImageBarrier, ImageBarrierType, ImageUploadData, RenderContext,
-    Resolution, Staging, TempImagePool,
+    DynamicGpuMemoryPool, Error, ImageUploadData, RenderContext, Resolution, Staging,
+    TempImagePool,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -65,11 +65,8 @@ pub struct BufferSlice {
 }
 
 impl BufferSlice {
-    pub fn new(buffer: BufferHandle, offset: u32) -> BufferSlice {
-        Self {
-            handle: buffer,
-            offset: offset as u32,
-        }
+    pub fn new(handle: BufferHandle, offset: u32) -> BufferSlice {
+        Self { handle, offset }
     }
 }
 
@@ -93,6 +90,9 @@ pub struct Renderer {
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     image_pool: TempImagePool,
 }
+
+unsafe impl Sync for Renderer {}
+unsafe impl Send for Renderer {}
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
@@ -273,7 +273,7 @@ impl Renderer {
         drop(dynamic_memory);
         // Generate render streams
         let image = self.image_pool.get(
-            &self,
+            self,
             Resolution::Full,
             format,
             vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
@@ -411,7 +411,7 @@ impl Renderer {
 
     pub fn backbuffer_changed(&self) {
         debug!("Clear all temprary images");
-        self.image_pool.purge(&self);
+        self.image_pool.purge(self);
     }
 
     async fn compile_pipelines(

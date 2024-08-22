@@ -47,7 +47,7 @@ impl<'a, C: Context> Readable<'a, C> for ImageAsset {
     }
 }
 
-impl<'a, C: Context> Writable<C> for ImageAsset {
+impl<C: Context> Writable<C> for ImageAsset {
     fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
         writer.write_i32(self.format.as_raw())?;
         writer.write_value(&self.dims)?;

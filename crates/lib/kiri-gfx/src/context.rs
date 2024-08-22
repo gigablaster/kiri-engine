@@ -204,7 +204,7 @@ impl<'a> RenderContext<'a> {
     ) -> Result<TempImageGuard<'a>, Error> {
         let image =
             self.image_pool
-                .get(&self.renderer, resolution, format, usage, self.backbuffer)?;
+                .get(self.renderer, resolution, format, usage, self.backbuffer)?;
         Ok(image)
     }
 

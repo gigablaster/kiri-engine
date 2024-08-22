@@ -80,7 +80,7 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
         let device = RenderDevice::new(
             &instance,
             &surface,
-            &[PhysicalDeviceType::Integrated, PhysicalDeviceType::Discrete, ],
+            &[PhysicalDeviceType::Integrated, PhysicalDeviceType::Discrete],
         )?;
         let renderer = Renderer::new(&device)?;
         Ok(Self {

@@ -20,7 +20,7 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, PushConstantRange};
+use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
 use kiri_common::TempList;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
@@ -188,7 +188,6 @@ const MAX_SHADERS: usize = 2;
 pub struct Program {
     device: Arc<RenderDevice>,
     pub stages: vk::ShaderStageFlags,
-    pub push_range: PushConstantRange,
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
     pub pipeline_layout: vk::PipelineLayout,
     pub layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
@@ -199,11 +198,9 @@ impl Program {
     pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
         let mut layouts = Vec::new();
-        let mut push_ranges = Vec::new();
         for shader in shaders {
-            let (descriptor_layout, push_range, _) = Self::reflect(shader.code)?;
+            let descriptor_layout = Self::reflect(shader.code)?;
             layouts.push(descriptor_layout);
-            push_ranges.push(push_range.stage_flags(shader.stage));
             stages |= shader.stage;
         }
         let mut desc = merge_reflected_layouts(layouts.iter())
@@ -220,20 +217,11 @@ impl Program {
         for (_, info) in &desc {
             layouts.push(device.get_or_create_layout(stages, info)?);
         }
-        let create_info = vk::PipelineLayoutCreateInfo::default()
-            .set_layouts(&layouts)
-            .push_constant_ranges(&push_ranges);
+        let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
         Ok(Self {
             device: device.clone(),
             stages,
-            push_range: vk::PushConstantRange::default().size(
-                push_ranges
-                    .iter()
-                    .map(|x| x.offset + x.size)
-                    .max()
-                    .unwrap_or_default(),
-            ),
             shaders: modules,
             pipeline_layout,
             layouts,
@@ -256,27 +244,9 @@ impl Program {
         ))
     }
 
-    fn reflect(
-        code: &[u8],
-    ) -> Result<
-        (
-            ReflectedDescriptorSetLayoutDesc,
-            vk::PushConstantRange,
-            (u32, u32, u32),
-        ),
-        Error,
-    > {
+    fn reflect(code: &[u8]) -> Result<ReflectedDescriptorSetLayoutDesc, Error> {
         let reflection = Reflection::new_from_spirv(code)?;
         let descriptor_sets = reflection.get_descriptor_sets()?;
-        let push_range = reflection
-            .get_push_constant_range()?
-            .map(|x| {
-                vk::PushConstantRange::default()
-                    .offset(x.offset)
-                    .size(x.size)
-            })
-            .unwrap_or_default();
-        let group_size = reflection.get_compute_group_size().unwrap_or_default();
         let mut layout = ReflectedDescriptorSetLayoutDesc::default();
         for (index, set) in descriptor_sets.into_iter() {
             layout.insert(
@@ -284,7 +254,7 @@ impl Program {
                 Self::reflect_descriptor(set, index == DYNAMIC_BINDING_SLOT as u32)?,
             );
         }
-        Ok((layout, push_range, group_size))
+        Ok(layout)
     }
 
     fn reflect_descriptor(

@@ -204,7 +204,7 @@ impl Frame {
         cb: CB,
     ) -> Result<(), E> {
         cb(&mut DescriptorAllocatorContext {
-            device: device,
+            device,
             pool: &mut self.descriptor_allocators.lock(),
         })
     }
@@ -318,9 +318,9 @@ impl DescriptorAllocator {
 }
 
 impl DescriptorAllocatorPool {
-    pub fn get_pool<'a>(
+    pub fn get_pool(
         &mut self,
-        device: &'a ash::Device,
+        device: &ash::Device,
         count: DescriptorCount,
     ) -> Result<Arc<DescriptorAllocator>, Error> {
         let pool = self.pools.entry(count).or_default();
@@ -362,8 +362,8 @@ impl<'a> DescriptorAllocatorContext<'a> {
         loop {
             if let Some(descriptor_set) = self
                 .pool
-                .get_pool(&self.device, count)?
-                .allocate(&self.device, layout)?
+                .get_pool(self.device, count)?
+                .allocate(self.device, layout)?
             {
                 return Ok(descriptor_set);
             }

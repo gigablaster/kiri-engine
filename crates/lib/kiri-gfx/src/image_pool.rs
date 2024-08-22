@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{borrow::Borrow, collections::HashMap, ops::Deref};
+use std::collections::HashMap;
 
 use ash::vk;
 use kiri_backend::{Image, ImageCreateDesc};

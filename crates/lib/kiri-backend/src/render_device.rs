@@ -326,8 +326,11 @@ impl RenderDevice {
         {
             let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
             unsafe {
-                self.raw
-                    .wait_for_fences(&[frame.present_fence, frame.render_fence], true, u64::MAX)?
+                self.raw.wait_for_fences(
+                    &[frame.present_fence, frame.render_fence],
+                    true,
+                    u64::MAX,
+                )?
             };
             frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
         }
@@ -493,7 +496,7 @@ impl RenderDevice {
             if let Some(layout) = layouts.get(&key) {
                 Ok(*layout)
             } else {
-                let layout = create_descriptor_layout(&self, stage, &desc)?;
+                let layout = create_descriptor_layout(self, stage, desc)?;
                 layouts.insert(key, layout);
                 Ok(layout)
             }

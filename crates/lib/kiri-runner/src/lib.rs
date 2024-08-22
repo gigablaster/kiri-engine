@@ -17,7 +17,6 @@ mod runner;
 
 use std::{error::Error, sync::Arc};
 
-use kiri_backend::Image;
 use kiri_common::GameTime;
 use kiri_gfx::{RenderContext, Renderer};
 pub use runner::*;

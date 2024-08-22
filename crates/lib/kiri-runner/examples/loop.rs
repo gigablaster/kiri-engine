@@ -3,7 +3,7 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri_backend::{AttachmentClearValue, Image, ImageCreateDesc};
+use kiri_backend::AttachmentClearValue;
 use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
@@ -21,7 +21,7 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
+    fn new(_renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         Ok(Self {})
     }
     fn title(&self) -> &str {
