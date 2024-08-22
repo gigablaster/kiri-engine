@@ -13,20 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    hash::{Hash, Hasher},
-    time::SystemTime,
-};
+use std::time::SystemTime;
 
 use ash::vk;
-use bytes::Bytes;
 use image::{imageops::FilterType, ImageBuffer};
 use intel_tex_2::{bc5, bc7};
+use kiri_vfs::AssetReference;
 use speedy::{Context, Readable, Writable};
+use uuid::uuid;
 
 use crate::{
-    get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetImportContext, AssetSource,
-    Error, ImportAsset,
+    get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error, ImportAsset,
 };
 
 #[derive(Debug)]
@@ -55,73 +52,46 @@ impl<C: Context> Writable<C> for ImageAsset {
         Ok(())
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ImageData {
-    Path(String),
-    Bytes(Bytes),
-    Color([u8; 4]),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ImageAssetType {
-    Color,
-    NonColor,
-    Normal,
-    MetallicRoughness,
-    Occlusion,
-    Emissive,
+    Srgba,
+    Rgba,
+    Rg,
 }
 
 impl ImageAssetType {
     pub fn srgb(self) -> bool {
-        self == Self::Color
+        self == Self::Srgba
     }
 
     pub fn uncompressed_format(self) -> vk::Format {
         match self {
-            ImageAssetType::Color => vk::Format::R8G8B8A8_SRGB,
+            ImageAssetType::Srgba => vk::Format::R8G8B8A8_SRGB,
             _ => vk::Format::R8G8B8A8_UNORM,
         }
     }
 
     pub fn compressed_format(self) -> vk::Format {
         match self {
-            ImageAssetType::Color => vk::Format::BC7_SRGB_BLOCK,
-            ImageAssetType::Normal => vk::Format::BC5_UNORM_BLOCK,
+            ImageAssetType::Srgba => vk::Format::BC7_SRGB_BLOCK,
+            ImageAssetType::Rg => vk::Format::BC5_UNORM_BLOCK,
             _ => vk::Format::BC7_UNORM_BLOCK,
-        }
-    }
-
-    pub fn default_values(self) -> [u8; 4] {
-        match self {
-            ImageAssetType::Color => [127, 127, 127, 255],
-            ImageAssetType::NonColor => [127, 127, 127, 255],
-            ImageAssetType::Normal => [0, 0, 255, 255],
-            ImageAssetType::MetallicRoughness => [0, 0, 0, 255],
-            ImageAssetType::Occlusion => [255, 0, 0, 255],
-            ImageAssetType::Emissive => [0, 0, 0, 255],
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ImageAssetSource {
+    pub path: String,
     pub ty: ImageAssetType,
-    pub data: ImageData,
 }
 
 impl ImageAssetSource {
-    pub fn from_file(path: &str) -> Self {
+    pub fn new(path: &str) -> Self {
         Self {
-            ty: ImageAssetType::Color,
-            data: ImageData::Path(path.replace("\\", "/")),
-        }
-    }
-
-    pub fn from_color(color: [u8; 4]) -> Self {
-        Self {
-            ty: ImageAssetType::Color,
-            data: ImageData::Color(color),
+            path: path.to_owned(),
+            ty: ImageAssetType::Srgba,
         }
     }
 
@@ -133,78 +103,59 @@ impl ImageAssetSource {
 
 impl AssetSource for ImageAssetSource {
     fn reference(&self) -> crate::AssetReference {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish().into()
+        AssetReference::new(&self.path)
     }
 
     fn changed(&self, last_update: SystemTime) -> bool {
-        if let ImageData::Path(path) = &self.data {
-            is_asset_changed(path, last_update)
-        } else {
-            false
-        }
+        is_asset_changed(&self.path, last_update)
     }
 }
 
 impl Asset for ImageAsset {
-    fn load(data: Bytes) -> std::io::Result<Self> {
-        Ok(Self::read_from_buffer(&data)?)
+    const TYPE: uuid::Uuid = uuid!("01cca425-e0f4-4cbe-8513-62aaed5e35d5");
+
+    fn serialize<W: std::io::Write>(&self, w: W) -> std::io::Result<()> {
+        Ok(self.write_to_stream(w)?)
     }
 
-    fn save(&self) -> std::io::Result<Bytes> {
-        Ok(self.write_to_vec()?.into())
+    fn deserialize<R: std::io::Read>(r: R) -> std::io::Result<Self> {
+        Ok(ImageAsset::read_from_stream_unbuffered(r)?)
     }
 }
 
-impl ImportAsset<ImageAssetSource> for ImageAsset {
-    fn import(source: ImageAssetSource, _context: &dyn AssetImportContext) -> Result<Self, Error> {
+impl ImportAsset<ImageAsset> for ImageAssetSource {
+    fn import(&self) -> Result<ImageAsset, Error> {
         // Load image data
-        let data = match &source.data {
-            ImageData::Path(path) => read_to_end(get_absolute_asset_path(path)?)?.into(),
-            ImageData::Bytes(data) => data.clone(),
-            ImageData::Color(color) => {
-                // Special case - just return 1x1 image with color
-                return Ok(Self {
-                    format: source.ty.uncompressed_format(),
-                    dims: [1, 1],
-                    mips: vec![color.to_vec()],
-                });
-            }
-        };
+        let data = read_to_end(get_absolute_asset_path(&self.path)?)?;
         // Load image
-        let image =
+        let mut image =
             image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
         let dims = [image.width(), image.height()];
         let is_pow2 = dims[0].is_power_of_two() && dims[1].is_power_of_two();
         if is_pow2 && dims[0] > 16 && dims[1] > 16 {
             // Generate and compress mips
-            let bc = match source.ty {
-                ImageAssetType::Normal => BcMode::Bc5,
+            let bc = match self.ty {
+                ImageAssetType::Rg => BcMode::Bc5,
                 _ => BcMode::Bc7,
             };
 
             let mut current_dims = dims;
             let mut mips = Vec::new();
             while current_dims[0] >= 4 && current_dims[1] >= 4 {
-                let mip = block_compress(
-                    image
-                        .resize(current_dims[0], current_dims[1], FilterType::Lanczos3)
-                        .to_rgba8(),
-                    bc,
-                );
+                let mip = block_compress(image.to_rgba8(), bc);
                 mips.push(mip);
                 current_dims = [current_dims[0] >> 1, current_dims[1] >> 1];
+                image = image.resize(current_dims[0], current_dims[1], FilterType::Lanczos3);
             }
-            Ok(Self {
-                format: source.ty.compressed_format(),
+            Ok(ImageAsset {
+                format: self.ty.compressed_format(),
                 dims,
                 mips,
             })
         } else {
             // Uncompressed image with single mip
-            Ok(Self {
-                format: source.ty.uncompressed_format(),
+            Ok(ImageAsset {
+                format: self.ty.uncompressed_format(),
                 dims,
                 mips: vec![image.to_rgba8().into_raw()],
             })

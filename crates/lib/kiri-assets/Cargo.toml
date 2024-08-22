@@ -9,7 +9,6 @@ kiri-backend = { path = "../kiri-backend" }
 kiri-vfs = { path = "../kiri-vfs" }
 speedy = { version = "0.8.7", features = ["speedy-derive"] }
 bytes = "1.7.1"
-siphasher = "1.0.1"
 image = { version = "0.25.2", default-features = false, features = [
     "jpeg",
     "png",
@@ -27,9 +26,10 @@ numquant = "0.2.0"
 mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
     "glam",
 ], default-features = false }
-glam = "0.28.0"
+glam = "0.29.0"
 meshopt = "0.3.0"
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 thiserror = "1.0.61"
 shader-prepper = "0.3.0-pre.3"
 ash = "0.38.0"
+uuid = { version = "1.10.0", features = ["v4"] }

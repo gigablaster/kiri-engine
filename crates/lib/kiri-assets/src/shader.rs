@@ -14,13 +14,13 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    hash::{Hash, Hasher},
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use ash::vk;
+use kiri_vfs::AssetReference;
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
@@ -57,10 +57,8 @@ impl ShaderAssetSource {
 }
 
 impl AssetSource for ShaderAssetSource {
-    fn reference(&self) -> kiri_vfs::AssetReference {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish().into()
+    fn reference(&self) -> AssetReference {
+        AssetReference::new(&self.path)
     }
 
     fn changed(&self, last_update: std::time::SystemTime) -> bool {
@@ -141,22 +139,21 @@ impl IncludeProvider for ShaderIncludeProvider {
 }
 
 impl Asset for ShaderAsset {
-    fn load(data: bytes::Bytes) -> std::io::Result<Self> {
-        Ok(Self::read_from_buffer(&data)?)
+    const TYPE: uuid::Uuid = uuid::uuid!("d6fb342d-938f-4ac0-9253-466f37725244");
+
+    fn serialize<W: Write>(&self, w: W) -> std::io::Result<()> {
+        Ok(self.write_to_stream(w)?)
     }
 
-    fn save(&self) -> std::io::Result<bytes::Bytes> {
-        Ok(self.write_to_vec()?.into())
+    fn deserialize<R: std::io::Read>(r: R) -> std::io::Result<Self> {
+        Ok(Self::read_from_stream_unbuffered(r)?)
     }
 }
 
-impl ImportAsset<ShaderAssetSource> for ShaderAsset {
-    fn import(
-        source: ShaderAssetSource,
-        _context: &dyn crate::AssetImportContext,
-    ) -> Result<Self, Error> {
+impl ImportAsset<ShaderAsset> for ShaderAssetSource {
+    fn import(&self) -> Result<ShaderAsset, Error> {
         let code = shader_prepper::process_file(
-            &source.path,
+            &self.path,
             &mut ShaderIncludeProvider::default(),
             PathBuf::new(),
         )
@@ -167,7 +164,7 @@ impl ImportAsset<ShaderAssetSource> for ShaderAsset {
         .concat();
 
         let mut child = Command::new("glslc")
-            .arg(source.ty.target())
+            .arg(self.ty.target())
             .arg("--target-env=vulkan1.1")
             .arg("-o")
             .arg("-")

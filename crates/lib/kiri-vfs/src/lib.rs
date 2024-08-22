@@ -27,22 +27,31 @@ pub use packed::*;
 use parking_lot::RwLock;
 use speedy::{Readable, Writable};
 
+pub const ROOT_SOURCE_ASSETS_PATH: &str = "assets";
+pub const ROOT_COMPILED_ASSETS_PATH: &str = "data";
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
 pub struct AssetReference(String);
 
 impl Display for AssetReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({})", self.0)
+        write!(f, "{}", self.0)
     }
 }
 
 impl AssetReference {
-    pub fn new(name: &str) -> AssetReference {
-        Self(name.replace('\\', "/"))
+    pub fn new<P: AsRef<str>>(name: P) -> AssetReference {
+        Self(name.as_ref().to_owned().replace('\\', "/"))
     }
 
-    pub fn normalize(&self) -> AssetReference {
-        self.0.to_ascii_lowercase().into()
+    pub fn compiled(&self) -> AssetReference {
+        let mut name = if let Some((base, _)) = self.0.rsplit_once(".") {
+            base.to_owned()
+        } else {
+            self.0.clone()
+        };
+        name.push_str(".asset");
+        name.into()
     }
 }
 
@@ -70,9 +79,9 @@ impl From<String> for AssetReference {
     }
 }
 
-impl AsRef<str> for AssetReference {
-    fn as_ref(&self) -> &str {
-        &self.0
+impl AsRef<Path> for AssetReference {
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
     }
 }
 
@@ -114,14 +123,12 @@ pub fn vfs_load(reference: &AssetReference) -> io::Result<Box<dyn Read>> {
 
 pub fn vfs_exist(reference: &AssetReference) -> bool {
     let archives = ARCHIVES.read();
-    archives
-        .iter()
-        .any(|x| x.exist(reference))
+    archives.iter().any(|x| x.exist(reference))
 }
 
 #[derive(Debug)]
 pub struct FileSystemArchive {
-    root: PathBuf
+    root: PathBuf,
 }
 
 impl Archive for FileSystemArchive {
@@ -145,13 +152,15 @@ impl Archive for FileSystemArchive {
 impl FileSystemArchive {
     pub fn new<P: AsRef<Path>>(root: P) -> Self {
         Self {
-            root: path::absolute(root).unwrap()
+            root: path::absolute(root).unwrap(),
         }
     }
     fn path(&self, reference: &AssetReference) -> io::Result<PathBuf> {
-        let path = self.root.join(reference.as_ref()).canonicalize()?;
+        let path = self.root.join(reference).canonicalize()?;
         if !path.starts_with(&self.root) {
-            return Err(io::Error::other("Can't access resources outside of root path"));
+            return Err(io::Error::other(
+                "Can't access resources outside of root path",
+            ));
         }
 
         Ok(path)

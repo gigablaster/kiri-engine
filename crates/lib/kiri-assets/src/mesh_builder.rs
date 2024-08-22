@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::{MeshMaterialAsset, MeshSurfaceAsset, StaticMeshAsset, StaticMeshVertex};
+use crate::{MeshAssetMaterial, MeshSurfaceAsset, StaticMeshAsset, StaticMeshVertex};
 
 #[derive(Debug)]
 pub struct MeshSurfaceBuilder {
@@ -23,12 +23,12 @@ pub struct MeshSurfaceBuilder {
     uv1: Vec<[f32; 2]>,
     uv2: Vec<[f32; 2]>,
     indices: Vec<u32>,
-    material: MeshMaterialAsset,
+    material: MeshAssetMaterial,
 }
 
 #[derive(Debug, Default)]
 pub struct MeshAssetBuilder {
-    surfaces: Vec<(Vec<FullVertex>, Vec<u16>, MeshMaterialAsset)>,
+    surfaces: Vec<(Vec<FullVertex>, Vec<u16>, MeshAssetMaterial)>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -40,7 +40,7 @@ struct FullVertex {
 }
 
 impl MeshSurfaceBuilder {
-    pub fn new(material: MeshMaterialAsset) -> Self {
+    pub fn new(material: MeshAssetMaterial) -> Self {
         Self {
             material,
             positions: Default::default(),
@@ -82,7 +82,7 @@ impl MeshSurfaceBuilder {
         indices.iter().for_each(|x| self.indices.push(*x));
     }
 
-    fn build_static(self) -> (Vec<FullVertex>, Vec<u16>, MeshMaterialAsset) {
+    fn build_static(self) -> (Vec<FullVertex>, Vec<u16>, MeshAssetMaterial) {
         let (mut tangents, has_tangents) = if self.positions.len() == self.tangents.len() {
             (self.tangents, true)
         } else {
@@ -229,24 +229,34 @@ impl MeshAssetBuilder {
         self.surfaces.push(surface.build_static());
     }
 
-    pub fn build(self) -> StaticMeshAsset {
-        let mut materials = Vec::new();
+    pub fn build(
+        self,
+        vertices: &mut Vec<StaticMeshVertex>,
+        indices: &mut Vec<u16>,
+        materials: &mut Vec<MeshAssetMaterial>,
+    ) -> StaticMeshAsset {
+        let index_offset = vertices.len() as u32;
         let mut mesh_vertices = Vec::new();
         let mut mesh_indices = Vec::new();
         let mut mesh_surfaces = Vec::new();
-        for (mut vertices, indices, material) in self.surfaces {
-            let material_index = materials.len() as u32;
-            materials.push(material);
+        for (mut vertices, mut indices, material) in self.surfaces {
+            let material_index = materials
+                .iter()
+                .enumerate()
+                .find_map(|(index, x)| (*x == material).then_some(index));
+            let material_index = if let Some(index) = material_index {
+                index
+            } else {
+                let index = materials.len();
+                materials.push(material);
+                index
+            } as u32;
             let first_index = mesh_vertices.len() as u32;
             mesh_vertices.append(&mut vertices);
             let index_count = indices.len() as u32;
-            let mut indices = indices
-                .into_iter()
-                .map(|x| x + first_index as u16)
-                .collect::<Vec<_>>();
             mesh_indices.append(&mut indices);
             mesh_surfaces.push(MeshSurfaceAsset {
-                first_index,
+                first_index: first_index + index_offset,
                 index_count,
                 material: material_index,
             });
@@ -256,21 +266,20 @@ impl MeshAssetBuilder {
             .next_power_of_two() as f32;
         let uv1_scale = find_limit_value(&mesh_vertices, |x| x.uvs[0]).min(1.0);
         let uv2_scale = find_limit_value(&mesh_vertices, |x| x.uvs[1]).min(1.0);
-        let quantized_vertices = mesh_vertices
+        let mut quantized_vertices = mesh_vertices
             .into_iter()
             .map(|x| StaticMeshVertex {
                 position: quantize_position(x.position, position_scale),
-                _pad: 0,
                 normal: quantize_normalized(x.normal, 1.0),
                 tangent: quantize_normalized(x.tangent, 1.0),
                 uv1: quantize_uv(x.uvs[0], uv1_scale),
                 uv2: quantize_uv(x.uvs[1], uv2_scale),
             })
             .collect::<Vec<_>>();
+        vertices.append(&mut quantized_vertices);
+        indices.append(&mut mesh_indices);
         StaticMeshAsset {
-            vertices: quantized_vertices,
-            indices: mesh_indices,
-            materials,
+            vertex_offset: index_offset,
             surfaces: mesh_surfaces,
             positon_scale: position_scale,
             uv_scale: [uv1_scale, uv2_scale],

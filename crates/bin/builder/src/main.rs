@@ -1,6 +1,7 @@
+use std::collections::HashSet;
+use std::io::Cursor;
 use std::sync::atomic::Ordering;
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::{self, Write},
     path::Path,
@@ -10,23 +11,20 @@ use std::{
 };
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
-use bytes::Bytes;
 use clap::{Arg, ArgAction};
 use kiri_assets::{
-    get_cached_asset_path, Asset, AssetImportContext, AssetReference, AssetSource, Error,
-    GltfMeshSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset, MeshAssetBuilder,
-    SceneAsset, ShaderAsset, ShaderAssetSource, ROOT_DATA_PATH,
+    get_compiled_asset_path, save_asset, Asset, AssetReference, AssetSource, Error,
+    GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset, ShaderAsset, ShaderAssetSource,
 };
-use kiri_vfs::PackageBuilder;
+use kiri_vfs::{PackageBuilder, ROOT_SOURCE_ASSETS_PATH};
 use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
 struct ContentProcessor {
-    images: Mutex<HashMap<AssetReference, ImageAssetSource>>,
-    meshes: Mutex<HashMap<AssetReference, (GltfMeshSource, MeshAssetBuilder)>>,
-    scenes: Mutex<HashMap<AssetReference, GltfSceneSource>>,
-    shaders: Mutex<HashMap<AssetReference, ShaderAssetSource>>,
+    images: Mutex<HashSet<ImageAssetSource>>,
+    scenes: Mutex<HashSet<GltfSceneSource>>,
+    shaders: Mutex<HashSet<ShaderAssetSource>>,
     packer: Mutex<Box<dyn Packer>>,
 }
 
@@ -35,7 +33,7 @@ unsafe impl Sync for ContentProcessor {}
 
 trait Packer: Send + Sync {
     fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool;
-    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()>;
+    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()>;
     fn finish(&mut self) -> io::Result<()>;
 }
 
@@ -59,7 +57,7 @@ impl Packer for ArchivePacker {
         true
     }
 
-    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()> {
+    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
         self.packer.pack(reference, data)
     }
 
@@ -71,16 +69,20 @@ impl Packer for ArchivePacker {
 impl Packer for LocalCachePacker {
     fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool {
         let reference = asset.reference();
-        if let Some(last_update) = get_cached_asset_change_time(reference) {
+        if let Some(last_update) = get_compiled_asset_change_time(&reference) {
             asset.changed(last_update)
         } else {
             true
         }
     }
 
-    fn save_asset(&mut self, reference: AssetReference, data: Bytes) -> io::Result<()> {
-        let mut file = File::create(get_cached_asset_path(reference))?;
-        file.write_all(&data)?;
+    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
+        let path = get_compiled_asset_path(reference.compiled().as_ref())?;
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let mut file = File::create(path)?;
+        file.write_all(data)?;
         Ok(())
     }
 
@@ -89,22 +91,9 @@ impl Packer for LocalCachePacker {
     }
 }
 
-impl AssetImportContext for ContentProcessor {
-    fn import_image(&self, source: ImageAssetSource) -> AssetReference {
-        let reference = source.reference();
-        self.images.lock().entry(reference).or_insert(source);
-        reference
-    }
-
-    fn import_static_mesh(&self, source: GltfMeshSource, data: MeshAssetBuilder) -> AssetReference {
-        let referene = source.reference();
-        self.meshes.lock().entry(referene).or_insert((source, data));
-        referene
-    }
-}
-
-fn get_cached_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
-    let path = get_cached_asset_path(reference);
+fn get_compiled_asset_change_time(reference: &AssetReference) -> Option<SystemTime> {
+    let reference = reference.compiled();
+    let path = get_compiled_asset_path(reference.as_ref()).ok()?;
     if path.exists() {
         if let Ok(metadata) = fs::metadata(path) {
             if let Ok(modified) = metadata.modified() {
@@ -122,38 +111,41 @@ impl ContentProcessor {
     pub fn new(packer: Box<dyn Packer>) -> Self {
         Self {
             images: Default::default(),
-            meshes: Default::default(),
             scenes: Default::default(),
             shaders: Default::default(),
             packer: Mutex::new(packer),
         }
     }
 
-    fn import_scene(&self, source: GltfSceneSource) -> AssetReference {
-        let reference = source.reference();
-        self.scenes.lock().entry(reference).or_insert(source);
-        reference
+    fn import_scene(&self, source: GltfSceneSource) {
+        self.scenes.lock().insert(source);
     }
 
-    fn import_shader(&self, source: ShaderAssetSource) -> AssetReference {
-        let reference = source.reference();
-        self.shaders.lock().entry(reference).or_insert(source);
-        reference
+    fn import_shader(&self, source: ShaderAssetSource) {
+        self.shaders.lock().insert(source);
     }
 
     async fn build_scene(&self, scene: GltfSceneSource) {
         info!("Building scene {:?}", scene);
-        if let Err(err) = self.build_asset::<SceneAsset, GltfSceneSource>(scene.clone()) {
+        if let Err(err) = self.build_scene_impl(scene.clone()) {
             error!("Failed to build scene {:?}: {}", scene, err);
         }
     }
 
-    async fn build_mesh(&self, source: GltfMeshSource, data: MeshAssetBuilder) {
-        info!("Building mesh {:?}", source);
-        let mesh = data.build();
-        if let Err(err) = self.write_asset(source.reference(), mesh) {
-            error!("Failed to write mesh {:?}: {}", source, err);
-        }
+    fn build_scene_impl(&self, scene: GltfSceneSource) -> Result<(), Error> {
+        let mut asset = scene.import()?;
+        let mut images = self.images.lock();
+        asset
+            .collect_dependencies()
+            .iter()
+            .for_each(|(reference, ty)| {
+                images.insert(ImageAssetSource {
+                    path: reference.to_string(),
+                    ty: *ty,
+                });
+            });
+        asset.compiled();
+        Ok(self.write_asset(&scene.reference(), asset)?)
     }
 
     async fn build_image(&self, image: ImageAssetSource) {
@@ -172,7 +164,7 @@ impl ContentProcessor {
 
     pub fn process(self) -> io::Result<()> {
         AsyncComputeTaskPool::get().scope(|s| {
-            for (_, scene) in self.scenes.lock().iter() {
+            for scene in self.scenes.lock().iter() {
                 if self.asset_need_rebuild(scene) {
                     s.spawn(self.build_scene(scene.clone()))
                 }
@@ -180,13 +172,7 @@ impl ContentProcessor {
         });
 
         AsyncComputeTaskPool::get().scope(|s| {
-            for (_, (source, data)) in self.meshes.lock().drain() {
-                s.spawn(self.build_mesh(source, data))
-            }
-        });
-
-        AsyncComputeTaskPool::get().scope(|s| {
-            for (_, image) in self.images.lock().iter() {
+            for image in self.images.lock().iter() {
                 if self.asset_need_rebuild(image) {
                     s.spawn(self.build_image(image.clone()));
                 }
@@ -194,7 +180,7 @@ impl ContentProcessor {
         });
 
         AsyncComputeTaskPool::get().scope(|s| {
-            for (_, shader) in self.shaders.lock().iter() {
+            for shader in self.shaders.lock().iter() {
                 if self.asset_need_rebuild(shader) {
                     s.spawn(self.build_shader(shader.clone()));
                 }
@@ -204,13 +190,20 @@ impl ContentProcessor {
         self.packer.lock().finish()
     }
 
-    fn build_asset<T: ImportAsset<U>, U: AssetSource>(&self, source: U) -> Result<(), Error> {
-        self.write_asset(source.reference(), T::import(source, self)?)?;
+    fn build_asset<T: Asset, U: AssetSource + ImportAsset<T>>(
+        &self,
+        source: U,
+    ) -> Result<(), Error> {
+        self.write_asset(&source.reference(), source.import()?)?;
         Ok(())
     }
 
-    fn write_asset<T: Asset>(&self, reference: AssetReference, asset: T) -> io::Result<()> {
-        self.packer.lock().save_asset(reference, asset.save()?)?;
+    fn write_asset<T: Asset>(&self, reference: &AssetReference, asset: T) -> io::Result<()> {
+        let mut cursor = Cursor::new(Vec::new());
+        save_asset(cursor.by_ref(), asset)?;
+        self.packer
+            .lock()
+            .save_asset(reference, &cursor.into_inner())?;
         Ok(())
     }
 
@@ -225,7 +218,11 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
         if path.path().is_dir() {
             collect(processor, &path.path())?
         } else {
-            let path = path.path().strip_prefix(ROOT_DATA_PATH).unwrap().to_owned();
+            let path = path
+                .path()
+                .strip_prefix(ROOT_SOURCE_ASSETS_PATH)
+                .unwrap()
+                .to_owned();
             let path_str = path.to_str().unwrap().replace('\\', "/");
             if path_str.ends_with(".gltf") {
                 processor.import_scene(GltfSceneSource::new(&path_str));
@@ -267,7 +264,7 @@ fn main() {
     } else {
         ContentProcessor::new(Box::new(LocalCachePacker::default()))
     };
-    collect(&processor, Path::new(ROOT_DATA_PATH)).unwrap();
+    collect(&processor, Path::new(ROOT_SOURCE_ASSETS_PATH)).unwrap();
     if let Err(err) = processor.process() {
         error!("Failed to build assets: {:?}", err);
         return;
@@ -283,12 +280,12 @@ fn main() {
         .unwrap();
         loop {
             watcher
-                .watch(Path::new(ROOT_DATA_PATH), RecursiveMode::Recursive)
+                .watch(Path::new(ROOT_SOURCE_ASSETS_PATH), RecursiveMode::Recursive)
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
             if need_reimport.load(Ordering::Acquire) {
                 let processor = ContentProcessor::new(Box::new(LocalCachePacker::default()));
-                collect(&processor, Path::new(ROOT_DATA_PATH)).unwrap();
+                collect(&processor, Path::new(ROOT_SOURCE_ASSETS_PATH)).unwrap();
                 if let Err(err) = processor.process() {
                     error!("Failed to build assets: {:?}", err);
                 }

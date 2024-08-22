@@ -14,37 +14,28 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
+    collections::{HashMap, HashSet},
+    hash::Hash,
     path::Path,
     time::SystemTime,
 };
 
 use gltf::mesh::Mode;
 use normalize_path::NormalizePath;
-use siphasher::sip::SipHasher;
 use speedy::{Readable, Writable};
+use uuid::uuid;
 
 use crate::{
-    get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetImportContext,
-    AssetReference, AssetSource, Error, ImageAssetSource, ImageAssetType, ImportAsset,
-    MeshAssetBuilder, MeshSurfaceBuilder,
+    get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetReference,
+    AssetSource, Error, ImageAssetType, ImportAsset, MeshAssetBuilder, MeshSurfaceBuilder,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GltfSceneSource(String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GltfMeshSource {
-    pub gltf: String,
-    pub mesh: String,
-}
-
 impl AssetSource for GltfSceneSource {
     fn reference(&self) -> AssetReference {
-        let mut hasher = SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish().into()
+        AssetReference::new(&self.0)
     }
 
     fn changed(&self, last_update: SystemTime) -> bool {
@@ -58,45 +49,81 @@ impl GltfSceneSource {
     }
 }
 
-impl AssetSource for GltfMeshSource {
-    fn reference(&self) -> AssetReference {
-        let mut hasher = SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish().into()
-    }
-
-    fn changed(&self, last_update: SystemTime) -> bool {
-        is_asset_changed(&self.gltf, last_update)
-    }
-}
-
 #[derive(Debug, Clone, Copy, Readable, Writable)]
-#[repr(C, align(8))]
 pub struct StaticMeshVertex {
     pub position: [u16; 3],
-    pub _pad: u16,
     pub normal: [u16; 2],
     pub tangent: [u16; 2],
     pub uv1: [u16; 2],
     pub uv2: [u16; 2],
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
+#[derive(Debug, Clone, Copy, Readable, Writable, PartialEq, Eq, Hash)]
 pub enum MeshMaterialBlend {
     Opaque,
     AlphaBlend,
-    AlphaTest(f32),
+    AlphaTest(u16), // Normalized
 }
 
-#[derive(Debug, Clone, Readable, Writable)]
-pub struct MeshMaterialAsset {
-    pub base_color: AssetReference,
-    pub normals: AssetReference,
-    pub metallic_roughness: AssetReference,
-    pub occlusion: AssetReference,
-    pub emissive: AssetReference,
-    pub emissive_power: f32,
+#[derive(Debug, Clone, Readable, Writable, PartialEq, Eq, Hash)]
+pub enum MaterialColorSource {
+    Image(AssetReference, ImageAssetType),
+    Color([u8; 4]),
+    None,
+}
+
+impl MaterialColorSource {
+    fn collect_images(&self, images: &mut HashSet<(AssetReference, ImageAssetType)>) {
+        if let Self::Image(reference, ty) = self {
+            images.insert((reference.clone(), *ty));
+        }
+    }
+
+    fn compiled(&mut self) {
+        if let Self::Image(reference, ty) = self {
+            *self = Self::Image(reference.compiled(), *ty);
+        }
+    }
+}
+
+impl MaterialColorSource {
+    pub fn color(color: [f32; 4]) -> Self {
+        Self::Color([
+            (color[0].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
+            (color[1].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
+            (color[2].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
+            (color[3].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
+        ])
+    }
+}
+
+#[derive(Debug, Clone, Readable, Writable, PartialEq, Eq, Hash)]
+pub struct MeshAssetMaterial {
+    pub base_color: MaterialColorSource,
+    pub normals: MaterialColorSource,
+    pub metallic_roughness: MaterialColorSource,
+    pub occlusion: MaterialColorSource,
+    pub emissive: MaterialColorSource,
+    pub emissive_power: u32, // Value * 1000
     pub blend: MeshMaterialBlend,
+}
+
+impl MeshAssetMaterial {
+    fn collect_images(&self, images: &mut HashSet<(AssetReference, ImageAssetType)>) {
+        self.base_color.collect_images(images);
+        self.normals.collect_images(images);
+        self.metallic_roughness.collect_images(images);
+        self.occlusion.collect_images(images);
+        self.emissive.collect_images(images);
+    }
+
+    fn compiled(&mut self) {
+        self.base_color.compiled();
+        self.normals.compiled();
+        self.metallic_roughness.compiled();
+        self.occlusion.compiled();
+        self.emissive.compiled();
+    }
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
@@ -108,9 +135,7 @@ pub struct MeshSurfaceAsset {
 
 #[derive(Debug, Readable, Writable)]
 pub struct StaticMeshAsset {
-    pub vertices: Vec<StaticMeshVertex>,
-    pub indices: Vec<u16>,
-    pub materials: Vec<MeshMaterialAsset>,
+    pub vertex_offset: u32,
     pub surfaces: Vec<MeshSurfaceAsset>,
     pub positon_scale: f32,
     pub uv_scale: [f32; 2],
@@ -157,46 +182,55 @@ pub struct Node {
 
 #[derive(Debug, Readable, Writable)]
 pub struct SceneAsset {
-    pub meshes: Vec<AssetReference>,
+    pub vertices: Vec<StaticMeshVertex>,
+    pub indices: Vec<u16>,
+    pub meshes: Vec<StaticMeshAsset>,
     pub nodes: Vec<Node>,
     pub mesh_names: HashMap<String, u32>,
     pub node_names: HashMap<String, u32>,
     pub node_to_mesh: Vec<(u32, u32)>,
+    pub materials: Vec<MeshAssetMaterial>,
 }
 
-impl Asset for StaticMeshAsset {
-    fn load(data: bytes::Bytes) -> std::io::Result<Self> {
-        Ok(Self::read_from_buffer(&data)?)
+impl SceneAsset {
+    pub fn collect_dependencies(&self) -> HashSet<(AssetReference, ImageAssetType)> {
+        let mut result = HashSet::new();
+        for material in &self.materials {
+            material.collect_images(&mut result);
+        }
+        result
     }
 
-    fn save(&self) -> std::io::Result<bytes::Bytes> {
-        Ok(self.write_to_vec()?.into())
+    pub fn compiled(&mut self) {
+        self.materials.iter_mut().for_each(|x| x.compiled())
     }
 }
 
 impl Asset for SceneAsset {
-    fn load(data: bytes::Bytes) -> std::io::Result<Self> {
-        Ok(Self::read_from_buffer(&data)?)
+    const TYPE: uuid::Uuid = uuid!("3d731621-54b4-40b0-a089-37667f68fe35");
+    fn deserialize<R: std::io::Read>(r: R) -> std::io::Result<Self> {
+        Ok(Self::read_from_stream_unbuffered(r)?)
     }
 
-    fn save(&self) -> std::io::Result<bytes::Bytes> {
-        Ok(self.write_to_vec()?.into())
+    fn serialize<W: std::io::Write>(&self, w: W) -> std::io::Result<()> {
+        Ok(self.write_to_stream(w)?)
     }
 }
 
 struct GltfProcessingContext<'a> {
-    pub asset_importer: &'a dyn AssetImportContext,
-    pub base_path: String,
-    pub gltf_path: String,
+    pub base_path: &'a str,
     pub buffers: Vec<gltf::buffer::Data>,
+    pub vertices: Vec<StaticMeshVertex>,
+    pub indices: Vec<u16>,
+    pub materials: Vec<MeshAssetMaterial>,
 }
 
 struct NodeProcessingContext<'a> {
-    context: &'a GltfProcessingContext<'a>,
+    context: &'a mut GltfProcessingContext<'a>,
     bone_to_mesh: HashMap<u32, u32>,
     bones: Vec<Node>,
     bone_names: HashMap<String, u32>,
-    meshes: Vec<AssetReference>,
+    meshes: Vec<StaticMeshAsset>,
     mesh_names: HashMap<String, u32>,
     processed_meshes: HashMap<u32, u32>,
 }
@@ -205,39 +239,28 @@ fn process_texture(
     context: &GltfProcessingContext,
     texture: &gltf::texture::Texture,
     ty: ImageAssetType,
-) -> AssetReference {
+) -> MaterialColorSource {
     match texture.source().source() {
-        gltf::image::Source::Uri { uri, .. } => {
-            let image_path = Path::new(&context.base_path)
-                .join(uri)
-                .normalize()
-                .to_str()
-                .unwrap()
-                .to_owned();
-            context
-                .asset_importer
-                .import_image(ImageAssetSource::from_file(&image_path).ty(ty))
-        }
+        gltf::image::Source::Uri { uri, .. } => MaterialColorSource::Image(
+            AssetReference::new(
+                Path::new(&context.base_path)
+                    .join(uri)
+                    .normalize()
+                    .to_str()
+                    .unwrap(),
+            ),
+            ty,
+        ),
         _ => panic!(),
     }
-}
-
-fn process_placeholder(
-    context: &GltfProcessingContext,
-    color: [f32; 4],
-    ty: ImageAssetType,
-) -> AssetReference {
-    context.asset_importer.import_image(
-        ImageAssetSource::from_color(color.map(|x| (x.clamp(0.0, 1.0) * 255.0) as u8)).ty(ty),
-    )
 }
 
 fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
     match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => MeshMaterialBlend::Opaque,
-        gltf::material::AlphaMode::Mask => {
-            MeshMaterialBlend::AlphaTest(material.alpha_cutoff().unwrap_or(0.0))
-        }
+        gltf::material::AlphaMode::Mask => MeshMaterialBlend::AlphaTest(
+            (material.alpha_cutoff().unwrap_or(0.0).clamp(0.0, 1.0) * u16::MAX as f32) as u16,
+        ),
         gltf::material::AlphaMode::Blend => MeshMaterialBlend::AlphaBlend,
     }
 }
@@ -245,59 +268,43 @@ fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
 fn process_material(
     context: &GltfProcessingContext,
     material: gltf::Material,
-) -> MeshMaterialAsset {
+) -> MeshAssetMaterial {
     let base_color = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Color)
+        process_texture(context, &texture.texture(), ImageAssetType::Srgba)
     } else {
-        process_placeholder(
-            context,
-            material.pbr_metallic_roughness().base_color_factor(),
-            ImageAssetType::Color,
-        )
+        MaterialColorSource::color(material.pbr_metallic_roughness().base_color_factor())
     };
     let metallic_roughness = if let Some(texture) = material
         .pbr_metallic_roughness()
         .metallic_roughness_texture()
     {
-        process_texture(
-            context,
-            &texture.texture(),
-            ImageAssetType::MetallicRoughness,
-        )
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba)
     } else {
-        process_placeholder(
-            context,
-            [
-                0.0,
-                material.pbr_metallic_roughness().roughness_factor(),
-                material.pbr_metallic_roughness().metallic_factor(),
-                1.0,
-            ],
-            ImageAssetType::MetallicRoughness,
-        )
+        MaterialColorSource::color([
+            0.0,
+            material.pbr_metallic_roughness().roughness_factor(),
+            material.pbr_metallic_roughness().metallic_factor(),
+            1.0,
+        ])
     };
     let normals = if let Some(texture) = material.normal_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Normal)
+        process_texture(context, &texture.texture(), ImageAssetType::Rg)
     } else {
-        process_placeholder(context, [0.0, 0.0, 1.0, 1.0], ImageAssetType::Normal)
+        MaterialColorSource::None
     };
     let occlusion = if let Some(texture) = material.occlusion_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Occlusion)
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba)
     } else {
-        process_placeholder(context, [1.0, 0.0, 0.0, 1.0], ImageAssetType::Occlusion)
+        MaterialColorSource::None
     };
     let emissive = if let Some(texture) = material.emissive_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Emissive)
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba)
     } else {
         let emissive_color = material.emissive_factor();
-        process_placeholder(
-            context,
-            [emissive_color[0], emissive_color[1], emissive_color[2], 1.0],
-            ImageAssetType::Emissive,
-        )
+        MaterialColorSource::color([emissive_color[0], emissive_color[1], emissive_color[2], 1.0])
     };
-    MeshMaterialAsset {
-        emissive_power: material.emissive_strength().unwrap_or(1.0),
+    MeshAssetMaterial {
+        emissive_power: (material.emissive_strength().unwrap_or(0.0) * 1000.0) as u32,
         blend: process_blend(&material),
         base_color,
         normals,
@@ -308,10 +315,9 @@ fn process_material(
 }
 
 fn process_mesh(
-    context: &GltfProcessingContext,
-    mesh_name: &str,
+    context: &mut GltfProcessingContext,
     mesh: gltf::Mesh,
-) -> Result<Option<AssetReference>, Error> {
+) -> Result<StaticMeshAsset, Error> {
     let mut builder = MeshAssetBuilder::default();
     for prim in mesh.primitives() {
         let mut surface = MeshSurfaceBuilder::new(process_material(context, prim.material()));
@@ -324,7 +330,7 @@ fn process_mesh(
         if let Some(positions) = reader.read_positions() {
             surface.push_position(&positions.collect::<Vec<_>>());
         } else {
-            return Ok(None);
+            return Err(Error::ProcessingFailed("Mesh has no positions".into()));
         };
         if let Some(indices) = reader.read_indices() {
             surface.push_indices(&indices.into_u32().collect::<Vec<_>>());
@@ -347,13 +353,11 @@ fn process_mesh(
         }
         builder.push(surface);
     }
-    Ok(Some(context.asset_importer.import_static_mesh(
-        GltfMeshSource {
-            gltf: context.gltf_path.clone(),
-            mesh: mesh_name.into(),
-        },
-        builder,
-    )))
+    Ok(builder.build(
+        &mut context.vertices,
+        &mut context.indices,
+        &mut context.materials,
+    ))
 }
 
 fn process_node(
@@ -378,12 +382,11 @@ fn process_node(
         } else {
             let name = mesh.name().unwrap_or(name);
 
-            if let Some(mesh) = process_mesh(context.context, name, mesh)? {
-                let mesh_index = context.meshes.len() as u32;
-                context.meshes.push(mesh);
-                context.mesh_names.insert(name.to_owned(), mesh_index);
-                context.bone_to_mesh.insert(bone_index, mesh_index);
-            }
+            let mesh = process_mesh(context.context, mesh)?;
+            let mesh_index = context.meshes.len() as u32;
+            context.meshes.push(mesh);
+            context.mesh_names.insert(name.to_owned(), mesh_index);
+            context.bone_to_mesh.insert(bone_index, mesh_index);
         }
     }
     for (index, child) in node.children().enumerate() {
@@ -397,7 +400,10 @@ fn process_node(
     Ok(())
 }
 
-fn import_scene(context: &GltfProcessingContext, scene: gltf::Scene) -> Result<SceneAsset, Error> {
+fn import_scene<'a>(
+    context: &'a mut GltfProcessingContext<'a>,
+    scene: gltf::Scene,
+) -> Result<SceneAsset, Error> {
     let mut context = NodeProcessingContext {
         context,
         bone_to_mesh: Default::default(),
@@ -417,43 +423,44 @@ fn import_scene(context: &GltfProcessingContext, scene: gltf::Scene) -> Result<S
     }
     Ok({
         SceneAsset {
+            vertices: context.context.vertices.clone(),
+            indices: context.context.indices.clone(),
             meshes: context.meshes,
             nodes: context.bones,
             mesh_names: context.mesh_names,
             node_names: context.bone_names,
             node_to_mesh: context.bone_to_mesh.into_iter().collect::<Vec<_>>(),
+            materials: context.context.materials.clone(),
         }
     })
 }
 
-fn import_scenes(
-    context: GltfProcessingContext,
+fn import_scenes<'a>(
+    context: &'a mut GltfProcessingContext<'a>,
     document: gltf::Document,
 ) -> Result<SceneAsset, Error> {
     let scene = document
         .default_scene()
         .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
-    import_scene(&context, scene)
+    import_scene(context, scene)
 }
 
-impl ImportAsset<GltfSceneSource> for SceneAsset {
-    fn import(
-        source: GltfSceneSource,
-        asset_importer: &dyn AssetImportContext,
-    ) -> Result<Self, Error> {
-        let (document, buffers, _) = gltf::import(get_absolute_asset_path(&source.0)?)
+impl ImportAsset<SceneAsset> for GltfSceneSource {
+    fn import(&self) -> Result<SceneAsset, Error> {
+        let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
-        let base_path = get_relative_asset_path(&source.0)?
+        let base_path = get_relative_asset_path(&self.0)?
             .parent()
             .unwrap()
             .to_str()
             .unwrap()
             .to_owned();
         import_scenes(
-            GltfProcessingContext {
-                gltf_path: source.0,
-                asset_importer,
-                base_path,
+            &mut GltfProcessingContext {
+                vertices: Default::default(),
+                indices: Default::default(),
+                materials: Default::default(),
+                base_path: &base_path,
                 buffers,
             },
             document,
