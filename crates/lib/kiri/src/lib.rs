@@ -15,17 +15,16 @@
 
 mod gpu;
 mod mesh;
-mod resource_manager;
+mod resource_cache;
+mod uniforms;
 // mod scene;
-// mod temp_images;
 
 use std::io;
 
 pub use mesh::*;
-pub use resource_manager::*;
+pub use resource_cache::*;
+pub use uniforms::*;
 // pub use scene::*;
-
-// pub use temp_images::*;
 
 use thiserror::Error;
 
@@ -41,6 +40,8 @@ pub enum Error {
     AssetImportError(kiri_assets::Error),
     #[error("Out of mesh memory")]
     OutOfMeshMemory,
+    #[error("Too many uniforms")]
+    TooManyUniforms,
 }
 
 impl From<kiri_backend::Error> for Error {

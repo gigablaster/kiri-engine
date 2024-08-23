@@ -3,14 +3,15 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri::{ResourceLoader, ResourceManager};
-use kiri_assets::ImageAssetType;
+use kiri::{ResourceCache, ResourceLoader};
 use kiri_backend::AttachmentClearValue;
-use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget};
+use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
-struct Loop {}
+struct Loop {
+    _cache: Arc<ResourceCache>,
+}
 
 #[derive(Debug)]
 enum LoopError {}
@@ -23,9 +24,11 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(resource_manager: &Arc<ResourceManager>) -> Result<Self, GameError<LoopError>> {
-        resource_manager.get_or_load_image("PBR/Cerberus_A.png", ImageAssetType::Srgba)?;
-        Ok(Self {})
+    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
+        let cache = ResourceCache::new(renderer)?;
+        cache.get_or_load_scene("PBR/gun.gltf")?;
+        cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
+        Ok(Self { _cache: cache })
     }
     fn title(&self) -> &str {
         "Loop Demo"

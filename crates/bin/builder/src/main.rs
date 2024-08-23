@@ -78,7 +78,7 @@ impl Packer for LocalCachePacker {
     }
 
     fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
-        let path = get_compiled_asset_path(reference.compiled().as_ref())?;
+        let path = get_compiled_asset_path(reference.compiled().as_path())?;
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -94,7 +94,7 @@ impl Packer for LocalCachePacker {
 
 fn get_compiled_asset_change_time(reference: &AssetReference) -> Option<SystemTime> {
     let reference = reference.compiled();
-    let path = get_compiled_asset_path(reference.as_ref()).ok()?;
+    let path = get_compiled_asset_path(reference.as_path()).ok()?;
     if path.exists() {
         if let Ok(metadata) = fs::metadata(path) {
             if let Ok(modified) = metadata.modified() {

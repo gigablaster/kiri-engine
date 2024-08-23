@@ -13,10 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use kiri_assets::MeshMaterialBlend;
-use kiri_gfx::{BufferSlice, ImageHandle};
+use std::collections::HashMap;
 
-use crate::Bounds;
+use kiri_assets::{MeshMaterialBlend, NodeIndex};
+use kiri_gfx::{BufferHandle, DescriptorHandle, ImageHandle};
+
+use crate::{Bounds, StaticMeshHandle};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
@@ -26,44 +28,71 @@ pub struct RenderMeshSurface {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct RenderMeshMaterial {
+pub struct RenderMeshMaterialData {
     pub base_color: ImageHandle,
     pub normals: ImageHandle,
     pub metallic_roughness: ImageHandle,
     pub occlusion: ImageHandle,
     pub emissive: ImageHandle,
     pub emissive_power: f32,
-    pub blend: MeshMaterialBlend,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderMaterialType {
+    Opaque,
+    Masked,
+    Transparent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RenderMaterialDesc {
+    pub ds: DescriptorHandle,
+    pub ty: RenderMaterialType,
+}
+
+impl From<MeshMaterialBlend> for RenderMaterialType {
+    fn from(value: MeshMaterialBlend) -> Self {
+        match value {
+            MeshMaterialBlend::Opaque => Self::Opaque,
+            MeshMaterialBlend::AlphaBlend => Self::Transparent,
+            MeshMaterialBlend::AlphaTest(_) => Self::Masked,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct StaticRenderMesh {
-    pub vertices: BufferSlice,
-    pub indices: BufferSlice,
+    pub vertex_offset: u32,
     pub surfaces: Vec<RenderMeshSurface>,
-    pub materials: Vec<RenderMeshMaterial>,
     pub bounds: Bounds,
+    pub position_scale: f32,
+    pub uv_scale: [f32; 2],
 }
 
-// #[derive(Debug, Default)]
-// pub struct RenderScene {
-//     pub meshes: Vec<StaticMeshHandle>,
-//     pub bounds: Vec<Bounds>,
-//     pub names: HashMap<String, usize>,
-//     pub parents: Vec<NodeIndex>,
-//     pub local_transforms: Vec<glam::Affine3A>,
-//     pub world_transforms: Vec<glam::Affine3A>,
-//     pub node_to_mesh: Vec<(usize, usize)>,
-// }
+#[derive(Debug, Default)]
+pub struct RenderScene {
+    pub vertices: BufferHandle,
+    pub indices: BufferHandle,
+    pub meshes: Vec<StaticRenderMesh>,
+    pub materials: Vec<RenderMaterialDesc>,
+    pub bounds: Vec<Bounds>,
+    pub names: HashMap<String, u32>,
+    pub parents: Vec<NodeIndex>,
+    pub local_transforms: Vec<glam::Affine3A>,
+    pub world_transforms: Vec<glam::Affine3A>,
+    pub node_to_mesh: Vec<(u32, u32)>,
+    pub mesh_handles: Vec<StaticMeshHandle>,
+    pub mesh_names: Vec<String>,
+}
 
-// impl RenderScene {
-//     pub(super) fn update_world_transforms(&mut self) {
-//         for (index, local) in self.local_transforms.iter().enumerate() {
-//             let parent = self.parents[index]
-//                 .index()
-//                 .map(|index| self.world_transforms[index as usize])
-//                 .unwrap_or(self.local_transforms[index]);
-//             self.world_transforms[index] = parent * *local;
-//         }
-//     }
-// }
+impl RenderScene {
+    pub(super) fn update_world_transforms(&mut self) {
+        for (index, local) in self.local_transforms.iter().enumerate() {
+            let parent = self.parents[index]
+                .index()
+                .map(|index| self.world_transforms[index as usize])
+                .unwrap_or(self.local_transforms[index]);
+            self.world_transforms[index] = parent * *local;
+        }
+    }
+}

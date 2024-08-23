@@ -13,49 +13,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk;
+use kiri_assets::{MeshAssetMaterial, StaticMeshVertex};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct GpuMeshMaterial {
-    pub base_color: u32,
-    pub normals: u32,
-    pub metallic_roughness: u32,
-    pub occlusion: u32,
-    pub emissive: u32,
+    pub base_color: glam::Vec4,
+    pub emissive_color: glam::Vec4,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub alpha_cutoff: f32,
     pub emissive_power: f32,
-    pub alpha_cutoff: f32
+}
+
+impl GpuMeshMaterial {
+    pub fn new(value: &MeshAssetMaterial) -> Self {
+        let [_, roughness, metallic, _] = value.metallic_roughness.get_color();
+        let alpha_cutoff = value.blend.get_alpha_cut();
+        let emissive_power = value.get_emissive_power();
+        Self {
+            base_color: value.base_color.get_color().into(),
+            emissive_color: value.emissive.get_color().into(),
+            metallic,
+            roughness,
+            alpha_cutoff,
+            emissive_power,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct GpuMeshDraw {
-    pub world_transform: glam::Mat4,
-    pub vertices: vk::DeviceAddress,
-    pub indices: vk::DeviceAddress,
-    pub material_index: u32,
+#[repr(C)]
+pub struct GpuStaticVertex {
+    pub position: glam::U16Vec3,
+    _pad: u16,
+    pub normal: glam::U16Vec2,
+    pub tangent: glam::U16Vec2,
+    pub uv1: glam::U16Vec2,
+    pub uv2: glam::U16Vec2,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct GpuDirectionalLight {
-    pub direction: glam::Vec3A,
-    pub color: glam::Vec3A
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct HemisphericalAmbientLight {
-    pub top: glam::Vec3A,
-    pub middle: glam::Vec3A,
-    pub bottom: glam::Vec3A
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct GpuPassData{
-    pub view: glam::Mat4,
-    pub projection: glam::Mat4,
-    pub view_projection: glam::Mat4,
-    pub directional_lights: [GpuDirectionalLight; 3],
+impl From<StaticMeshVertex> for GpuStaticVertex {
+    fn from(value: StaticMeshVertex) -> Self {
+        Self {
+            position: glam::U16Vec3::from_array(value.position),
+            _pad: 0,
+            normal: glam::U16Vec2::from_array(value.normal),
+            tangent: glam::U16Vec2::from_array(value.tangent),
+            uv1: glam::U16Vec2::from_array(value.uv1),
+            uv2: glam::U16Vec2::from_array(value.uv2),
+        }
+    }
 }

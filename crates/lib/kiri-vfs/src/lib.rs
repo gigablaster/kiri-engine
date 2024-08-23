@@ -62,6 +62,14 @@ impl AssetReference {
         };
         name.to_ascii_lowercase().into()
     }
+
+    pub fn as_path(&self) -> &Path {
+        Path::new(&self.0)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl From<&Path> for AssetReference {
@@ -85,12 +93,6 @@ impl From<&str> for AssetReference {
 impl From<String> for AssetReference {
     fn from(value: String) -> Self {
         Self::new(&value)
-    }
-}
-
-impl AsRef<Path> for AssetReference {
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.0)
     }
 }
 
@@ -165,7 +167,7 @@ impl FileSystemArchive {
         }
     }
     fn path(&self, reference: &AssetReference) -> io::Result<PathBuf> {
-        let path = path::absolute(self.root.join(reference))?;
+        let path = path::absolute(self.root.join(reference.as_path()))?;
         if !path.starts_with(&self.root) {
             return Err(io::Error::other(
                 "Can't access resources outside of root path",
