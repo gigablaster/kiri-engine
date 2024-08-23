@@ -10,7 +10,7 @@ use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
-    _cache: Arc<ResourceCache>,
+    cache: Arc<ResourceCache>,
 }
 
 #[derive(Debug)]
@@ -28,13 +28,14 @@ impl GameClient<LoopError> for Loop {
         let cache = ResourceCache::new(renderer)?;
         cache.get_or_load_scene("PBR/gun.gltf")?;
         cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        Ok(Self { _cache: cache })
+        Ok(Self { cache })
     }
     fn title(&self) -> &str {
         "Loop Demo"
     }
 
     fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
+        self.cache.tick();
         Ok(GameTickState::Continue)
     }
 

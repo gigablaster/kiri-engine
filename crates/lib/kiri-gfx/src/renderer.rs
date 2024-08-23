@@ -245,7 +245,7 @@ impl Renderer {
             .push(vk::DescriptorSet::null(), data))
     }
 
-    pub fn remove_descriptor_set(&self, handle: DescriptorHandle) {
+    pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
         self.descriptors.write().remove(handle);
     }
 

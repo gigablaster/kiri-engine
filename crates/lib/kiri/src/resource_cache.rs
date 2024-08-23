@@ -428,3 +428,22 @@ impl ResourceCache {
         }
     }
 }
+
+impl Drop for ResourceCache {
+    fn drop(&mut self) {
+        self.renderer.destroy_image(self.dummy_image);
+        self.images
+            .assets
+            .write()
+            .drain()
+            .for_each(|(_, handle)| self.renderer.destroy_image(handle));
+        self.scene_assets.write().drain().for_each(|scene| {
+            self.renderer.destroy_buffer(scene.vertices);
+            self.renderer.destroy_buffer(scene.vertices);
+        });
+        self.materials
+            .write()
+            .drain()
+            .for_each(|(_, ds)| self.renderer.destroy_descriptor_set(ds));
+    }
+}
