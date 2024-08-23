@@ -13,26 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    mem,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
-use arrayvec::ArrayVec;
-use ash::vk::{self};
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
-    Asset, AssetSource, GltfMeshSource, ImageAsset, ImageAssetSource, ImageAssetType,
-    StaticMeshAsset,
+    load_asset, AssetSource, ImageAsset, ImageAssetSource, ImageAssetType, ImportAsset, ImportMode,
 };
-use kiri_backend::{Image, ImageCreateDesc, RenderDevice};
-use kiri_common::{DynamicAllocator, Handle, Pool};
-use kiri_gfx::{
-    BindlessManager, BufferHandle, BufferManager, BufferSlice, ImageHandle, ImageUploadData,
-    Staging,
-};
+use kiri_backend::ImageCreateDesc;
+use kiri_common::{Handle, Pool};
+use kiri_gfx::{ImageHandle, ImageUploadData, Renderer};
 use kiri_vfs::{vfs_load, AssetReference};
-use log::{debug, error};
+use log::{debug, error, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::{Bounds, Error, RenderMeshMaterial, RenderMeshSurface, StaticRenderMesh};
+use crate::{Error, StaticRenderMesh};
 
 pub type StaticMeshHandle = Handle<Arc<StaticRenderMesh>>;
 // pub type SceneHandle = Handle<RenderScene>;
@@ -43,203 +45,134 @@ type StaticMeshPool = Pool<Arc<StaticRenderMesh>>;
 type LoadingTask = Task<()>;
 // type StaticMeshLoadingTask = Task<Result<Arc<StaticMeshAsset>, Error>>;
 
-const GEOMETRY_PAGE_SIZE: usize = 64 * 1024 * 1024;
-
 pub trait ResourceLoader {
-    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> ImageHandle;
-    fn get_or_load_static_mesh(&self, name: &str) -> StaticMeshHandle;
+    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error>;
 }
 
 impl ResourceLoader for Arc<ResourceManager> {
-    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> ImageHandle {
-        let reference = ImageAssetSource::from_file(name).reference();
-        load_image_impl(self, reference, ty)
+    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
+        let source = ImageAssetSource::new(name).ty(ty);
+        self.images
+            .get_or_load(source, |source| load_image_impl(self, source))
+    }
+}
+
+/// Keeps normalized asset name -> asset + ref count.
+///
+/// T must be a handle
+#[derive(Debug, Default)]
+struct AssetTracker<T: Copy + Hash + Eq> {
+    assets: RwLock<HashMap<AssetReference, (T, AtomicUsize)>>,
+    references: Mutex<HashMap<T, AssetReference>>,
+}
+
+impl<T: Copy + Hash + Eq> AssetTracker<T> {
+    /// Return asset if exists and increase ref count
+    fn get_or_load<U: AssetSource, LOAD: FnOnce(U) -> Result<T, Error>>(
+        &self,
+        source: U,
+        load: LOAD,
+    ) -> Result<T, Error> {
+        let assets = self.assets.upgradable_read();
+        let key = source.reference().normalized();
+        if let Some((asset, count)) = assets.get(&key) {
+            count.fetch_add(1, Ordering::AcqRel);
+            Ok(*asset)
+        } else {
+            let mut assets = RwLockUpgradableReadGuard::upgrade(assets);
+            if let Some((asset, count)) = assets.get(&key) {
+                count.fetch_add(1, Ordering::AcqRel);
+                Ok(*asset)
+            } else {
+                let asset = load(source)?;
+                assets.insert(key.clone(), (asset, AtomicUsize::new(1)));
+                self.references.lock().insert(asset, key);
+                Ok(asset)
+            }
+        }
     }
 
-    fn get_or_load_static_mesh(&self, name: &str) -> StaticMeshHandle {
-        let parts = name.split("#").collect::<ArrayVec<_, 2>>();
-        let source = GltfMeshSource {
-            gltf: parts[0].to_owned(),
-            mesh: parts[1].to_owned(),
-        };
-        load_static_mesh_impl(self, source.reference())
+    /// Decreases ref count and release reasources if tehre's no references left
+    fn release<UNLOAD: FnOnce(T)>(&self, handle: T, unload: UNLOAD) {
+        let mut references = self.references.lock();
+        if let Some(reference) = references.get(&handle) {
+            let assets = self.assets.upgradable_read();
+            if let Some((_, count)) = assets.get(reference) {
+                if count.fetch_sub(1, Ordering::AcqRel) == 0 {
+                    let mut assets = RwLockUpgradableReadGuard::upgrade(assets);
+                    assets.remove(reference);
+                    references.remove(&handle);
+                    unload(handle);
+                }
+            }
+        }
     }
 }
 
 fn load_image_impl(
     manager: &Arc<ResourceManager>,
-    reference: AssetReference,
-    ty: ImageAssetType,
-) -> ImageHandle {
-    let images = manager.image_assets.upgradable_read();
-    if let Some(handle) = images.get(&reference) {
-        let image = manager
-            .bindless
-            .read()
-            .resolve_image(*handle)
-            .unwrap()
-            .clone();
-        unsafe { Arc::increment_strong_count(Arc::into_raw(image)) };
-        *handle
-    } else {
-        let mut images = RwLockUpgradableReadGuard::upgrade(images);
-        if let Some(handle) = images.get(&reference) {
-            let image = manager
-                .bindless
-                .read()
-                .resolve_image(*handle)
-                .unwrap()
-                .clone();
-            unsafe { Arc::increment_strong_count(Arc::into_raw(image)) };
-            *handle
-        } else {
-            let handle = manager.bindless.write().import_image(
-                manager.dummy_images.get(&ty).cloned().unwrap(),
-                vk::ImageAspectFlags::COLOR,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            );
-            images.insert(reference, handle);
-            manager
-                .loading
-                .lock()
-                .push(IoTaskPool::get().spawn(load_image(manager.clone(), handle, reference)));
-            manager.image_tracking.lock().insert(handle, reference);
-            handle
-        }
-    }
+    source: ImageAssetSource,
+) -> Result<ImageHandle, Error> {
+    let handle = manager.renderer.create_image(
+        ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1]),
+        Some(&[ImageUploadData {
+            data: &[128, 128, 128, 255],
+        }]),
+    )?;
+    manager
+        .loading_tasks
+        .lock()
+        .push(IoTaskPool::get().spawn(load_image(manager.clone(), handle, source)));
+    Ok(handle)
 }
 
-async fn load_image(manager: Arc<ResourceManager>, handle: ImageHandle, reference: AssetReference) {
-    if let Err(err) = do_load_image(&manager, handle, reference) {
-        error!("Failed to load image {}: {}", reference, err);
+async fn load_image(manager: Arc<ResourceManager>, handle: ImageHandle, source: ImageAssetSource) {
+    if let Err(err) = do_load_image(&manager, handle, &source) {
+        error!("Failed to load image {:?}: {}", source, err);
     }
 }
 
 fn do_load_image(
-    manager: &ResourceManager,
+    manager: &Arc<ResourceManager>,
     handle: ImageHandle,
-    reference: AssetReference,
+    source: &ImageAssetSource,
 ) -> Result<(), Error> {
-    let asset = ImageAsset::load(vfs_load(reference)?)?;
-    let image = Image::new(
-        &manager.device,
-        ImageCreateDesc::texture(asset.format, asset.dims),
-    )?;
-    let data = asset
+    let asset = load_image_asset(source)?;
+    let upload = asset
         .mips
         .iter()
-        .map(|data| ImageUploadData { data })
+        .map(|x| ImageUploadData { data: x })
         .collect::<Vec<_>>();
-    manager.staging.lock().upload_image(&image, &data)?;
-    manager.bindless.write().update_image(
+    manager.renderer.update_image(
         handle,
-        image.into(),
-        vk::ImageAspectFlags::COLOR,
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        ImageCreateDesc::texture(asset.format, asset.dims).mip_levels(asset.mips.len()),
+        Some(&upload),
+    )?;
+    debug!(
+        "Image loaded: {:?} ({:?} {:?})",
+        source, asset.format, asset.dims
     );
     Ok(())
 }
 
-fn load_static_mesh_impl(
-    manager: &Arc<ResourceManager>,
-    reference: AssetReference,
-) -> StaticMeshHandle {
-    let meshes = manager.static_mesh_assets.upgradable_read();
-    if let Some(handle) = meshes.get(&reference) {
-        let mesh = manager.static_meshes.read().get(*handle).cloned().unwrap();
-        unsafe { Arc::increment_strong_count(Arc::into_raw(mesh)) }
-        *handle
+fn load_image_asset(source: &ImageAssetSource) -> Result<ImageAsset, Error> {
+    // First, attempt to load compiled asset
+    let reference = source.reference();
+    if let Ok(reader) = vfs_load(&reference.compiled()) {
+        debug!("Loading image {:?}", reference);
+        Ok(load_asset(reader)?)
     } else {
-        let mut meshes = RwLockUpgradableReadGuard::upgrade(meshes);
-        if let Some(handle) = meshes.get(&reference) {
-            let mesh = manager.static_meshes.read().get(*handle).cloned().unwrap();
-            unsafe { Arc::increment_strong_count(Arc::into_raw(mesh)) }
-            *handle
-        } else {
-            let handle = manager.static_meshes.write().push(Default::default());
-            meshes.insert(reference, handle);
-            manager
-                .loading
-                .lock()
-                .push(IoTaskPool::get().spawn(load_static_mesh(
-                    manager.clone(),
-                    handle,
-                    reference,
-                )));
-            handle
-        }
+        // There's no imported asset, so import it in runtime (slow)
+        warn!("Compile asset {:?} at runtime", source);
+        Ok(source.import(ImportMode::Runtime)?)
     }
-}
-
-async fn load_static_mesh(
-    manager: Arc<ResourceManager>,
-    handle: StaticMeshHandle,
-    reference: AssetReference,
-) {
-    if let Err(err) = do_load_static_mesh(&manager, handle, reference) {
-        error!("Failed to load mesh {}: {}", reference, err)
-    }
-}
-
-fn do_load_static_mesh(
-    manager: &Arc<ResourceManager>,
-    handle: StaticMeshHandle,
-    reference: AssetReference,
-) -> Result<(), Error> {
-    let asset = StaticMeshAsset::load(vfs_load(reference)?)?;
-    let vertices = manager.allocate_geometry(mem::size_of_val(&asset.vertices))?;
-    let indices = manager.allocate_geometry(mem::size_of_val(&asset.indices))?;
-    manager.upload_buffer(vertices, &asset.vertices)?;
-    manager.upload_buffer(indices, &asset.indices)?;
-    let mesh = StaticRenderMesh {
-        vertices,
-        indices,
-        surfaces: asset
-            .surfaces
-            .into_iter()
-            .map(|x| RenderMeshSurface {
-                first_index: x.first_index,
-                index_count: x.index_count,
-                material_index: x.material,
-            })
-            .collect(),
-        materials: asset
-            .materials
-            .into_iter()
-            .map(|material| RenderMeshMaterial {
-                base_color: load_image_impl(manager, material.base_color, ImageAssetType::Color),
-                normals: load_image_impl(manager, material.normals, ImageAssetType::Normal),
-                metallic_roughness: load_image_impl(
-                    manager,
-                    material.metallic_roughness,
-                    ImageAssetType::MetallicRoughness,
-                ),
-                occlusion: load_image_impl(manager, material.occlusion, ImageAssetType::Occlusion),
-                emissive: load_image_impl(manager, material.emissive, ImageAssetType::Emissive),
-                emissive_power: material.emissive_power,
-                blend: material.blend,
-            })
-            .collect(),
-        bounds: Bounds::from_array_and_radius(asset.bounds.0, asset.bounds.1),
-    };
-    manager.static_meshes.write().replace(handle, mesh.into());
-    Ok(())
 }
 
 #[derive(Debug)]
 pub struct ResourceManager {
-    device: Arc<RenderDevice>,
-    bindless: RwLock<BindlessManager>,
-    buffers: RwLock<BufferManager>,
-    staging: Mutex<Staging>,
-    loading: Mutex<Vec<LoadingTask>>,
-    image_assets: RwLock<HashMap<AssetReference, ImageHandle>>,
-    image_tracking: Mutex<HashMap<ImageHandle, AssetReference>>,
-    static_meshes: RwLock<StaticMeshPool>,
-    static_mesh_assets: RwLock<HashMap<AssetReference, StaticMeshHandle>>,
-    geometry: Mutex<HashMap<BufferHandle, DynamicAllocator>>,
-    // loading_static_meshes: Mutex<Vec<StaticMeshLoadingTask>>,
-    dummy_images: HashMap<ImageAssetType, Arc<Image>>,
+    renderer: Arc<Renderer>,
+    loading_tasks: Mutex<Vec<LoadingTask>>,
+    images: AssetTracker<ImageHandle>,
 }
 
 // const MESH_POOL_SIZE: usize = 128 * 1024 * 1024;
@@ -261,47 +194,22 @@ pub struct ResourceManager {
 //     Pool<GpuMeshMaterial, MaybeUninitVauleWrapper<GpuMeshMaterial>, MaterialPoolLimits>;
 
 impl ResourceManager {
-    pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
+    pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource manager");
-        let mut staging = Staging::new(device)?;
-        let mut dummy_images = HashMap::new();
-        for ty in [
-            ImageAssetType::Color,
-            ImageAssetType::Emissive,
-            ImageAssetType::MetallicRoughness,
-            ImageAssetType::NonColor,
-            ImageAssetType::Normal,
-            ImageAssetType::Occlusion,
-        ] {
-            let image = Image::new(
-                device,
-                ImageCreateDesc::texture(ty.uncompressed_format(), [1, 1]),
-            )?;
-            staging.upload_image(
-                &image,
-                &[ImageUploadData {
-                    data: &ty.default_values(),
-                }],
-            )?;
-            dummy_images.insert(ty, image.into());
-        }
         Ok(Arc::new(Self {
-            device: device.clone(),
-            bindless: RwLock::new(BindlessManager::new(device)?),
-            buffers: RwLock::new(BufferManager::new(device)),
-            staging: Mutex::new(staging),
-            image_assets: Default::default(),
-            image_tracking: Default::default(),
-            loading: Default::default(),
-            static_meshes: Default::default(),
-            static_mesh_assets: Default::default(),
-            geometry: Default::default(),
-            dummy_images,
+            renderer: renderer.clone(),
+            loading_tasks: Default::default(),
+            images: Default::default(),
         }))
     }
 
+    pub fn unload_image(&self, handle: ImageHandle) {
+        self.images
+            .release(handle, |handle| self.renderer.destroy_image(handle));
+    }
+
     pub fn tick(&self) {
-        let mut loading = self.loading.lock();
+        let mut loading = self.loading_tasks.lock();
         let mut i = 0;
         while i < loading.len() {
             if loading[i].is_finished() {
@@ -309,61 +217,6 @@ impl ResourceManager {
                 block_on(task);
             } else {
                 i += 1;
-            }
-        }
-    }
-
-    pub fn allocate_geometry(&self, size: usize) -> Result<BufferSlice, Error> {
-        assert!(size <= GEOMETRY_PAGE_SIZE);
-        let mut geometry = self.geometry.lock();
-        if let Some(slice) = geometry.iter_mut().find_map(|(handle, allocator)| {
-            if let Some(offset) = allocator.allocate(size) {
-                Some(BufferSlice::new(*handle, offset))
-            } else {
-                None
-            }
-        }) {
-            Ok(slice)
-        } else {
-            let buffer = self.buffers.write().create(size)?;
-            let mut allocator = DynamicAllocator::new(
-                GEOMETRY_PAGE_SIZE,
-                self.device
-                    .physical_device
-                    .properties
-                    .limits
-                    .min_storage_buffer_offset_alignment as _,
-            );
-            let offset = allocator.allocate(size).unwrap();
-            geometry.insert(buffer, allocator);
-            Ok(BufferSlice::new(buffer, offset))
-        }
-    }
-
-    pub fn upload_buffer<T: Copy>(&self, buffer: BufferSlice, data: &[T]) -> Result<(), Error> {
-        let gpu_buffer = self.buffers.read().resolve(buffer.handle)?;
-        self.staging
-            .lock()
-            .upload_buffer(&gpu_buffer, buffer.offset as _, data)?;
-        Ok(())
-    }
-
-    pub fn unload_image(&self, handle: ImageHandle) {
-        let mut bindless = self.bindless.write();
-        if let Ok(image) = bindless.resolve_image(handle) {
-            // Check if last instance.
-            // It might create problems if we have Arcs somewhere outside of ResourceManager, so
-            // in perfect world we sould need a separated asset tracking. But we won't let images
-            // to leak outside.
-            if Arc::strong_count(image) == 1 {
-                bindless.remove_image(handle);
-                let mut tracking = self.image_tracking.lock();
-                let mut images = self.image_assets.write();
-                if let Some(reference) = tracking.remove(&handle) {
-                    images.remove(&reference);
-                }
-            } else {
-                unsafe { Arc::decrement_strong_count(Arc::into_raw(image.clone())) };
             }
         }
     }

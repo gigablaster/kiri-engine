@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
-# kiri = { path = "../kiri" }
+kiri = { path = "../kiri" }
 kiri-assets = { path = "../kiri-assets" }
 kiri-gfx = { path = "../kiri-gfx" }
 ash = "0.38.0"

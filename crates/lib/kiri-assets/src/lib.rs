@@ -89,7 +89,7 @@ impl<C: Context> Writable<C> for AssetHeader {
 
 pub fn load_asset<T: Asset, R: Read>(r: R) -> io::Result<T> {
     let mut reader = BufReader::new(r);
-    let header = AssetHeader::read_from_stream_buffered(reader.by_ref())?;
+    let header = AssetHeader::read_from_stream_unbuffered(&mut reader)?;
     if !header.is_valid::<T>() {
         return Err(io::Error::other("Asset header isn't valid"));
     }
@@ -98,12 +98,18 @@ pub fn load_asset<T: Asset, R: Read>(r: R) -> io::Result<T> {
 
 pub fn save_asset<T: Asset, W: Write>(w: W, asset: T) -> io::Result<()> {
     let mut w = w;
-    AssetHeader::new::<T>().write_to_stream(w.by_ref())?;
+    AssetHeader::new::<T>().write_to_stream(&mut w)?;
     asset.serialize(w)
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum ImportMode {
+    Runtime,
+    Compile,
+}
+
 pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
-    fn import(&self) -> Result<T, Error>;
+    fn import(&self, mode: ImportMode) -> Result<T, Error>;
 }
 
 use std::{

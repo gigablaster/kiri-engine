@@ -24,6 +24,7 @@ use uuid::uuid;
 
 use crate::{
     get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error, ImportAsset,
+    ImportMode,
 };
 
 #[derive(Debug)]
@@ -124,7 +125,7 @@ impl Asset for ImageAsset {
 }
 
 impl ImportAsset<ImageAsset> for ImageAssetSource {
-    fn import(&self) -> Result<ImageAsset, Error> {
+    fn import(&self, mode: ImportMode) -> Result<ImageAsset, Error> {
         // Load image data
         let data = read_to_end(get_absolute_asset_path(&self.path)?)?;
         // Load image
@@ -132,7 +133,7 @@ impl ImportAsset<ImageAsset> for ImageAssetSource {
             image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
         let dims = [image.width(), image.height()];
         let is_pow2 = dims[0].is_power_of_two() && dims[1].is_power_of_two();
-        if is_pow2 && dims[0] > 16 && dims[1] > 16 {
+        if is_pow2 && dims[0] > 16 && dims[1] > 16 && mode == ImportMode::Compile {
             // Generate and compress mips
             let bc = match self.ty {
                 ImageAssetType::Rg => BcMode::Bc5,

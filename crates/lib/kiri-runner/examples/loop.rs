@@ -3,8 +3,10 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
+use kiri::{ResourceLoader, ResourceManager};
+use kiri_assets::ImageAssetType;
 use kiri_backend::AttachmentClearValue;
-use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget, Renderer};
+use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
@@ -21,7 +23,8 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(_renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
+    fn new(resource_manager: &Arc<ResourceManager>) -> Result<Self, GameError<LoopError>> {
+        resource_manager.get_or_load_image("PBR/Cerberus_A.png", ImageAssetType::Srgba)?;
         Ok(Self {})
     }
     fn title(&self) -> &str {

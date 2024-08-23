@@ -53,6 +53,15 @@ impl AssetReference {
         name.push_str(".asset");
         name.into()
     }
+
+    pub fn normalized(&self) -> AssetReference {
+        let name = if let Some((base, _)) = self.0.rsplit_once(".") {
+            base.to_owned()
+        } else {
+            self.0.clone()
+        };
+        name.to_ascii_lowercase().into()
+    }
 }
 
 impl From<&Path> for AssetReference {
@@ -156,7 +165,7 @@ impl FileSystemArchive {
         }
     }
     fn path(&self, reference: &AssetReference) -> io::Result<PathBuf> {
-        let path = self.root.join(reference).canonicalize()?;
+        let path = path::absolute(self.root.join(reference))?;
         if !path.starts_with(&self.root) {
             return Err(io::Error::other(
                 "Can't access resources outside of root path",

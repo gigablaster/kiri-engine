@@ -17,8 +17,9 @@ mod runner;
 
 use std::{error::Error, sync::Arc};
 
+use kiri::ResourceManager;
 use kiri_common::GameTime;
-use kiri_gfx::{RenderContext, Renderer};
+use kiri_gfx::RenderContext;
 pub use runner::*;
 
 pub enum GameTickState {
@@ -29,33 +30,21 @@ pub enum GameTickState {
 #[derive(Debug, thiserror::Error)]
 pub enum GameError<E: Error> {
     GameFailure(E),
-    BackendFailure(kiri_backend::Error),
+    BackendFailure(#[from] kiri_backend::Error),
     GfxError(kiri_gfx::Error),
-    // EngineError(kiri::Error),
+    EngineError(kiri::Error),
     LoopError(String),
 }
 
-impl<E: Error> From<kiri_backend::Error> for GameError<E> {
-    fn from(value: kiri_backend::Error) -> Self {
-        Self::BackendFailure(value)
+impl<E: Error> From<kiri::Error> for GameError<E> {
+    fn from(value: kiri::Error) -> Self {
+        match value {
+            kiri::Error::BackendError(err) => Self::BackendFailure(err),
+            kiri::Error::RendererError(err) => Self::GfxError(err),
+            err => Self::EngineError(err),
+        }
     }
 }
-
-impl<E: Error> From<String> for GameError<E> {
-    fn from(value: String) -> Self {
-        Self::LoopError(value)
-    }
-}
-
-// impl<E: Error> From<kiri::Error> for GameError<E> {
-//     fn from(value: kiri::Error) -> Self {
-//         match value {
-//             kiri::Error::BackendError(err) => Self::BackendFailure(err),
-//             kiri::Error::RendererError(err) => Self::GfxError(err),
-//             err => Self::EngineError(err),
-//         }
-//     }
-// }
 
 impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
     fn from(value: kiri_gfx::Error) -> Self {
@@ -67,7 +56,7 @@ impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<E>>;
+    fn new(renderer: &Arc<ResourceManager>) -> Result<Self, GameError<E>>;
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
     fn render(&self, time: GameTime, context: &RenderContext) -> Result<(), kiri_gfx::Error>;

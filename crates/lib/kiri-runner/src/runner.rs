@@ -17,6 +17,7 @@ use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
 use ash::vk;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
+use kiri::ResourceManager;
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::TimeFilter;
 use kiri_gfx::{FrameState, Renderer};
@@ -38,6 +39,7 @@ struct InnerData<E: Error, G: GameClient<E>> {
     surface: Surface,
     device: Arc<RenderDevice>,
     renderer: Arc<Renderer>,
+    resource_manager: Arc<ResourceManager>,
     _marker1: PhantomData<E>,
     _marker2: PhantomData<G>,
 }
@@ -83,9 +85,11 @@ impl<E: Error, G: GameClient<E>> InnerData<E, G> {
             &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
         )?;
         let renderer = Renderer::new(&device)?;
+        let resource_manager = ResourceManager::new(&renderer)?;
         Ok(Self {
             window,
             renderer,
+            resource_manager,
             device,
             surface,
             swapchain: None,
@@ -120,7 +124,9 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
         let internal = self
             .inner
             .get_or_insert(InnerData::new(event_loop).unwrap());
-        let game = self.game.get_or_insert(G::new(&internal.renderer).unwrap());
+        let game = self
+            .game
+            .get_or_insert(G::new(&internal.resource_manager).unwrap());
         game.resumed().unwrap();
         internal.window.set_title(game.title());
         self.last_time = Instant::now();

@@ -82,7 +82,7 @@ impl MeshSurfaceBuilder {
         indices.iter().for_each(|x| self.indices.push(*x));
     }
 
-    fn build_static(self) -> (Vec<FullVertex>, Vec<u16>, MeshAssetMaterial) {
+    fn build_static(self, optimize: bool) -> (Vec<FullVertex>, Vec<u16>, MeshAssetMaterial) {
         let (mut tangents, has_tangents) = if self.positions.len() == self.tangents.len() {
             (self.tangents, true)
         } else {
@@ -113,7 +113,7 @@ impl MeshSurfaceBuilder {
             });
         }
 
-        let indices = self.indices;
+        let mut indices = self.indices;
         let mut vertices = Vec::with_capacity(self.positions.len());
         for index in 0..self.positions.len() {
             let tangent = tangents[index];
@@ -125,12 +125,15 @@ impl MeshSurfaceBuilder {
             };
             vertices.push(vertex);
         }
-        let (total_vertex_count, remap) = meshopt::generate_vertex_remap(&vertices, Some(&indices));
-        let vertices = meshopt::remap_vertex_buffer(&vertices, total_vertex_count, &remap);
-        let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
-        let remap = meshopt::optimize_vertex_fetch_remap(&indices, total_vertex_count);
-        let vertices = meshopt::remap_vertex_buffer(&vertices, total_vertex_count, &remap);
-        let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+        if optimize {
+            let (total_vertex_count, remap) =
+                meshopt::generate_vertex_remap(&vertices, Some(&indices));
+            vertices = meshopt::remap_vertex_buffer(&vertices, total_vertex_count, &remap);
+            indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+            let remap = meshopt::optimize_vertex_fetch_remap(&indices, total_vertex_count);
+            vertices = meshopt::remap_vertex_buffer(&vertices, total_vertex_count, &remap);
+            indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+        }
 
         let indices = indices.into_iter().map(|x| x as u16).collect::<Vec<_>>();
         (vertices, indices, self.material)
@@ -225,8 +228,8 @@ fn quantize_float(value: f32, max: f32) -> u16 {
 }
 
 impl MeshAssetBuilder {
-    pub fn push(&mut self, surface: MeshSurfaceBuilder) {
-        self.surfaces.push(surface.build_static());
+    pub fn push(&mut self, surface: MeshSurfaceBuilder, optimize: bool) {
+        self.surfaces.push(surface.build_static(optimize));
     }
 
     pub fn build(
