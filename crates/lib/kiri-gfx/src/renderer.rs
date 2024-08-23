@@ -79,6 +79,7 @@ struct PipelineCompilationData {
 }
 
 /// Low-level renderer
+#[derive(Debug)]
 pub struct Renderer {
     pub device: Arc<RenderDevice>,
     images: RwLock<ImagePool>,
@@ -378,7 +379,7 @@ impl Renderer {
         if let Some(semaphore) = semaphore {
             self.device.submit(
                 &[command_buffer],
-                vk::Fence::null(),
+                frame.render_fence,
                 &[(semaphore, vk::PipelineStageFlags2::VERTEX_INPUT)],
                 &[(
                     frame.render_finished,
