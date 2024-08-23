@@ -296,6 +296,23 @@ impl RenderDevice {
         }
     }
 
+    pub fn begin_label(&self, command_buffer: vk::CommandBuffer, name: &str) {
+        if let Some(debug_utils) = &self.debug {
+            unsafe {
+                debug_utils.cmd_begin_debug_utils_label(
+                    command_buffer,
+                    &vk::DebugUtilsLabelEXT::default().label_name(&CString::new(name).unwrap()),
+                )
+            };
+        }
+    }
+
+    pub fn end_labe(&self, command_buffer: vk::CommandBuffer) {
+        if let Some(debug_utils) = &self.debug {
+            unsafe { debug_utils.cmd_end_debug_utils_label(command_buffer) };
+        }
+    }
+
     /// Submits execution to main queue
     ///
     /// Thread-safe.
@@ -391,6 +408,7 @@ impl RenderDevice {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
+            self.begin_label(cb, "prsent");
             let barriers = [
                 vk::ImageMemoryBarrier2::default()
                     .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
@@ -465,6 +483,7 @@ impl RenderDevice {
                     .dependency_flags(vk::DependencyFlags::BY_REGION)
                     .image_memory_barriers(&[barrier]),
             );
+            self.end_labe(cb);
             self.raw.end_command_buffer(cb)?;
             self.submit(
                 &[cb],

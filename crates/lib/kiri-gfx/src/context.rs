@@ -40,6 +40,7 @@ pub struct RenderPassBuilder<'a> {
     streams: Vec<DrawStream>,
     descriptor_sets: Vec<DescriptorHandle>,
     image_barriers: Vec<ImageBarrier>,
+    name: &'a str,
 }
 
 impl<'a> RenderPassBuilder<'a> {
@@ -83,6 +84,7 @@ impl<'a> RenderPassBuilder<'a> {
             streams: self.streams,
             descriptor_sets: self.descriptor_sets,
             image_barriers: self.image_barriers,
+            name: self.name.to_owned(),
         }
     }
 }
@@ -93,6 +95,7 @@ pub struct RenderPass {
     pub(super) streams: Vec<DrawStream>,
     pub(super) descriptor_sets: Vec<DescriptorHandle>,
     pub(super) image_barriers: Vec<ImageBarrier>,
+    pub(super) name: String,
 }
 
 pub struct RenderContext<'a> {
@@ -180,6 +183,7 @@ impl<'a> RenderContext<'a> {
 
     pub fn create_render_pass(
         &'a self,
+        name: &'a str,
         color: &[RenderTarget],
         depth: Option<RenderTarget>,
     ) -> RenderPassBuilder {
@@ -193,6 +197,7 @@ impl<'a> RenderContext<'a> {
             streams: Default::default(),
             descriptor_sets: Default::default(),
             image_barriers: Default::default(),
+            name,
         }
     }
 

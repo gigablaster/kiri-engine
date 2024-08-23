@@ -323,6 +323,7 @@ impl Renderer {
         )?;
         let mut descriptors_to_clean = Vec::new();
         for pass in passes {
+            self.device.begin_label(command_buffer, &pass.name);
             record_barriers(
                 &self.device.raw,
                 command_buffer,
@@ -371,6 +372,7 @@ impl Renderer {
             unsafe {
                 self.device.raw.cmd_end_rendering(command_buffer);
             }
+            self.device.end_labe(command_buffer);
         }
         unsafe {
             self.device.raw.end_command_buffer(command_buffer)?;

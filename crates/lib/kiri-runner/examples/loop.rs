@@ -45,6 +45,7 @@ impl GameClient<LoopError> for Loop {
         context: &RenderContext,
     ) -> Result<(), kiri_gfx::Error> {
         let mut pass = context.create_render_pass(
+            "main",
             &[RenderTarget::color(context.target)
                 .clear(AttachmentClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
             None,

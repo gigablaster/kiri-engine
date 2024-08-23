@@ -222,10 +222,12 @@ impl Staging {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
+            self.device.begin_label(self.command_buffer, "Upload data");
             self.barrier_before();
             self.copy_buffers();
             self.copy_images();
             self.barriers_after();
+            self.device.end_labe(self.command_buffer);
             self.device.raw.end_command_buffer(self.command_buffer)?;
         }
         self.allocator.reset();
