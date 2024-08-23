@@ -312,7 +312,7 @@ impl Renderer {
             )?;
         }
         let mut descriptors = self.descriptors.write();
-        let empty_descriptor_set = frame.allocate_descriptor(
+        let empty_descriptor_set = frame.get_descriptor(
             &self.device.raw,
             self.device.get_or_create_layout(
                 vk::ShaderStageFlags::ALL_GRAPHICS,

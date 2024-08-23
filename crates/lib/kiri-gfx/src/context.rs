@@ -55,7 +55,7 @@ impl<'a> RenderPassBuilder<'a> {
         self.context.dynamic.get_buffer_handle()
     }
 
-    pub fn allocate_descriptor_set(
+    pub fn get_descriptor_set(
         &mut self,
         builder: DescriptorSetBuilder,
     ) -> Result<DescriptorHandle, Error> {

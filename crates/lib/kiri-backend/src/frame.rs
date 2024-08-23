@@ -209,7 +209,7 @@ impl Frame {
         })
     }
 
-    pub fn allocate_descriptor(
+    pub fn get_descriptor(
         &self,
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
