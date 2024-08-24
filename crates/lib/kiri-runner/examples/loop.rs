@@ -3,14 +3,15 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri::{ResourceCache, ResourceLoader};
+use kiri::{ImagePool, ResourceCache, ResourceLoader};
 use kiri_backend::AttachmentClearValue;
-use kiri_gfx::{ImageBarrierType, RenderContext, RenderTarget, Renderer};
+use kiri_gfx::{ImageBarrierType, ImageHandle, RenderContext, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
     cache: Arc<ResourceCache>,
+    pool: ImagePool,
 }
 
 #[derive(Debug)]
@@ -28,7 +29,10 @@ impl GameClient<LoopError> for Loop {
         let cache = ResourceCache::new(renderer)?;
         cache.get_or_load_scene("PBR/gun.gltf")?;
         cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        Ok(Self { cache })
+        Ok(Self {
+            cache,
+            pool: ImagePool::new(renderer),
+        })
     }
     fn title(&self) -> &str {
         "Loop Demo"
@@ -43,19 +47,29 @@ impl GameClient<LoopError> for Loop {
         &self,
         _time: kiri_common::GameTime,
         context: &RenderContext,
-    ) -> Result<(), kiri_gfx::Error> {
+    ) -> Result<ImageHandle, kiri_gfx::Error> {
+        let target = self.pool.get(
+            vk::Format::A2R10G10B10_UNORM_PACK32,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            context.backbuffer_dims,
+        )?;
         let mut pass = context.create_render_pass(
             "main",
-            &[RenderTarget::color(context.target)
+            &[RenderTarget::color(target.handle)
                 .clear(AttachmentClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
             None,
         );
         pass.image_barrier(
-            context.target,
+            target.handle,
             ImageBarrierType::DiscardToWriteColor,
             vk::ImageAspectFlags::COLOR,
         );
         context.submit(pass.build());
+        Ok(target.handle)
+    }
+
+    fn swapchain_created(&mut self) -> Result<(), GameError<LoopError>> {
+        self.pool.purge();
         Ok(())
     }
 }

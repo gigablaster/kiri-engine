@@ -16,94 +16,83 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
-use kiri_backend::{GpuAllocator, Image, ImageCreateDesc, RenderDevice};
+use kiri_backend::{GpuAllocator, ImageCreateDesc};
+use kiri_gfx::{ImageHandle, Renderer};
 use log::debug;
 use parking_lot::Mutex;
 
-use crate::{Error, ImageHandle, Renderer};
+pub trait ResolutionScale {
+    fn scale_down(&self, scale: u32) -> [u32; 2];
+}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Resolution {
-    Full,
-    ScaledDown(u32),
-    Fixed(u32, u32),
+impl ResolutionScale for [u32; 2] {
+    fn scale_down(&self, scale: u32) -> [u32; 2] {
+        [self[0] / scale, self[1] / scale]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TempImageKey {
-    pub resolution: Resolution,
+    pub dims: [u32; 2],
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
 }
 
 #[derive(Debug)]
-pub(super) struct TempImagePool {
+pub struct ImagePool {
+    renderer: Arc<Renderer>,
     allocator: GpuAllocator,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
 #[derive(Debug)]
-pub struct TempImageGuard<'a> {
-    pool: &'a TempImagePool,
+pub struct PooledImageGuard<'a> {
+    pool: &'a ImagePool,
     key: TempImageKey,
     pub handle: ImageHandle,
 }
 
-impl Resolution {
-    pub fn get_dims(self, relative: [u32; 2]) -> [u32; 2] {
-        match self {
-            Resolution::Full => relative,
-            Resolution::ScaledDown(scale) => [relative[0] / scale, relative[1] / scale],
-            Resolution::Fixed(width, height) => [width, height],
-        }
-    }
-}
-
-impl TempImagePool {
-    pub fn new(device: &Arc<RenderDevice>) -> Self {
+impl ImagePool {
+    pub fn new(renderer: &Arc<Renderer>) -> Self {
         Self {
-            allocator: GpuAllocator::new(device),
+            renderer: renderer.clone(),
+            allocator: GpuAllocator::new(&renderer.device),
             images: Default::default(),
         }
     }
 
     pub fn get(
         &self,
-        renderer: &Renderer,
-        resolution: Resolution,
         format: vk::Format,
         usage: vk::ImageUsageFlags,
-        backbuffer: &Image,
-    ) -> Result<TempImageGuard, Error> {
+        dims: [u32; 2],
+    ) -> Result<PooledImageGuard, kiri_gfx::Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {
-            resolution,
+            dims,
             format,
             usage,
         };
         let group = images.entry(key).or_default();
         if let Some(image) = group.pop() {
-            Ok(TempImageGuard {
+            Ok(PooledImageGuard {
                 pool: self,
                 key,
                 handle: image,
             })
         } else {
             debug!(
-                "Create render taget resolution: {:?} format: {:?} usage: {:?} dims: {:?}",
-                resolution,
-                format,
-                usage,
-                resolution.get_dims(backbuffer.desc.dims)
+                "Create render taget resolution: {:?} format: {:?} usage: {:?}",
+                dims, format, usage,
             );
-            let image = renderer.create_image(
+            let image = self.renderer.create_image(
                 &self.allocator,
-                ImageCreateDesc::new(format, resolution.get_dims(backbuffer.desc.dims))
+                ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
                 None,
             )?;
-            Ok(TempImageGuard {
+            Ok(PooledImageGuard {
                 pool: self,
                 key,
                 handle: image,
@@ -111,11 +100,11 @@ impl TempImagePool {
         }
     }
 
-    pub fn purge(&self, renderer: &Renderer) {
+    pub fn purge(&self) {
         let mut images = self.images.lock();
-        images
-            .drain()
-            .for_each(|(_, mut group)| group.drain(..).for_each(|x| renderer.destroy_image(x)));
+        images.drain().for_each(|(_, mut group)| {
+            group.drain(..).for_each(|x| self.renderer.destroy_image(x))
+        });
         self.allocator.recycle();
     }
 
@@ -126,7 +115,7 @@ impl TempImagePool {
     }
 }
 
-impl<'a> Drop for TempImageGuard<'a> {
+impl<'a> Drop for PooledImageGuard<'a> {
     fn drop(&mut self) {
         self.pool.recycle(self.handle, self.key);
     }

@@ -18,7 +18,6 @@ mod descriptors;
 mod draw_stream;
 mod dynamic;
 mod error;
-mod image_pool;
 mod renderer;
 mod staging;
 
@@ -28,7 +27,6 @@ pub use descriptors::*;
 pub use draw_stream::*;
 use dynamic::*;
 pub use error::*;
-pub use image_pool::*;
 pub use renderer::*;
 use staging::*;
 #[derive(Debug, Clone, Copy)]

@@ -31,13 +31,11 @@ use kiri_backend::{
     RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
-use log::debug;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
     record_barriers, DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext,
-    DynamicGpuMemoryPool, Error, ImageUploadData, RenderContext, Resolution, Staging,
-    TempImagePool,
+    DynamicGpuMemoryPool, Error, ImageUploadData, RenderContext, Staging,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -131,7 +129,6 @@ pub struct Renderer {
     staging: Mutex<Staging>,
     pipelines_to_compile: Mutex<HashMap<PipelineHandle, PipelineCompilationData>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
-    image_pool: TempImagePool,
 }
 
 unsafe impl Sync for Renderer {}
@@ -148,7 +145,6 @@ impl Renderer {
             descriptors: Default::default(),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
-            image_pool: TempImagePool::new(device),
         }))
     }
 
@@ -283,10 +279,9 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
-    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<ImageHandle, Error>>(
         &self,
         swapchain: &Swapchain,
-        format: vk::Format,
         render: RenderCB,
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
@@ -307,22 +302,8 @@ impl Renderer {
         let dynamic = dynamic_memory.get(self)?;
         drop(dynamic_memory);
         // Generate render streams
-        let image = self.image_pool.get(
-            self,
-            Resolution::Full,
-            format,
-            vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            target.image,
-        )?;
-        let context = RenderContext::new(
-            self,
-            &self.image_pool,
-            &dynamic,
-            &self.descriptors,
-            target.image,
-            image.handle,
-        );
-        render(&context)?;
+        let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
+        let image = render(&context)?;
         // Prepare
         let images = self.images.read();
         let buffers = self.buffers.read();
@@ -435,8 +416,7 @@ impl Renderer {
         }
         // Present
         self.device
-            .present(target, images.get(image.handle).unwrap(), &frame)?;
-        drop(image);
+            .present(target, images.get(image).unwrap(), &frame)?;
         // Cleanup
         descriptors_to_clean.drain(..).for_each(|x| {
             descriptors.remove(x);
@@ -444,11 +424,6 @@ impl Renderer {
         self.device.end_frame(frame);
 
         Ok(FrameState::Rendered)
-    }
-
-    pub fn backbuffer_changed(&self) {
-        debug!("Clear all temprary images");
-        self.image_pool.purge(self);
     }
 
     async fn compile_pipelines(

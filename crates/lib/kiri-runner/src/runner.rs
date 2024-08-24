@@ -15,7 +15,6 @@
 
 use std::{error::Error, marker::PhantomData, sync::Arc, time::Instant};
 
-use ash::vk;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::TimeFilter;
@@ -158,12 +157,12 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         if inner.swapchain.is_none() {
                             inner.swapchain =
                                 Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap());
-                            inner.renderer.backbuffer_changed();
+                            game.swapchain_created().unwrap();
                         }
                         let swapchain = inner.swapchain.as_ref().unwrap();
                         if let FrameState::NeedRecreateSwapchain = inner
                             .renderer
-                            .render(swapchain, vk::Format::A2R10G10B10_UNORM_PACK32, |context| {
+                            .render(swapchain, |context| {
                                 game.render(self.game_time.game_time(), context)
                             })
                             .unwrap()

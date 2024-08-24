@@ -21,7 +21,6 @@ use parking_lot::{Mutex, RwLock};
 use crate::{
     BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
     DynamicGpuMemory, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool, Renderer,
-    Resolution, TempImageGuard, TempImagePool,
 };
 
 #[derive(Clone, Copy)]
@@ -102,11 +101,9 @@ pub struct RenderPass {
 
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
-    image_pool: &'a TempImagePool,
-    backbuffer: &'a Image,
-    pub target: ImageHandle,
     dynamic: &'a DynamicGpuMemory,
     pub(super) passes: Mutex<Vec<RenderPass>>,
+    pub backbuffer_dims: [u32; 2],
     descriptors: &'a RwLock<DescriptorPool>,
 }
 
@@ -166,20 +163,16 @@ impl RenderTarget {
 impl<'a> RenderContext<'a> {
     pub(crate) fn new(
         renderer: &'a Renderer,
-        image_pool: &'a TempImagePool,
         dynamic: &'a DynamicGpuMemory,
         descriptors: &'a RwLock<DescriptorPool>,
-        backbuffer: &'a Image,
-        target: ImageHandle,
+        backbuffer: &Image,
     ) -> Self {
         Self {
             renderer,
-            image_pool,
             dynamic,
             passes: Default::default(),
             descriptors,
-            backbuffer,
-            target,
+            backbuffer_dims: backbuffer.desc.dims,
         }
     }
 
@@ -201,18 +194,6 @@ impl<'a> RenderContext<'a> {
             image_barriers: Default::default(),
             name,
         }
-    }
-
-    pub fn get_image(
-        &mut self,
-        resolution: Resolution,
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-    ) -> Result<TempImageGuard<'a>, Error> {
-        let image =
-            self.image_pool
-                .get(self.renderer, resolution, format, usage, self.backbuffer)?;
-        Ok(image)
     }
 
     pub fn submit(&self, pass: RenderPass) {
