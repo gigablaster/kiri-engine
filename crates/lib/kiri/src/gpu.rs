@@ -14,12 +14,19 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use kiri_assets::{MeshAssetMaterial, StaticMeshVertex};
+use kiri_gfx::BindlessHandle;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct GpuMeshMaterial {
     pub base_color: glam::Vec4,
     pub emissive_color: glam::Vec4,
+    pub base_color_map: u32,
+    pub normal_map: u32,
+    pub metallic_roughness_map: u32,
+    pub occlusion_map: u32,
+    pub emissive_map: u32,
+    _pad: [u32; 3],
     pub metallic: f32,
     pub roughness: f32,
     pub alpha_cutoff: f32,
@@ -27,7 +34,14 @@ pub struct GpuMeshMaterial {
 }
 
 impl GpuMeshMaterial {
-    pub fn new(value: &MeshAssetMaterial) -> Self {
+    pub fn new(
+        value: &MeshAssetMaterial,
+        base_color_map: BindlessHandle,
+        normal_map: BindlessHandle,
+        metallic_roughness_map: BindlessHandle,
+        occlusion_map: BindlessHandle,
+        emssive_map: BindlessHandle,
+    ) -> Self {
         let [_, roughness, metallic, _] = value.metallic_roughness.get_color();
         let alpha_cutoff = value.blend.get_alpha_cut();
         let emissive_power = value.get_emissive_power();
@@ -38,6 +52,12 @@ impl GpuMeshMaterial {
             roughness,
             alpha_cutoff,
             emissive_power,
+            base_color_map: base_color_map.index(),
+            normal_map: normal_map.index(),
+            metallic_roughness_map: metallic_roughness_map.index(),
+            occlusion_map: occlusion_map.index(),
+            emissive_map: emssive_map.index(),
+            _pad: Default::default(),
         }
     }
 }

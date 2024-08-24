@@ -31,7 +31,7 @@ use super::DropList;
 const DESCRIPTORS_PER_PAGE: u32 = 64;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorCount {
+pub struct DescriptorSetCount {
     pub sampled_images: u32,
     pub storage_buffers: u32,
     pub unifroms_buffers: u32,
@@ -39,6 +39,55 @@ pub struct DescriptorCount {
     pub dynamic_uniform_buffers: u32,
     pub combined_image_samplers: u32,
     pub storage_images: u32,
+}
+
+impl DescriptorSetCount {
+    pub fn to_pool_size(&self, sets: u32) -> Vec<vk::DescriptorPoolSize> {
+        let mut sizes = Vec::with_capacity(7);
+        if self.sampled_images > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: self.sampled_images * sets,
+            })
+        }
+        if self.storage_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: self.storage_buffers * sets,
+            })
+        }
+        if self.unifroms_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: self.unifroms_buffers * sets,
+            })
+        }
+        if self.dynamic_storage_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                descriptor_count: self.dynamic_storage_buffers * sets,
+            })
+        }
+        if self.dynamic_uniform_buffers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                descriptor_count: self.dynamic_uniform_buffers * sets,
+            })
+        }
+        if self.combined_image_samplers > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: self.combined_image_samplers * sets,
+            })
+        }
+        if self.storage_images > 0 {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: self.storage_images * sets,
+            })
+        }
+        sizes
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +102,7 @@ unsafe impl Sync for DescriptorAllocator {}
 
 #[derive(Debug, Default)]
 struct DescriptorAllocatorPool {
-    pools: HashMap<DescriptorCount, Vec<Arc<DescriptorAllocator>>>,
+    pools: HashMap<DescriptorSetCount, Vec<Arc<DescriptorAllocator>>>,
 }
 
 #[derive(Debug, Default)]
@@ -209,7 +258,7 @@ impl Frame {
         &self,
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<vk::DescriptorSet, Error> {
         let mut context = DescriptorAllocatorContext {
             device,
@@ -220,55 +269,12 @@ impl Frame {
 }
 
 impl DescriptorAllocator {
-    pub fn new(device: &ash::Device, count: DescriptorCount, sets: u32) -> Result<Self, Error> {
-        let mut sizes = Vec::with_capacity(7);
-        if count.sampled_images > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: count.sampled_images * sets,
-            })
-        }
-        if count.storage_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: count.storage_buffers * sets,
-            })
-        }
-        if count.unifroms_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: count.unifroms_buffers * sets,
-            })
-        }
-        if count.dynamic_storage_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-                descriptor_count: count.dynamic_storage_buffers * sets,
-            })
-        }
-        if count.dynamic_uniform_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                descriptor_count: count.dynamic_uniform_buffers * sets,
-            })
-        }
-        if count.combined_image_samplers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: count.combined_image_samplers * sets,
-            })
-        }
-        if count.storage_images > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: count.storage_images * sets,
-            })
-        }
+    pub fn new(device: &ash::Device, count: DescriptorSetCount, sets: u32) -> Result<Self, Error> {
         let pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
                     .max_sets(sets)
-                    .pool_sizes(&sizes),
+                    .pool_sizes(&count.to_pool_size(sets)),
                 None,
             )
         }?;
@@ -317,7 +323,7 @@ impl DescriptorAllocatorPool {
     pub fn get_pool(
         &mut self,
         device: &ash::Device,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<Arc<DescriptorAllocator>, Error> {
         let pool = self.pools.entry(count).or_default();
         let allocator = if let Some(allocator) = pool.iter().find(|x| !x.is_empty()) {
@@ -353,7 +359,7 @@ impl<'a> DescriptorAllocatorContext<'a> {
     pub fn allocate(
         &mut self,
         layout: vk::DescriptorSetLayout,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<vk::DescriptorSet, Error> {
         loop {
             if let Some(descriptor_set) = self

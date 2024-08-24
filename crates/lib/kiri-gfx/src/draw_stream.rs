@@ -26,7 +26,9 @@ use kiri_backend::{DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS};
 
 const MAX_VERTEX_STREAMS: usize = 2;
 const MAX_DYNAMIC_OFFSETS: usize = 2;
-
+const MAX_USEFUL_DESCRIPTOR_SETS: usize = 3;
+const FIRST_USABLE_DESCRIPTOR_SET: usize = 1;
+const ACTUAL_DYANMIC_BINDING_SLOT: usize = DYNAMIC_BINDING_SLOT - FIRST_USABLE_DESCRIPTOR_SET;
 #[derive(Debug)]
 struct DrawState {
     pipeline: PipelineHandle,
@@ -37,7 +39,7 @@ struct DrawState {
     vertex_offset: i32,
     streams: [BufferPointer; MAX_VERTEX_STREAMS],
     indices: BufferPointer,
-    bind_groups: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
+    descriptor_sets: [DescriptorHandle; MAX_USEFUL_DESCRIPTOR_SETS],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
 }
 
@@ -59,7 +61,7 @@ const PIPELINE_MASK: u16 = 1 << 0;
 const VERTEX_STREAM_MASK: u16 = 1 << 1;
 const INDEX_STREAM_MASK: u16 = VERTEX_STREAM_MASK << MAX_VERTEX_STREAMS;
 const DESCRIPTOR_SET_MASK: u16 = INDEX_STREAM_MASK << 1;
-const DYANMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_DESCRIPTOR_SETS;
+const DYANMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_USEFUL_DESCRIPTOR_SETS;
 const FIRST_INDEX_MASK: u16 = DYANMIC_OFFSET_MASK << 1;
 const INDEX_COUNT_MASK: u16 = FIRST_INDEX_MASK << 1;
 const FIRST_INSTANCE_MASK: u16 = INDEX_COUNT_MASK << 1;
@@ -87,8 +89,8 @@ impl DrawStreamBuilder {
         if self.current.pipeline != pipeline {
             self.mask |= PIPELINE_MASK;
             self.current.pipeline = pipeline;
-            for i in 0..MAX_DESCRIPTOR_SETS {
-                self.bind_group(i, None);
+            for i in FIRST_USABLE_DESCRIPTOR_SET..MAX_DESCRIPTOR_SETS {
+                self.descriptor_set(i, None);
             }
             for i in 0..MAX_DYNAMIC_OFFSETS {
                 self.dynamic_offset(i, None);
@@ -112,12 +114,17 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn bind_group(&mut self, slot: usize, group: Option<DescriptorHandle>) {
+    pub fn descriptor_set(&mut self, slot: usize, group: Option<DescriptorHandle>) {
         debug_assert!(slot < MAX_DESCRIPTOR_SETS);
+        debug_assert!(
+            slot >= FIRST_USABLE_DESCRIPTOR_SET,
+            "Descriptor slot 0 is reserved"
+        );
         let group = group.unwrap_or_default();
-        if self.current.bind_groups[slot] != group {
+        let slot = slot - FIRST_USABLE_DESCRIPTOR_SET;
+        if self.current.descriptor_sets[slot] != group {
             self.mask |= DESCRIPTOR_SET_MASK << slot;
-            self.current.bind_groups[slot] = group;
+            self.current.descriptor_sets[slot] = group;
         }
     }
 
@@ -174,7 +181,7 @@ impl DrawStreamBuilder {
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                 self.stream
-                    .write_u32::<NativeEndian>(self.current.bind_groups[i].into())
+                    .write_u32::<NativeEndian>(self.current.descriptor_sets[i].into())
                     .unwrap();
             }
         }
@@ -228,7 +235,7 @@ impl Default for DrawState {
             vertex_offset: 0,
             streams: Default::default(),
             indices: Default::default(),
-            bind_groups: Default::default(),
+            descriptor_sets: Default::default(),
             dynamic_offsets: [0, 0],
         }
     }
@@ -240,6 +247,7 @@ pub(super) struct DrawStreamExecuteContext<'a> {
     pub descriptors: &'a DescriptorPool,
     pub buffers: &'a BufferPool,
     pub empty: vk::DescriptorSet,
+    pub bindless: vk::DescriptorSet,
     pub render_area: Rect2D,
 }
 
@@ -277,7 +285,7 @@ impl DrawStream {
         let mut instance_count = 0;
         let mut pipeline_layout = vk::PipelineLayout::null();
         let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
-        let mut descriptor_sets = [DescriptorHandle::invalid(); MAX_DESCRIPTOR_SETS];
+        let mut descriptor_sets = [DescriptorHandle::invalid(); MAX_USEFUL_DESCRIPTOR_SETS];
         let mut vertex_offset = 0;
         let mut dynamic_offset_changed = false;
         let mut rebind_all = false;
@@ -343,13 +351,13 @@ impl DrawStream {
             for (i, target) in descriptor_sets
                 .iter_mut()
                 .enumerate()
-                .take(MAX_DESCRIPTOR_SETS - 1)
+                .take(MAX_USEFUL_DESCRIPTOR_SETS - 1)
             {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                     let descriptor = reader.read_u32::<NativeEndian>().unwrap().into();
                     *target = descriptor;
                     if !rebind_all {
-                        let bind_group = context
+                        let descriptor_set = context
                             .descriptors
                             .get(descriptor)
                             .copied()
@@ -359,18 +367,18 @@ impl DrawStream {
                                 cb,
                                 vk::PipelineBindPoint::GRAPHICS,
                                 pipeline_layout,
-                                i as _,
-                                &[bind_group],
+                                (i + FIRST_USABLE_DESCRIPTOR_SET) as _,
+                                &[descriptor_set],
                                 &[],
                             )
                         };
                     }
                 }
             }
-            if mask & (DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT)
-                == DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT
+            if mask & (DESCRIPTOR_SET_MASK << ACTUAL_DYANMIC_BINDING_SLOT)
+                == DESCRIPTOR_SET_MASK << ACTUAL_DYANMIC_BINDING_SLOT
             {
-                descriptor_sets[DYNAMIC_BINDING_SLOT] =
+                descriptor_sets[ACTUAL_DYANMIC_BINDING_SLOT] =
                     reader.read_u32::<NativeEndian>().unwrap().into();
                 dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
                 dynamic_offset_changed = true;
@@ -403,13 +411,14 @@ impl DrawStream {
             }
             if rebind_all {
                 let mut descriptors = [context.empty; MAX_DESCRIPTOR_SETS];
-                for (index, bind_group) in descriptor_sets.iter().enumerate() {
-                    if bind_group.is_valid() {
-                        descriptors[index] = context
+                descriptors[0] = context.bindless;
+                for (index, descriptor_set) in descriptor_sets.iter().enumerate() {
+                    if descriptor_set.is_valid() {
+                        descriptors[index + FIRST_USABLE_DESCRIPTOR_SET] = context
                             .descriptors
-                            .get(*bind_group)
+                            .get(*descriptor_set)
                             .copied()
-                            .ok_or(Error::InvalidDescriptorHandle(*bind_group))?;
+                            .ok_or(Error::InvalidDescriptorHandle(*descriptor_set))?;
                     }
                 }
                 let offsets = dynamic_offsets
@@ -432,10 +441,10 @@ impl DrawStream {
             if dynamic_offset_changed {
                 let descriptor = context
                     .descriptors
-                    .get(descriptor_sets[DYNAMIC_BINDING_SLOT])
+                    .get(descriptor_sets[ACTUAL_DYANMIC_BINDING_SLOT])
                     .copied()
                     .ok_or(Error::InvalidDescriptorHandle(
-                        descriptor_sets[DYNAMIC_BINDING_SLOT],
+                        descriptor_sets[ACTUAL_DYANMIC_BINDING_SLOT],
                     ))?;
                 let offsets = dynamic_offsets
                     .iter()

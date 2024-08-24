@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use kiri_backend::{DescriptorCount, DescriptorSetLayoutDesc, Program, RenderDevice};
+use kiri_backend::{DescriptorSetCount, DescriptorSetLayoutDesc, Program, RenderDevice};
 
 use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
 
@@ -48,7 +48,7 @@ pub(super) struct DynamicBufferBindingData {
 
 #[derive(Debug)]
 pub(super) struct DescriptorSetData {
-    pub count: DescriptorCount,
+    pub count: DescriptorSetCount,
     pub layout: vk::DescriptorSetLayout,
     pub images: Vec<Binding<ImageBindingData>>,
     pub unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
