@@ -94,8 +94,8 @@ pub struct ImageCreateDesc<'a> {
     pub usage: vk::ImageUsageFlags,
     pub format: vk::Format,
     pub samples: vk::SampleCountFlags,
-    pub mip_levels: usize,
-    pub array_elements: usize,
+    pub mip_levels: u32,
+    pub array_elements: u32,
     pub dedicated: bool,
     pub name: Option<&'a str>,
     pub flags: vk::ImageCreateFlags,
@@ -213,12 +213,12 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
-    pub fn mip_levels(mut self, value: usize) -> Self {
+    pub fn mip_levels(mut self, value: u32) -> Self {
         self.mip_levels = value;
         self
     }
 
-    pub fn array_elements(mut self, value: usize) -> Self {
+    pub fn array_elements(mut self, value: u32) -> Self {
         self.array_elements = value;
         self
     }
@@ -230,8 +230,8 @@ impl<'a> ImageCreateDesc<'a> {
 
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
-            .array_layers(self.array_elements as _)
-            .mip_levels(self.mip_levels as _)
+            .array_layers(self.array_elements)
+            .mip_levels(self.mip_levels)
             .usage(self.usage)
             .flags(self.flags)
             .format(self.format)
@@ -256,18 +256,11 @@ impl<'a> ImageCreateDesc<'a> {
             vk::ImageType::TYPE_3D => vk::Extent3D {
                 width: self.dims[0],
                 height: self.dims[1],
-                depth: self.array_elements as u32,
+                depth: self.array_elements,
             },
             ty => panic!("Unknown image type {:?}", ty),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ImageSubresource {
-    All,
-    Level(usize),
-    LevelAndMip(usize, usize),
 }
 
 #[derive(Debug)]
@@ -344,8 +337,8 @@ impl Image {
                 ty: desc.ty,
                 usage: desc.usage,
                 format: desc.format,
-                mip_levels: desc.mip_levels as u32,
-                array_elements: desc.array_elements as u32,
+                mip_levels: desc.mip_levels,
+                array_elements: desc.array_elements,
             },
             views: Default::default(),
             external: false,
@@ -389,25 +382,5 @@ impl Image {
         let create_info = desc.build(self);
         let view = unsafe { self.device.raw.create_image_view(&create_info, None) }?;
         Ok(view)
-    }
-
-    pub fn subresource(
-        &self,
-        aspect: vk::ImageAspectFlags,
-        range: ImageSubresource,
-    ) -> vk::ImageSubresourceRange {
-        match range {
-            ImageSubresource::All => vk::ImageSubresourceRange::default().aspect_mask(aspect),
-            ImageSubresource::Level(level) => vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect)
-                .base_array_layer(level as _)
-                .layer_count(1),
-            ImageSubresource::LevelAndMip(level, mip) => vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect)
-                .base_array_layer(level as _)
-                .layer_count(1)
-                .base_mip_level(mip as _)
-                .level_count(1),
-        }
     }
 }

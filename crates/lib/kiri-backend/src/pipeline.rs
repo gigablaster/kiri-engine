@@ -182,13 +182,13 @@ impl RasterPipelineCreateDesc {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexAttrubute {
     pub format: vk::Format,
-    pub offset: usize,
+    pub offset: u32,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexStreamLayout<'a> {
     pub streams: &'a [InputVertexAttrubute],
-    pub stride: usize,
+    pub stride: u32,
 }
 
 pub trait PipelineVertex {
@@ -196,20 +196,20 @@ pub trait PipelineVertex {
 }
 
 impl<'a> InputVertexStreamLayout<'a> {
-    fn build(&self, binding: usize) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
+    fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let attributes = self
             .streams
             .iter()
             .enumerate()
             .map(|(index, attr)| vk::VertexInputAttributeDescription {
                 location: index as u32,
-                binding: binding as u32,
+                binding,
                 format: attr.format,
-                offset: attr.offset as u32,
+                offset: attr.offset,
             })
             .collect();
 
-        (self.stride as u32, attributes)
+        (self.stride, attributes)
     }
 }
 
@@ -235,7 +235,7 @@ pub fn compile_raster_pipeline<'a>(
     let streams = streams
         .iter()
         .enumerate()
-        .map(|(index, stream)| stream.build(index))
+        .map(|(index, stream)| stream.build(index as u32))
         .collect::<Vec<_>>();
 
     let strides = streams

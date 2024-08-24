@@ -17,7 +17,7 @@ use std::{any::type_name, marker::PhantomData, mem, sync::Arc};
 
 use kiri_backend::{BufferCreateDesc, GpuAllocator};
 use kiri_common::BlockAllocator;
-use kiri_gfx::{BufferHandle, Renderer};
+use kiri_gfx::{BufferHandle, BufferPointer, BufferSlice, Renderer};
 use parking_lot::Mutex;
 
 use crate::Error;
@@ -43,7 +43,7 @@ impl<T: Copy> ConstUniforms<T> {
     pub fn new(
         renderer: &Arc<Renderer>,
         allocator: &GpuAllocator,
-        count: usize,
+        count: u64,
     ) -> Result<Self, Error> {
         let block_size = mem::size_of::<T>().max(
             renderer
@@ -52,7 +52,7 @@ impl<T: Copy> ConstUniforms<T> {
                 .properties
                 .limits
                 .min_uniform_buffer_offset_alignment as _,
-        );
+        ) as u64;
         let buffer = renderer.create_buffer(
             BufferCreateDesc::gpu(block_size * count)
                 .uniform_buffer()
@@ -63,22 +63,27 @@ impl<T: Copy> ConstUniforms<T> {
         Ok(Self {
             renderer: renderer.clone(),
             buffer,
-            allocator: Mutex::new(BlockAllocator::new(block_size, count)),
+            allocator: Mutex::new(BlockAllocator::new(block_size as _, count as _)),
             _phantom: PhantomData,
         })
     }
 
-    pub fn push(&self, data: T) -> Result<usize, Error> {
+    pub fn push(&self, data: T) -> Result<BufferSlice, Error> {
         let offset = self
             .allocator
             .lock()
             .allocate()
             .ok_or(Error::TooManyUniforms)?;
-        self.renderer.upload_buffer(self.buffer, offset, &[data])?;
-        Ok(offset)
+        self.renderer
+            .upload_buffer(BufferPointer::new(self.buffer, offset), &[data])?;
+        Ok(BufferSlice::new(
+            self.buffer,
+            offset,
+            mem::size_of::<T>() as _,
+        ))
     }
 
-    pub fn free(&self, offset: usize) {
-        self.allocator.lock().dealloc(offset);
+    pub fn free(&self, buffer: BufferSlice) {
+        self.allocator.lock().dealloc(buffer.offset);
     }
 }

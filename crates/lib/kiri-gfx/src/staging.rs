@@ -46,7 +46,7 @@ pub struct Staging {
 unsafe impl Send for Staging {}
 unsafe impl Sync for Staging {}
 
-const STAGING_SIZE: usize = 64 * 1024 * 1024;
+const STAGING_SIZE: u64 = 128 * 1024 * 1024;
 
 impl Staging {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Self, Error> {
@@ -95,17 +95,17 @@ impl Staging {
     pub fn upload_buffer<T: Sized>(
         &mut self,
         target: &Buffer,
-        offset: usize,
+        offset: u64,
         data: &[T],
     ) -> Result<(), Error> {
         let mut current_offset = 0;
         loop {
-            let data_len = mem::size_of_val(data);
+            let data_len = mem::size_of_val(data) as u64;
             let pushed = self.try_push_buffer(
                 target.raw,
                 offset + current_offset,
                 data_len - current_offset,
-                unsafe { (data.as_ptr() as *const u8).add(current_offset) },
+                unsafe { (data.as_ptr() as *const u8).add(current_offset as _) },
             )?;
             current_offset += pushed;
             if current_offset == data_len {
@@ -131,13 +131,17 @@ impl Staging {
         mip: u32,
         data: &ImageUploadData,
     ) -> Result<bool, Error> {
-        let size = data.data.len();
+        let size = data.data.len() as u64;
         if size > STAGING_SIZE {
             return Err(Error::ImageTooBig);
         }
         if let Some(offset) = self.allocator.allocate(size, self.get_aligment() as _) {
             unsafe {
-                copy_nonoverlapping(data.data.as_ptr(), self.mapping.as_ptr().add(offset), size)
+                copy_nonoverlapping(
+                    data.data.as_ptr(),
+                    self.mapping.as_ptr().add(offset as _),
+                    size as _,
+                )
             };
             let dims = target.desc.dims;
             let op = vk::BufferImageCopy::default()
@@ -185,22 +189,26 @@ impl Staging {
     fn try_push_buffer(
         &mut self,
         target: vk::Buffer,
-        offset: usize,
-        bytes: usize,
+        offset: u64,
+        bytes: u64,
         data: *const u8,
-    ) -> Result<usize, Error> {
-        let can_send = self
-            .allocator
-            .validate(bytes as _, self.get_aligment() as _);
+    ) -> Result<u64, Error> {
+        let can_send = self.allocator.validate(bytes, self.get_aligment());
         let dst_offset = self
             .allocator
-            .allocate(can_send, self.get_aligment() as _)
+            .allocate(can_send as _, self.get_aligment() as _)
             .unwrap(); // Already checked that allocator can allocate enough space
-        unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(dst_offset), can_send) };
+        unsafe {
+            copy_nonoverlapping(
+                data,
+                self.mapping.as_ptr().add(dst_offset as _),
+                can_send as _,
+            )
+        };
         let op = vk::BufferCopy::default()
             .src_offset(dst_offset as _)
-            .dst_offset(offset as _)
-            .size(can_send as _);
+            .dst_offset(offset)
+            .size(can_send);
         self.upload_buffers.entry(target).or_default().push(op);
 
         Ok(can_send)

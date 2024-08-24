@@ -21,7 +21,7 @@ use crate::{Error, GpuAllocator, GpuMemoryPage, RenderDevice};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
-    pub size: usize,
+    pub size: u64,
     pub usage: vk::BufferUsageFlags,
 }
 
@@ -39,7 +39,7 @@ pub struct Buffer {
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferCreateDesc<'a> {
-    pub size: usize,
+    pub size: u64,
     pub usage: vk::BufferUsageFlags,
     pub memory_location: vk::MemoryPropertyFlags,
     pub name: Option<&'a str>,
@@ -47,7 +47,7 @@ pub struct BufferCreateDesc<'a> {
 }
 
 impl<'a> BufferCreateDesc<'a> {
-    pub fn gpu(size: usize) -> Self {
+    pub fn gpu(size: u64) -> Self {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
@@ -57,7 +57,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn host(size: usize) -> Self {
+    pub fn host(size: u64) -> Self {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
@@ -67,7 +67,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: usize) -> Self {
+    pub fn shared(size: u64) -> Self {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),

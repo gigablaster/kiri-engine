@@ -21,8 +21,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
-    create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryPage, Image,
-    ImageSubresource, Instance,
+    create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryPage, Image, Instance,
 };
 
 use super::{
@@ -357,10 +356,13 @@ impl RenderDevice {
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .image(target.image.raw)
-                    .subresource_range(target.image.subresource(
-                        vk::ImageAspectFlags::COLOR,
-                        ImageSubresource::LevelAndMip(0, 0),
-                    )),
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    }),
                 vk::ImageMemoryBarrier2::default()
                     .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
@@ -369,10 +371,13 @@ impl RenderDevice {
                     .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .image(image.raw)
-                    .subresource_range(image.subresource(
-                        vk::ImageAspectFlags::COLOR,
-                        ImageSubresource::LevelAndMip(0, 0),
-                    )),
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    }),
             ];
             self.raw.cmd_pipeline_barrier2(
                 cb,
@@ -423,10 +428,13 @@ impl RenderDevice {
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .image(target.image.raw)
-                .subresource_range(target.image.subresource(
-                    vk::ImageAspectFlags::COLOR,
-                    ImageSubresource::LevelAndMip(0, 0),
-                ));
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                });
             self.raw.cmd_pipeline_barrier2(
                 cb,
                 &vk::DependencyInfo::default()

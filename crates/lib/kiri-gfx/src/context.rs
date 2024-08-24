@@ -19,7 +19,7 @@ use kiri_backend::{AttachmentClearValue, Image, ImageViewDesc, MAX_COLOR_ATTACHM
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    BufferHandle, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
+    BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
     DynamicGpuMemory, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool, Renderer,
     Resolution, TempImageGuard, TempImagePool,
 };
@@ -48,7 +48,7 @@ impl<'a> RenderPassBuilder<'a> {
         self.streams.push(stream);
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<u32, Error> {
+    pub fn push<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
         self.context
             .dynamic
             .push(&self.context.renderer.device.physical_device, data)

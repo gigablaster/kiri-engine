@@ -13,13 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use arrayvec::ArrayVec;
-use ash::vk::{self, Rect2D};
-use kiri_backend::{DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS};
+use std::io::{self, Cursor, Read};
 
 use crate::{
-    BufferPool, BufferSlice, DescriptorHandle, DescriptorPool, Error, PipelineHandle, PipelinePool,
+    BufferPointer, BufferPool, DescriptorHandle, DescriptorPool, Error, PipelineHandle,
+    PipelinePool,
 };
+use arrayvec::ArrayVec;
+use ash::vk::{self, Rect2D};
+use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
+use kiri_backend::{DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS};
 
 const MAX_VERTEX_STREAMS: usize = 2;
 const MAX_DYNAMIC_OFFSETS: usize = 2;
@@ -31,9 +34,9 @@ struct DrawState {
     index_count: u32,
     instance_count: u32,
     first_instance: u32,
-    vertex_offset: u32,
-    streams: [BufferSlice; MAX_VERTEX_STREAMS],
-    indices: BufferSlice,
+    vertex_offset: i32,
+    streams: [BufferPointer; MAX_VERTEX_STREAMS],
+    indices: BufferPointer,
     bind_groups: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
 }
@@ -42,19 +45,14 @@ struct DrawState {
 pub struct DrawStreamBuilder {
     current: DrawState,
     mask: u16,
-    stream: Vec<u16>,
+    stream: Cursor<Vec<u8>>,
     commands: usize,
 }
 
 #[derive(Debug)]
 pub struct DrawStream {
-    stream: Vec<u16>,
+    stream: Vec<u8>,
     commands: usize,
-}
-
-struct DrawStreamReader<'a> {
-    stream: &'a [u16],
-    cursor: usize,
 }
 
 const PIPELINE_MASK: u16 = 1 << 0;
@@ -69,52 +67,19 @@ const INSTANCE_COUNT_MASK: u16 = FIRST_INSTANCE_MASK << 1;
 const VERTEX_OFFSET_MASK: u16 = INSTANCE_COUNT_MASK << 1;
 const ALL_DESCRIPTOR_SETS_MASK: u16 = ((1 << MAX_DESCRIPTOR_SETS) - 1) << 4;
 
-impl<'a> DrawStreamReader<'a> {
-    fn new(stream: &'a [u16]) -> Self {
-        Self { stream, cursor: 0 }
-    }
-
-    fn read(&mut self) -> u16 {
-        debug_assert!(self.cursor < self.stream.len());
-        let data = self.stream[self.cursor];
-        self.cursor += 1;
-        data
-    }
-
-    fn read_u32(&mut self) -> u32 {
-        let a = self.read() as u32;
-        let b = self.read() as u32;
-        (a << 16) | b
-    }
-
-    fn read_buffer_slice(&mut self) -> BufferSlice {
-        let handle = self.read_u32().into();
-        let offset = self.read_u32();
-        BufferSlice::new(handle, offset)
-    }
-
-    fn read_descriptor_set(&mut self) -> DescriptorHandle {
-        self.read_u32().into()
-    }
-}
-
 impl DrawStreamBuilder {
     pub fn build(self) -> DrawStream {
         DrawStream {
-            stream: self.stream,
+            stream: self.stream.into_inner(),
             commands: self.commands,
         }
     }
 
-    fn write_u32(&mut self, value: u32) {
-        let (first, second) = (((value & 0xffff0000) >> 16) as u16, (value & 0xffff) as u16);
-        self.stream.push(first);
-        self.stream.push(second);
-    }
-
-    fn write_buffer_slice(&mut self, value: BufferSlice) {
-        self.write_u32(value.handle.into());
-        self.write_u32(value.offset);
+    fn write_buffer_pointer(&mut self, value: BufferPointer) {
+        self.stream
+            .write_u32::<NativeEndian>(value.handle.into())
+            .unwrap();
+        self.stream.write_u64::<NativeEndian>(value.offset).unwrap()
     }
 
     /// Resets bind groups and dynamic offsets
@@ -131,7 +96,7 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn vertex_stream(&mut self, stream: usize, buffer: Option<BufferSlice>) {
+    pub fn vertex_stream(&mut self, stream: usize, buffer: Option<BufferPointer>) {
         debug_assert!(stream < MAX_VERTEX_STREAMS);
         let buffer = buffer.unwrap_or_default();
         if self.current.streams[stream] != buffer {
@@ -140,7 +105,7 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn indices(&mut self, buffer: BufferSlice) {
+    pub fn indices(&mut self, buffer: BufferPointer) {
         if self.current.indices != buffer {
             self.mask |= INDEX_STREAM_MASK;
             self.current.indices = buffer
@@ -165,7 +130,7 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn vertex_offset(&mut self, offset: u32) {
+    pub fn vertex_offset(&mut self, offset: i32) {
         if self.current.vertex_offset != offset {
             self.mask |= VERTEX_OFFSET_MASK;
             self.current.vertex_offset = offset;
@@ -195,42 +160,58 @@ impl DrawStreamBuilder {
             self.mask |= INSTANCE_COUNT_MASK;
             self.current.instance_count = instance_count;
         }
-        self.stream.push(self.mask);
+        self.stream.write_u16::<NativeEndian>(self.mask).unwrap();
         if self.mask & PIPELINE_MASK == PIPELINE_MASK {
-            self.write_u32(self.current.pipeline.into());
+            self.stream
+                .write_u32::<NativeEndian>(self.current.pipeline.into())
+                .unwrap();
         }
         for i in 0..MAX_VERTEX_STREAMS {
             if self.mask & (VERTEX_STREAM_MASK << i) == (VERTEX_STREAM_MASK << i) {
-                self.write_buffer_slice(self.current.streams[i]);
+                self.write_buffer_pointer(self.current.streams[i]);
             }
         }
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
-                self.write_u32(self.current.bind_groups[i].into());
+                self.stream
+                    .write_u32::<NativeEndian>(self.current.bind_groups[i].into())
+                    .unwrap();
             }
         }
         for i in 0..MAX_DYNAMIC_OFFSETS {
             if self.mask & (DYANMIC_OFFSET_MASK << i) == (DYANMIC_OFFSET_MASK << i) {
-                self.write_u32(self.current.dynamic_offsets[i]);
+                self.stream
+                    .write_u32::<NativeEndian>(self.current.dynamic_offsets[i])
+                    .unwrap();
             }
         }
         if self.mask & INDEX_STREAM_MASK == INDEX_STREAM_MASK {
-            self.write_buffer_slice(self.current.indices);
+            self.write_buffer_pointer(self.current.indices);
         }
         if self.mask & FIRST_INDEX_MASK == FIRST_INDEX_MASK {
-            self.write_u32(self.current.first_index);
+            self.stream
+                .write_u32::<NativeEndian>(self.current.first_index)
+                .unwrap();
         }
         if self.mask & INDEX_COUNT_MASK == INDEX_COUNT_MASK {
-            self.write_u32(self.current.index_count);
+            self.stream
+                .write_u32::<NativeEndian>(self.current.index_count)
+                .unwrap();
         }
         if self.mask & FIRST_INSTANCE_MASK == FIRST_INSTANCE_MASK {
-            self.write_u32(self.current.first_instance);
+            self.stream
+                .write_u32::<NativeEndian>(self.current.first_instance)
+                .unwrap();
         }
         if self.mask & INSTANCE_COUNT_MASK == INSTANCE_COUNT_MASK {
-            self.write_u32(self.current.instance_count);
+            self.stream
+                .write_u32::<NativeEndian>(self.current.instance_count)
+                .unwrap();
         }
         if self.mask & VERTEX_OFFSET_MASK == VERTEX_OFFSET_MASK {
-            self.write_u32(self.current.vertex_offset);
+            self.stream
+                .write_i32::<NativeEndian>(self.current.vertex_offset)
+                .unwrap();
         }
         self.commands += 1;
     }
@@ -263,6 +244,13 @@ pub(super) struct DrawStreamExecuteContext<'a> {
 }
 
 impl DrawStream {
+    fn read_buffer_pointer<R: Read>(mut r: R) -> io::Result<BufferPointer> {
+        Ok(BufferPointer {
+            handle: r.read_u32::<NativeEndian>()?.into(),
+            offset: r.read_u64::<NativeEndian>()?,
+        })
+    }
+
     pub(super) fn execute(
         &self,
         context: &DrawStreamExecuteContext,
@@ -282,7 +270,7 @@ impl DrawStream {
                 .device
                 .cmd_set_scissor(cb, 0, &[context.render_area]);
         }
-        let mut reader = DrawStreamReader::new(&self.stream);
+        let mut reader = Cursor::new(&self.stream);
         let mut first_index = 0;
         let mut index_count = 0;
         let mut first_instance = 0;
@@ -295,9 +283,9 @@ impl DrawStream {
         let mut rebind_all = false;
 
         for _ in 0..self.commands {
-            let mask = reader.read();
+            let mask = reader.read_u16::<NativeEndian>().unwrap();
             if mask & PIPELINE_MASK == PIPELINE_MASK {
-                let handle = reader.read_u32().into();
+                let handle = reader.read_u32::<NativeEndian>().unwrap().into();
                 let (pipeline, layout) = *context
                     .pipelines
                     .get(handle)
@@ -312,7 +300,7 @@ impl DrawStream {
             }
             for i in 0..MAX_VERTEX_STREAMS {
                 if mask & (VERTEX_STREAM_MASK << i) == (VERTEX_STREAM_MASK << i) {
-                    let buffer = reader.read_buffer_slice();
+                    let buffer = Self::read_buffer_pointer(&mut reader).unwrap();
                     let (buffer, offset) = if buffer.handle.is_valid() {
                         (
                             context
@@ -326,17 +314,14 @@ impl DrawStream {
                         (vk::Buffer::null(), 0)
                     };
                     unsafe {
-                        context.device.cmd_bind_vertex_buffers(
-                            cb,
-                            i as _,
-                            &[buffer],
-                            &[offset as u64],
-                        )
+                        context
+                            .device
+                            .cmd_bind_vertex_buffers(cb, i as _, &[buffer], &[offset])
                     }
                 }
             }
             if mask & INDEX_STREAM_MASK == INDEX_STREAM_MASK {
-                let buffer = reader.read_buffer_slice();
+                let buffer = Self::read_buffer_pointer(&mut reader).unwrap();
                 let (buffer, offset) = (
                     context
                         .buffers
@@ -361,7 +346,7 @@ impl DrawStream {
                 .take(MAX_DESCRIPTOR_SETS - 1)
             {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
-                    let descriptor = reader.read_descriptor_set();
+                    let descriptor = reader.read_u32::<NativeEndian>().unwrap().into();
                     *target = descriptor;
                     if !rebind_all {
                         let bind_group = context
@@ -385,7 +370,8 @@ impl DrawStream {
             if mask & (DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT)
                 == DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT
             {
-                descriptor_sets[DYNAMIC_BINDING_SLOT] = reader.read_descriptor_set();
+                descriptor_sets[DYNAMIC_BINDING_SLOT] =
+                    reader.read_u32::<NativeEndian>().unwrap().into();
                 dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
                 dynamic_offset_changed = true;
             }
@@ -395,25 +381,25 @@ impl DrawStream {
                 .take(MAX_DYNAMIC_OFFSETS)
             {
                 if mask & (DYANMIC_OFFSET_MASK << i) == DYANMIC_OFFSET_MASK << i {
-                    let offset = reader.read_u32();
+                    let offset = reader.read_u32::<NativeEndian>().unwrap();
                     *target = offset;
                     dynamic_offset_changed = true;
                 }
             }
             if mask & FIRST_INDEX_MASK == FIRST_INDEX_MASK {
-                first_index = reader.read_u32();
+                first_index = reader.read_u32::<NativeEndian>().unwrap();
             }
             if mask & INDEX_COUNT_MASK == INDEX_COUNT_MASK {
-                index_count = reader.read_u32();
+                index_count = reader.read_u32::<NativeEndian>().unwrap();
             }
             if mask & FIRST_INSTANCE_MASK == FIRST_INSTANCE_MASK {
-                first_instance = reader.read_u32();
+                first_instance = reader.read_u32::<NativeEndian>().unwrap();
             }
             if mask & INSTANCE_COUNT_MASK == INSTANCE_COUNT_MASK {
-                instance_count = reader.read_u32();
+                instance_count = reader.read_u32::<NativeEndian>().unwrap();
             }
             if mask & VERTEX_OFFSET_MASK == VERTEX_OFFSET_MASK {
-                vertex_offset = reader.read_u32();
+                vertex_offset = reader.read_i32::<NativeEndian>().unwrap();
             }
             if rebind_all {
                 let mut descriptors = [context.empty; MAX_DESCRIPTOR_SETS];

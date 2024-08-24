@@ -81,8 +81,8 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-type ReflectedDescriptorSetDesc = HashMap<usize, (String, vk::DescriptorType, usize)>;
-type ReflectedDescriptorSetLayoutDesc = HashMap<usize, ReflectedDescriptorSetDesc>;
+type ReflectedDescriptorSetDesc = HashMap<u32, (String, vk::DescriptorType, u32)>;
+type ReflectedDescriptorSetLayoutDesc = HashMap<u32, ReflectedDescriptorSetDesc>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DescriptorSetDesc {
@@ -169,11 +169,11 @@ impl From<ReflectedDescriptorSetDesc> for DescriptorSetLayoutDesc {
             .into_iter()
             .map(|(slot, data)| {
                 (
-                    slot as u32,
+                    slot,
                     DescriptorSetDesc {
                         name: data.0,
                         ty: data.1,
-                        count: data.2 as u32,
+                        count: data.2,
                     },
                 )
             })
@@ -250,7 +250,7 @@ impl Program {
         let mut layout = ReflectedDescriptorSetLayoutDesc::default();
         for (index, set) in descriptor_sets.into_iter() {
             layout.insert(
-                index as usize,
+                index,
                 Self::reflect_descriptor(set, index == DYNAMIC_BINDING_SLOT as u32)?,
             );
         }
@@ -293,10 +293,10 @@ impl Program {
             };
             let count = match info.binding_count {
                 BindingCount::One => 1,
-                BindingCount::StaticSized(count) => count,
+                BindingCount::StaticSized(count) => count as u32,
                 BindingCount::Unbounded => panic!("Unbounded descriptors aren't supported"),
             };
-            result.insert(index as usize, (info.name, ty, count));
+            result.insert(index, (info.name, ty, count));
         }
         Ok(result)
     }
@@ -387,7 +387,7 @@ fn merge_reflected_layouts<'a>(
     let mut result = ReflectedDescriptorSetLayoutDesc::new();
     layouts.for_each(|x| merge_reflected_layout_set(&mut result, x));
     for i in 0..MAX_DESCRIPTOR_SETS {
-        result.entry(i).or_default();
+        result.entry(i as u32).or_default();
     }
     result
 }

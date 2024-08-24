@@ -58,15 +58,57 @@ pub enum FrameState {
     NeedRecreateSwapchain,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice {
     pub handle: BufferHandle,
-    pub offset: u32,
+    pub offset: u64,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferPointer {
+    pub handle: BufferHandle,
+    pub offset: u64,
+}
+
+impl Default for BufferSlice {
+    fn default() -> Self {
+        Self {
+            handle: Handle::default(),
+            offset: u64::MAX,
+            size: u64::MAX,
+        }
+    }
 }
 
 impl BufferSlice {
-    pub fn new(handle: BufferHandle, offset: u32) -> BufferSlice {
+    pub fn new(handle: BufferHandle, offset: u64, size: u64) -> BufferSlice {
+        Self {
+            handle,
+            offset,
+            size,
+        }
+    }
+}
+
+impl BufferPointer {
+    pub fn new(handle: BufferHandle, offset: u64) -> BufferPointer {
         Self { handle, offset }
+    }
+}
+
+impl Default for BufferPointer {
+    fn default() -> Self {
+        Self {
+            handle: Handle::default(),
+            offset: u64::MAX,
+        }
+    }
+}
+
+impl From<BufferSlice> for BufferPointer {
+    fn from(value: BufferSlice) -> Self {
+        Self::new(value.handle, value.offset)
     }
 }
 
@@ -173,17 +215,14 @@ impl Renderer {
         Ok(self.import_buffer(buffer))
     }
 
-    pub fn upload_buffer<T: Copy>(
-        &self,
-        handle: BufferHandle,
-        offset: usize,
-        data: &[T],
-    ) -> Result<(), Error> {
+    pub fn upload_buffer<T: Copy>(&self, buffer: BufferPointer, data: &[T]) -> Result<(), Error> {
         let buffers = self.buffers.read();
-        let buffer = buffers
-            .get_cold(handle)
-            .ok_or(Error::InvalidBufferHandle(handle))?;
-        self.staging.lock().upload_buffer(buffer, offset, data)?;
+        let vk_buffer = buffers
+            .get_cold(buffer.handle)
+            .ok_or(Error::InvalidBufferHandle(buffer.handle))?;
+        self.staging
+            .lock()
+            .upload_buffer(vk_buffer, buffer.offset, data)?;
         Ok(())
     }
 

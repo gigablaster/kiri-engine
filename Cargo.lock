@@ -1066,6 +1066,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "bevy_tasks",
+ "byteorder",
  "kiri-backend",
  "kiri-common",
  "lazy_static",

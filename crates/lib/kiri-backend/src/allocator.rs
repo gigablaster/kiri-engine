@@ -115,7 +115,6 @@ impl GpuMemoryPage {
     fn allocate(&self, requirements: vk::MemoryRequirements) -> Option<u64> {
         self.allocator
             .allocate(requirements.size as _, requirements.alignment as _)
-            .map(|x| x as u64)
     }
 
     /// Reset memory allocator

@@ -16,7 +16,7 @@
 use ash::vk;
 use kiri_backend::{DescriptorCount, DescriptorSetLayoutDesc, Program, RenderDevice};
 
-use crate::{BufferHandle, Error, ImageHandle};
+use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Binding<T: Copy> {
@@ -36,14 +36,14 @@ pub(super) struct ImageBindingData {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct StaticBufferBindingData {
     pub handle: BufferHandle,
-    pub offset: u32,
-    pub size: u32,
+    pub offset: u64,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct DynamicBufferBindingData {
     pub handle: BufferHandle,
-    pub size: u32,
+    pub size: u64,
 }
 
 #[derive(Debug)]
@@ -105,41 +105,29 @@ impl<'a> DescriptorSetBuilder<'a> {
         self
     }
 
-    pub fn bind_uniform_buffer(
-        mut self,
-        slot: u32,
-        buffer: BufferHandle,
-        offset: usize,
-        size: usize,
-    ) -> Self {
+    pub fn bind_uniform_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
         self.unifom_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                handle: buffer,
-                offset: offset as u32,
-                size: size as u32,
+                handle: buffer.handle,
+                offset: buffer.offset,
+                size: buffer.size,
             },
         });
         self
     }
 
-    pub fn bind_storage_buffer(
-        mut self,
-        slot: u32,
-        buffer: BufferHandle,
-        offset: usize,
-        size: usize,
-    ) -> Self {
+    pub fn bind_storage_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
         self.storage_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                handle: buffer,
-                offset: offset as u32,
-                size: size as u32,
+                handle: buffer.handle,
+                offset: buffer.offset,
+                size: buffer.size,
             },
         });
         self
@@ -148,17 +136,14 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_uniform_buffer(
         mut self,
         slot: u32,
-        buffer: BufferHandle,
-        size: usize,
+        handle: BufferHandle,
+        size: u64,
     ) -> Self {
         self.dynamic_uniform_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData {
-                handle: buffer,
-                size: size as u32,
-            },
+            data: DynamicBufferBindingData { handle, size },
         });
         self
     }
@@ -166,17 +151,14 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_storage_buffer(
         mut self,
         slot: u32,
-        buffer: BufferHandle,
-        size: usize,
+        handle: BufferHandle,
+        size: u64,
     ) -> Self {
         self.dynamic_storage_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData {
-                handle: buffer,
-                size: size as u32,
-            },
+            data: DynamicBufferBindingData { handle, size },
         });
         self
     }

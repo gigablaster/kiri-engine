@@ -22,7 +22,7 @@ use std::{
 use kiri_backend::{BufferCreateDesc, PhysicalDevice};
 use kiri_common::BumpAllocator;
 
-use crate::{BufferHandle, Error, Renderer};
+use crate::{BufferHandle, BufferSlice, Error, Renderer};
 
 #[derive(Debug)]
 pub struct DynamicGpuMemory {
@@ -35,7 +35,7 @@ unsafe impl Send for DynamicGpuMemory {}
 unsafe impl Sync for DynamicGpuMemory {}
 
 impl DynamicGpuMemory {
-    pub fn new(renderer: &Renderer, size: usize) -> Result<Self, Error> {
+    pub fn new(renderer: &Renderer, size: u64) -> Result<Self, Error> {
         let buffer = renderer.create_buffer(
             BufferCreateDesc::shared(size)
                 .name("Dynamic data")
@@ -49,14 +49,18 @@ impl DynamicGpuMemory {
         Ok(Self {
             buffer,
             mapping,
-            allocator: BumpAllocator::new(size),
+            allocator: BumpAllocator::new(size as _),
         })
     }
 
-    pub fn push<T: Copy>(&self, pdevice: &PhysicalDevice, data: &[T]) -> Result<u32, Error> {
+    pub fn push<T: Copy>(
+        &self,
+        pdevice: &PhysicalDevice,
+        data: &[T],
+    ) -> Result<BufferSlice, Error> {
         let size = mem::size_of_val(data);
         if let Some(offset) = self.allocator.allocate(
-            size,
+            size as _,
             pdevice
                 .properties
                 .limits
@@ -65,11 +69,11 @@ impl DynamicGpuMemory {
             unsafe {
                 copy_nonoverlapping(
                     data.as_ptr() as *const u8,
-                    self.mapping.as_ptr().add(offset),
+                    self.mapping.as_ptr().add(offset as _),
                     size,
                 )
             }
-            Ok(offset as u32)
+            Ok(BufferSlice::new(self.buffer, offset, size as u64))
         } else {
             Err(Error::OutOfDynamicMemory)
         }
@@ -91,7 +95,7 @@ pub struct DynamicGpuMemoryPool {
     recycle: Vec<Arc<DynamicGpuMemory>>,
 }
 
-const DYNAMIC_PAGE_SIZE: usize = 16 * 1024 * 1024;
+const DYNAMIC_PAGE_SIZE: u64 = 16 * 1024 * 1024;
 
 impl DynamicGpuMemoryPool {
     pub fn get(&mut self, renderer: &Renderer) -> Result<Arc<DynamicGpuMemory>, Error> {

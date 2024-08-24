@@ -126,19 +126,14 @@ impl ResourceLoader for Arc<ResourceCache> {
                 };
 
                 // Allocate and copy uniform data
-                let offset = self
-                    .material_uniforms
-                    .push(GpuMeshMaterial::new(material))?;
-
                 let builder = DescriptorSetBuilder::new(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
                     &MATERIAL_DESCRIPTOR_LAYOUT,
                 )
                 .bind_uniform_buffer(
                     0,
-                    self.material_uniforms.buffer,
-                    offset,
-                    mem::size_of::<GpuMeshMaterial>(),
+                    self.material_uniforms
+                        .push(GpuMeshMaterial::new(material))?,
                 )
                 .bind_image(1, base_color, vk::ImageAspectFlags::COLOR)
                 .bind_image(2, normals, vk::ImageAspectFlags::COLOR)
@@ -227,14 +222,14 @@ fn do_load_scene(
     let reference = source.reference();
     let vertices: Vec<GpuStaticVertex> = asset.vertices.into_iter().map(|x| x.into()).collect();
     let vertices = manager.renderer.create_buffer(
-        BufferCreateDesc::gpu(mem::size_of::<GpuStaticVertex>() * vertices.len())
+        BufferCreateDesc::gpu((mem::size_of::<GpuStaticVertex>() * vertices.len()) as _)
             .veretex_buffer()
             .transfer_destination()
             .name(&format!("{} - VB", reference))
             .allocator(&manager.allocatpr),
     )?;
     let indices = manager.renderer.create_buffer(
-        BufferCreateDesc::gpu(mem::size_of::<u16>() * asset.indices.len())
+        BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
             .index_buffer()
             .transfer_destination()
             .name(&format!("{} - IB", reference))
@@ -369,7 +364,7 @@ fn do_load_image(
         handle,
         &manager.allocatpr,
         ImageCreateDesc::texture(asset.format, asset.dims)
-            .mip_levels(asset.mips.len())
+            .mip_levels(asset.mips.len() as _)
             .name(&format!("{}", source.reference())),
         Some(&upload),
     )?;
@@ -380,7 +375,7 @@ fn do_load_image(
     Ok(())
 }
 
-const MAX_MATERIALS_COUNT: usize = 8192;
+const MAX_MATERIALS_COUNT: u64 = 8192;
 
 #[derive(Debug)]
 pub struct ResourceCache {
