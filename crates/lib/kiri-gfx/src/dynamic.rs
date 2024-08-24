@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::BufferCreateDesc;
+use kiri_backend::{BufferCreateDesc, PhysicalDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{BufferHandle, Error, Renderer};
@@ -43,28 +43,25 @@ impl DynamicGpuMemory {
                 .indirect_draw()
                 .uniform_buffer()
                 .veretex_buffer()
-                .index_buffer()
-                .dedicated(),
+                .index_buffer(),
         )?;
-        let mapping = renderer.map_buffer(buffer)?;
+        let mapping = renderer.get_buffer_mapping(buffer)?.unwrap();
         Ok(Self {
             buffer,
             mapping,
-            allocator: BumpAllocator::new(
-                size,
-                renderer
-                    .device
-                    .physical_device
-                    .properties
-                    .limits
-                    .min_uniform_buffer_offset_alignment as _,
-            ),
+            allocator: BumpAllocator::new(size),
         })
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<u32, Error> {
+    pub fn push<T: Copy>(&self, pdevice: &PhysicalDevice, data: &[T]) -> Result<u32, Error> {
         let size = mem::size_of_val(data);
-        if let Some(offset) = self.allocator.allocate(size) {
+        if let Some(offset) = self.allocator.allocate(
+            size,
+            pdevice
+                .properties
+                .limits
+                .min_uniform_buffer_offset_alignment as _,
+        ) {
             unsafe {
                 copy_nonoverlapping(
                     data.as_ptr() as *const u8,

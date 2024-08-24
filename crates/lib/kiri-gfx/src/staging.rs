@@ -72,28 +72,18 @@ impl Staging {
                 .raw
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
         }?;
-        let mut staging = Buffer::new(
+        let staging = Buffer::new(
             device,
-            BufferCreateDesc::shared(STAGING_SIZE)
-                .transfer_source()
-                .dedicated(),
+            BufferCreateDesc::host(STAGING_SIZE).transfer_source(),
         )?;
-        let mapping = staging.map()?;
+        let mapping = staging.mapping.unwrap();
 
         Ok(Self {
             device: device.clone(),
             fence,
             command_pool,
             command_buffer,
-            allocator: BumpAllocator::new(
-                STAGING_SIZE as _,
-                device
-                    .physical_device
-                    .properties
-                    .limits
-                    .buffer_image_granularity
-                    .max(64) as _,
-            ),
+            allocator: BumpAllocator::new(STAGING_SIZE as _),
             upload_buffers: Default::default(),
             upload_images: Default::default(),
             mapping,
@@ -145,7 +135,7 @@ impl Staging {
         if size > STAGING_SIZE {
             return Err(Error::ImageTooBig);
         }
-        if let Some(offset) = self.allocator.allocate(size) {
+        if let Some(offset) = self.allocator.allocate(size, self.get_aligment() as _) {
             unsafe {
                 copy_nonoverlapping(data.data.as_ptr(), self.mapping.as_ptr().add(offset), size)
             };
@@ -183,6 +173,15 @@ impl Staging {
         }
     }
 
+    fn get_aligment(&self) -> u64 {
+        self.device
+            .physical_device
+            .properties
+            .limits
+            .buffer_image_granularity
+            .max(64)
+    }
+
     fn try_push_buffer(
         &mut self,
         target: vk::Buffer,
@@ -190,8 +189,13 @@ impl Staging {
         bytes: usize,
         data: *const u8,
     ) -> Result<usize, Error> {
-        let can_send = self.allocator.validate(bytes as _);
-        let dst_offset = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
+        let can_send = self
+            .allocator
+            .validate(bytes as _, self.get_aligment() as _);
+        let dst_offset = self
+            .allocator
+            .allocate(can_send, self.get_aligment() as _)
+            .unwrap(); // Already checked that allocator can allocate enough space
         unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(dst_offset), can_send) };
         let op = vk::BufferCopy::default()
             .src_offset(dst_offset as _)

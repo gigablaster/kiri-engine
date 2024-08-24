@@ -14,23 +14,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use gpu_alloc_ash::AshMemoryDevice;
-
-use super::{GpuAllocator, GpuMemory};
 
 #[derive(Debug, Default)]
 pub struct DropList {
-    memory: Vec<GpuMemory>,
     views: Vec<vk::ImageView>,
     images: Vec<vk::Image>,
     buffers: Vec<vk::Buffer>,
 }
 
 impl DropList {
-    pub fn drop_memory(&mut self, memory: GpuMemory) {
-        self.memory.push(memory);
-    }
-
     pub fn drop_view(&mut self, view: vk::ImageView) {
         self.views.push(view);
     }
@@ -43,10 +35,7 @@ impl DropList {
         self.buffers.push(buffer);
     }
 
-    pub fn purge(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
-        self.memory
-            .drain(..)
-            .for_each(|x| unsafe { memory_allocator.dealloc(AshMemoryDevice::wrap(device), x) });
+    pub fn purge(&mut self, device: &ash::Device) {
         self.buffers
             .drain(..)
             .for_each(|x| unsafe { device.destroy_buffer(x, None) });

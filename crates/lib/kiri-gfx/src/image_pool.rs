@@ -13,10 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
-use kiri_backend::{Image, ImageCreateDesc};
+use kiri_backend::{GpuAllocator, Image, ImageCreateDesc, RenderDevice};
 use log::debug;
 use parking_lot::Mutex;
 
@@ -36,8 +36,9 @@ struct TempImageKey {
     pub usage: vk::ImageUsageFlags,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct TempImagePool {
+    allocator: GpuAllocator,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
@@ -59,6 +60,13 @@ impl Resolution {
 }
 
 impl TempImagePool {
+    pub fn new(device: &Arc<RenderDevice>) -> Self {
+        Self {
+            allocator: GpuAllocator::new(device),
+            images: Default::default(),
+        }
+    }
+
     pub fn get(
         &self,
         renderer: &Renderer,
@@ -89,6 +97,7 @@ impl TempImagePool {
                 resolution.get_dims(backbuffer.desc.dims)
             );
             let image = renderer.create_image(
+                &self.allocator,
                 ImageCreateDesc::new(format, resolution.get_dims(backbuffer.desc.dims))
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
@@ -106,7 +115,8 @@ impl TempImagePool {
         let mut images = self.images.lock();
         images
             .drain()
-            .for_each(|(_, mut group)| group.drain(..).for_each(|x| renderer.destroy_image(x)))
+            .for_each(|(_, mut group)| group.drain(..).for_each(|x| renderer.destroy_image(x)));
+        self.allocator.recycle();
     }
 
     fn recycle(&self, image: ImageHandle, key: TempImageKey) {

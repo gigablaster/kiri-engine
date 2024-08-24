@@ -26,9 +26,9 @@ use ash::vk::{self};
 use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
-    DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
-    Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc, RenderDevice, Swapchain,
-    MAX_COLOR_ATTACHMENTS,
+    DescriptorSetLayoutDesc, Frame, GpuAllocator, Image, ImageCreateDesc, ImageViewDesc,
+    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc,
+    RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use log::debug;
@@ -106,7 +106,7 @@ impl Renderer {
             descriptors: Default::default(),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
-            image_pool: Default::default(),
+            image_pool: TempImagePool::new(device),
         }))
     }
 
@@ -116,10 +116,11 @@ impl Renderer {
 
     pub fn create_image(
         &self,
+        allocator: &GpuAllocator,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
     ) -> Result<ImageHandle, Error> {
-        let image = Image::new(&self.device, desc)?;
+        let image = Image::new(&self.device, allocator, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(&image, data)?;
         }
@@ -134,10 +135,11 @@ impl Renderer {
     pub fn update_image(
         &self,
         handle: ImageHandle,
+        allocator: &GpuAllocator,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
     ) -> Result<(), Error> {
-        let image = Image::new(&self.device, desc)?;
+        let image = Image::new(&self.device, allocator, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(&image, data)?;
         }
@@ -189,20 +191,13 @@ impl Renderer {
         self.buffers.write().remove(handle);
     }
 
-    pub fn map_buffer(&self, handle: BufferHandle) -> Result<NonNull<u8>, Error> {
+    pub fn get_buffer_mapping(&self, handle: BufferHandle) -> Result<Option<NonNull<u8>>, Error> {
         Ok(self
             .buffers
             .write()
             .get_cold_mut(handle)
             .ok_or(Error::InvalidBufferHandle(handle))?
-            .map()?)
-    }
-
-    pub fn unmap_buffer(&self, handle: BufferHandle) {
-        let mut buffers = self.buffers.write();
-        if let Some(buffer) = buffers.get_cold_mut(handle) {
-            buffer.unmap()
-        }
+            .mapping)
     }
 
     pub fn create_pipeline(

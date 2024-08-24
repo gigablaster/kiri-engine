@@ -26,7 +26,7 @@ use parking_lot::Mutex;
 
 use crate::Error;
 
-use super::{DropList, GpuAllocator};
+use super::DropList;
 
 const DESCRIPTORS_PER_PAGE: u32 = 64;
 
@@ -142,12 +142,8 @@ impl Frame {
         }
     }
 
-    pub(super) fn reset(
-        &mut self,
-        device: &ash::Device,
-        memory_allocator: &mut GpuAllocator,
-    ) -> Result<(), Error> {
-        self.drop_list.purge(device, memory_allocator);
+    pub(super) fn reset(&mut self, device: &ash::Device) -> Result<(), Error> {
+        self.drop_list.purge(device);
         unsafe {
             device.reset_fences(&[self.present_fence, self.render_fence])?;
         }
@@ -160,13 +156,13 @@ impl Frame {
         Ok(())
     }
 
-    pub(super) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
+    pub(super) fn free(&mut self, device: &ash::Device) {
         unsafe {
             device.destroy_fence(self.present_fence, None);
             device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.render_finished, None);
         }
-        self.drop_list.purge(device, memory_allocator);
+        self.drop_list.purge(device);
         self.per_thread_pools
             .lock()
             .drain()

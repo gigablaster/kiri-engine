@@ -15,7 +15,7 @@
 
 use std::{any::type_name, marker::PhantomData, mem, sync::Arc};
 
-use kiri_backend::BufferCreateDesc;
+use kiri_backend::{BufferCreateDesc, GpuAllocator};
 use kiri_common::BlockAllocator;
 use kiri_gfx::{BufferHandle, Renderer};
 use parking_lot::Mutex;
@@ -40,7 +40,11 @@ impl<T: Copy> Drop for ConstUniforms<T> {
 }
 
 impl<T: Copy> ConstUniforms<T> {
-    pub fn new(renderer: &Arc<Renderer>, count: usize) -> Result<Self, Error> {
+    pub fn new(
+        renderer: &Arc<Renderer>,
+        allocator: &GpuAllocator,
+        count: usize,
+    ) -> Result<Self, Error> {
         let block_size = mem::size_of::<T>().max(
             renderer
                 .device
@@ -53,6 +57,7 @@ impl<T: Copy> ConstUniforms<T> {
             BufferCreateDesc::gpu(block_size * count)
                 .uniform_buffer()
                 .transfer_destination()
+                .allocator(allocator)
                 .name(&format!("{:?} uniforms", type_name::<T>())),
         )?;
         Ok(Self {

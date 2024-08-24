@@ -49,7 +49,9 @@ impl<'a> RenderPassBuilder<'a> {
     }
 
     pub fn push<T: Copy>(&self, data: &[T]) -> Result<u32, Error> {
-        self.context.dynamic.push(data)
+        self.context
+            .dynamic
+            .push(&self.context.renderer.device.physical_device, data)
     }
 
     pub fn get_temprary_buffer(&self) -> BufferHandle {
