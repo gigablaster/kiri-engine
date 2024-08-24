@@ -91,7 +91,8 @@ impl Staging {
                     .physical_device
                     .properties
                     .limits
-                    .buffer_image_granularity as _,
+                    .buffer_image_granularity
+                    .max(64) as _,
             ),
             upload_buffers: Default::default(),
             upload_images: Default::default(),
