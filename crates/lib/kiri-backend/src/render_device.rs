@@ -441,29 +441,40 @@ impl RenderDevice {
                     .dependency_flags(vk::DependencyFlags::BY_REGION)
                     .image_memory_barriers(&barriers),
             );
-            self.raw.cmd_copy_image2(
+            self.raw.cmd_blit_image(
                 cb,
-                &vk::CopyImageInfo2::default()
-                    .src_image(image.raw)
-                    .dst_image(target.image.raw)
-                    .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .regions(&[vk::ImageCopy2::default()
-                        .extent(vk::Extent3D {
-                            width: image.desc.dims[0],
-                            height: image.desc.dims[1],
-                            depth: 1,
-                        })
-                        .src_subresource(
-                            ImageSubresourceLayers::default()
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .layer_count(1),
-                        )
-                        .dst_subresource(
-                            ImageSubresourceLayers::default()
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .layer_count(1),
-                        )]),
+                image.raw,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                target.image.raw,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::ImageBlit::default()
+                    .src_offsets([
+                        vk::Offset3D::default(),
+                        vk::Offset3D::default()
+                            .x(image.desc.dims[0] as _)
+                            .y(image.desc.dims[1] as _)
+                            .z(1),
+                    ])
+                    .src_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .dst_offsets([
+                        vk::Offset3D::default(),
+                        vk::Offset3D::default()
+                            .x(target.image.desc.dims[0] as _)
+                            .y(target.image.desc.dims[1] as _)
+                            .z(1),
+                    ])
+                    .dst_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })],
+                vk::Filter::LINEAR,
             );
             let barrier = vk::ImageMemoryBarrier2::default()
                 .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE) // ?

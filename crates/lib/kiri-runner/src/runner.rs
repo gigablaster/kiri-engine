@@ -163,7 +163,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         let swapchain = inner.swapchain.as_ref().unwrap();
                         if let FrameState::NeedRecreateSwapchain = inner
                             .renderer
-                            .render(swapchain, vk::Format::A8B8G8R8_UNORM_PACK32, |context| {
+                            .render(swapchain, vk::Format::A2R10G10B10_UNORM_PACK32, |context| {
                                 game.render(self.game_time.game_time(), context)
                             })
                             .unwrap()
