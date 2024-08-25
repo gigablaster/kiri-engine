@@ -171,6 +171,9 @@ impl DrawStreamBuilder {
                 self.write_buffer_pointer(self.current.streams[i]);
             }
         }
+        if self.mask & INDEX_STREAM_MASK == INDEX_STREAM_MASK {
+            self.write_buffer_pointer(self.current.indices);
+        }
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                 self.stream
@@ -184,9 +187,6 @@ impl DrawStreamBuilder {
                     .write_u32::<NativeEndian>(self.current.dynamic_offsets[i])
                     .unwrap();
             }
-        }
-        if self.mask & INDEX_STREAM_MASK == INDEX_STREAM_MASK {
-            self.write_buffer_pointer(self.current.indices);
         }
         if self.mask & FIRST_INDEX_MASK == FIRST_INDEX_MASK {
             self.stream
@@ -339,6 +339,7 @@ impl DrawStream {
                     )
                 }
             }
+
             rebind_all |= (mask & ALL_DESCRIPTOR_SETS_MASK) == ALL_DESCRIPTOR_SETS_MASK;
             for (i, target) in descriptor_sets
                 .iter_mut()
