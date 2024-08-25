@@ -30,9 +30,7 @@ use kiri_backend::{
     InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc,
     RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
 };
-use kiri_common::{
-    DefaultPoolLimits, Handle, HotColdPool, Pool, PoolLimits, SentinelPoolStrategy, TempList,
-};
+use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 
@@ -60,12 +58,7 @@ pub(super) type BindlessPool = HotColdPool<vk::ImageView, (ImageHandle, ImageVie
 lazy_static! {
     static ref BINDLESS_DESCRIPTOR_DESC: DescriptorSetLayoutDesc =
         DescriptorSetLayoutDesc::default()
-            .slot(
-                0,
-                "images",
-                vk::DescriptorType::SAMPLED_IMAGE,
-                DefaultPoolLimits::max_index()
-            )
+            .slot(0, "images", vk::DescriptorType::SAMPLED_IMAGE, 0xffff,)
             .bindless();
 }
 
@@ -156,6 +149,8 @@ pub struct Renderer {
 unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
+const MAX_RESOURCE_COUNT: usize = 0x7ffff;
+
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
         let layout =
@@ -183,11 +178,11 @@ impl Renderer {
         Ok(Arc::new(Self {
             device: device.clone(),
             staging: Mutex::new(Staging::new(device)?),
-            images: Default::default(),
-            buffers: Default::default(),
-            pipelines: Default::default(),
-            bindless: Default::default(),
-            descriptors: Default::default(),
+            images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
+            buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
+            pipelines: RwLock::new(PipelinePool::new(MAX_RESOURCE_COUNT)),
+            bindless: RwLock::new(BindlessPool::new(MAX_RESOURCE_COUNT)),
+            descriptors: RwLock::new(DescriptorPool::new(MAX_RESOURCE_COUNT)),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
             bindless_to_update: Default::default(),

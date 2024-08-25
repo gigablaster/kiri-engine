@@ -21,13 +21,10 @@ use kiri_assets::{
     load_asset, Asset, AssetSource, GltfSceneSource, ImageAssetSource, ImageAssetType, ImportAsset,
     ImportMode, MeshAssetMaterial,
 };
-use kiri_backend::{
-    BufferCreateDesc, DescriptorSetLayoutDesc, GpuAllocator, ImageCreateDesc, ImageViewDesc,
-};
+use kiri_backend::{BufferCreateDesc, GpuAllocator, ImageCreateDesc, ImageViewDesc};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{BindlessHandle, BufferPointer, ImageHandle, ImageUploadData, Renderer};
 use kiri_vfs::{vfs_load, AssetReference};
-use lazy_static::lazy_static;
 use log::{debug, error, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
@@ -44,33 +41,6 @@ type ScenePool = Pool<RenderScene>;
 type StaticMeshPool = Pool<(SceneHandle, usize)>;
 
 type LoadingTask = Task<()>;
-// type StaticMeshLoadingTask = Task<Result<Arc<StaticMeshAsset>, Error>>;
-
-lazy_static! {
-    static ref MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
-        DescriptorSetLayoutDesc::default()
-            .slot(0, "data", vk::DescriptorType::UNIFORM_BUFFER, 1)
-            .slot(
-                1,
-                "base_color",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(2, "normals", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1)
-            .slot(
-                3,
-                "metallic_roughness",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(
-                4,
-                "occlusion",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(5, "emissive", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1);
-}
 
 pub trait ResourceLoader {
     fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<BindlessHandle, Error>;
@@ -375,7 +345,7 @@ fn do_load_image(
 }
 
 const MAX_MATERIALS_COUNT: u64 = 8192;
-
+const MAX_RESOURCES: usize = 0xffff;
 #[derive(Debug)]
 pub struct ResourceCache {
     renderer: Arc<Renderer>,
@@ -415,8 +385,8 @@ impl ResourceCache {
                 ImageViewDesc::new(vk::ImageAspectFlags::COLOR),
             ),
             scenes: Default::default(),
-            scene_assets: Default::default(),
-            meshe_assets: Default::default(),
+            scene_assets: RwLock::new(ScenePool::new(MAX_RESOURCES)),
+            meshe_assets: RwLock::new(StaticMeshPool::new(MAX_RESOURCES)),
             meshes: Default::default(),
             allocator,
         }))

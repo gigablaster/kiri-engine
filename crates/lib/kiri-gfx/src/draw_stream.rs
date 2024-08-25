@@ -79,7 +79,7 @@ impl DrawStreamBuilder {
 
     fn write_buffer_pointer(&mut self, value: BufferPointer) {
         self.stream
-            .write_u32::<NativeEndian>(value.handle.into())
+            .write_u64::<NativeEndian>(value.handle.into())
             .unwrap();
         self.stream.write_u64::<NativeEndian>(value.offset).unwrap()
     }
@@ -170,7 +170,7 @@ impl DrawStreamBuilder {
         self.stream.write_u16::<NativeEndian>(self.mask).unwrap();
         if self.mask & PIPELINE_MASK == PIPELINE_MASK {
             self.stream
-                .write_u32::<NativeEndian>(self.current.pipeline.into())
+                .write_u64::<NativeEndian>(self.current.pipeline.into())
                 .unwrap();
         }
         for i in 0..MAX_VERTEX_STREAMS {
@@ -181,7 +181,7 @@ impl DrawStreamBuilder {
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                 self.stream
-                    .write_u32::<NativeEndian>(self.current.descriptor_sets[i].into())
+                    .write_u64::<NativeEndian>(self.current.descriptor_sets[i].into())
                     .unwrap();
             }
         }
@@ -254,7 +254,7 @@ pub(super) struct DrawStreamExecuteContext<'a> {
 impl DrawStream {
     fn read_buffer_pointer<R: Read>(mut r: R) -> io::Result<BufferPointer> {
         Ok(BufferPointer {
-            handle: r.read_u32::<NativeEndian>()?.into(),
+            handle: r.read_u64::<NativeEndian>()?.into(),
             offset: r.read_u64::<NativeEndian>()?,
         })
     }
@@ -293,7 +293,7 @@ impl DrawStream {
         for _ in 0..self.commands {
             let mask = reader.read_u16::<NativeEndian>().unwrap();
             if mask & PIPELINE_MASK == PIPELINE_MASK {
-                let handle = reader.read_u32::<NativeEndian>().unwrap().into();
+                let handle = reader.read_u64::<NativeEndian>().unwrap().into();
                 let (pipeline, layout) = *context
                     .pipelines
                     .get(handle)
@@ -354,7 +354,7 @@ impl DrawStream {
                 .take(MAX_USEFUL_DESCRIPTOR_SETS - 1)
             {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
-                    let descriptor = reader.read_u32::<NativeEndian>().unwrap().into();
+                    let descriptor = reader.read_u64::<NativeEndian>().unwrap().into();
                     *target = descriptor;
                     if !rebind_all {
                         let descriptor_set = context
@@ -379,7 +379,7 @@ impl DrawStream {
                 == DESCRIPTOR_SET_MASK << ACTUAL_DYANMIC_BINDING_SLOT
             {
                 descriptor_sets[ACTUAL_DYANMIC_BINDING_SLOT] =
-                    reader.read_u32::<NativeEndian>().unwrap().into();
+                    reader.read_u64::<NativeEndian>().unwrap().into();
                 dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
                 dynamic_offset_changed = true;
             }

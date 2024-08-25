@@ -21,85 +21,53 @@ use std::{
     mem::MaybeUninit,
 };
 
-pub trait PoolLimits {
-    const DEFAULT_SPACE: usize;
-
-    fn generation_bits() -> u32 {
-        14
-    }
-
-    fn index_bits() -> u32 {
-        32 - Self::generation_bits()
-    }
-
-    fn index_mask() -> u32 {
-        (1 << Self::index_bits()) - 1
-    }
-
-    fn generation_mask() -> u32 {
-        u32::MAX - Self::index_mask()
-    }
-
-    fn max_index() -> u32 {
-        (1 << Self::index_bits()) - 1
-    }
-
-    fn max_generation() -> u32 {
-        1 << Self::generation_bits()
-    }
-}
+const DEFAULT_SPACE: usize = 4096;
 
 #[derive(Debug)]
-pub struct DefaultPoolLimits {}
-
-impl PoolLimits for DefaultPoolLimits {
-    const DEFAULT_SPACE: usize = 4096;
+pub struct Handle<T> {
+    index: u32,
+    generation: u32,
+    _phantom: PhantomData<T>,
 }
 
-#[derive(Debug)]
-pub struct Handle<T, Limits: PoolLimits = DefaultPoolLimits> {
-    data: u32,
-    _phantom1: PhantomData<T>,
-    _phantom2: PhantomData<Limits>,
-}
-
-unsafe impl<T, Limits: PoolLimits> Send for Handle<T, Limits> {}
-unsafe impl<T, Limits: PoolLimits> Sync for Handle<T, Limits> {}
+unsafe impl<T> Send for Handle<T> {}
+unsafe impl<T> Sync for Handle<T> {}
 
 #[allow(clippy::non_canonical_clone_impl)]
-impl<T, Limits: PoolLimits> Clone for Handle<T, Limits> {
+impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
-            data: self.data,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            index: self.index,
+            generation: self.generation,
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<T, Limits: PoolLimits> Copy for Handle<T, Limits> {}
+impl<T> Copy for Handle<T> {}
 
-impl<T, Limits: PoolLimits> PartialEq for Handle<T, Limits> {
+impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
+        self.generation == other.generation && self.index == other.index
     }
 }
 
-impl<T, Limits: PoolLimits> Eq for Handle<T, Limits> {}
+impl<T> Eq for Handle<T> {}
 
-impl<T, Limits: PoolLimits> Hash for Handle<T, Limits> {
+impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
+        self.index.hash(state);
+        self.generation.hash(state);
     }
 }
 
-impl<T, Limits: PoolLimits> PartialOrd for Handle<T, Limits> {
+impl<T> PartialOrd for Handle<T> {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T, Limits: PoolLimits> Ord for Handle<T, Limits> {
+impl<T> Ord for Handle<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         if !self.is_valid() && other.is_valid() {
             std::cmp::Ordering::Less
@@ -111,47 +79,45 @@ impl<T, Limits: PoolLimits> Ord for Handle<T, Limits> {
     }
 }
 
-impl<T, Limits: PoolLimits> Handle<T, Limits> {
+impl<T> Handle<T> {
     pub fn into_another<U>(&self) -> Handle<U> {
         Handle {
-            data: self.data,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            index: self.index,
+            generation: self.generation,
+            _phantom: PhantomData,
         }
     }
 
     pub fn new(index: u32, generation: u32) -> Self {
-        assert!(index < Limits::max_index());
-        assert!(generation < Limits::max_generation());
         Self {
-            data: (generation << Limits::index_bits()) | index,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            index,
+            generation,
+            _phantom: PhantomData,
         }
     }
 
     pub fn invalid() -> Self {
         Self {
-            data: u32::MAX,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            index: u32::MAX,
+            generation: u32::MAX,
+            _phantom: PhantomData,
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.data != u32::MAX
+        *self != Self::invalid()
     }
 
     pub fn index(&self) -> u32 {
-        self.data & Limits::index_mask()
+        self.index
     }
 
     pub fn generation(&self) -> u32 {
-        (self.data & Limits::generation_mask()) >> Limits::index_bits()
+        self.generation
     }
 }
 
-impl<T, Limits: PoolLimits> Default for Handle<T, Limits> {
+impl<T> Default for Handle<T> {
     fn default() -> Self {
         Self::invalid()
     }
@@ -163,18 +129,20 @@ impl<T> Display for Handle<T> {
     }
 }
 
-impl<T> From<Handle<T>> for u32 {
+impl<T> From<Handle<T>> for u64 {
     fn from(value: Handle<T>) -> Self {
-        value.data
+        ((value.generation as u64) << 32) | (value.index as u64)
     }
 }
 
-impl<T> From<u32> for Handle<T> {
-    fn from(value: u32) -> Self {
+impl<T> From<u64> for Handle<T> {
+    fn from(value: u64) -> Self {
+        let index = (value & 0xffffffff) as u32;
+        let generation = ((value >> 32) & 0xffffffff) as u32;
         Handle {
-            data: value,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            index,
+            generation,
+            _phantom: PhantomData,
         }
     }
 }
@@ -308,35 +276,31 @@ impl<T: Copy + Debug> PoolValueWrapper<T> for MaybeUninitVauleWrapper<T> {
 }
 
 #[derive(Debug)]
-pub struct Pool<
-    T,
-    Wrapper: PoolValueWrapper<T> = OptionPoolStrategy<T>,
-    Limits: PoolLimits = DefaultPoolLimits,
-> {
+pub struct Pool<T, Wrapper: PoolValueWrapper<T> = OptionPoolStrategy<T>> {
     data: Vec<Wrapper::Wrapped>,
+    max_space: usize,
     generations: Vec<u32>,
     empty: Vec<u32>,
-    _phantom: PhantomData<Limits>,
 }
 
-impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limits> {
-    pub fn new() -> Self {
+impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
+    pub fn new(max_space: usize) -> Self {
         Self {
-            data: Vec::with_capacity(Limits::DEFAULT_SPACE),
-            generations: Vec::with_capacity(Limits::DEFAULT_SPACE),
-            empty: Vec::with_capacity(Limits::DEFAULT_SPACE),
-            _phantom: PhantomData,
+            data: Vec::with_capacity(DEFAULT_SPACE),
+            generations: Vec::with_capacity(DEFAULT_SPACE),
+            empty: Vec::with_capacity(DEFAULT_SPACE),
+            max_space,
         }
     }
 
-    pub fn push(&mut self, data: T) -> Handle<T, Limits> {
+    pub fn push(&mut self, data: T) -> Handle<T> {
         if let Some(slot) = self.empty.pop() {
             self.data[slot as usize] = Wrapper::wrap(data);
             Handle::new(slot, self.generations[slot as usize])
         } else {
             let index = self.generations.len();
-            if index == u32::MAX as _ {
-                panic!("Too many items in HandleContainer.");
+            if index >= self.max_space {
+                panic!("Too many items in pool");
             }
             self.generations.push(0);
             self.data.push(Wrapper::wrap(data));
@@ -344,7 +308,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         }
     }
 
-    pub fn get(&self, handle: Handle<T, Limits>) -> Option<&T> {
+    pub fn get(&self, handle: Handle<T>) -> Option<&T> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::get(&self.data[index]).unwrap())
@@ -353,7 +317,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         }
     }
 
-    pub fn get_mut(&mut self, handle: Handle<T, Limits>) -> Option<&mut T> {
+    pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::get_mut(&mut self.data[index]).unwrap())
@@ -362,7 +326,7 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         }
     }
 
-    pub fn replace(&mut self, handle: Handle<T, Limits>, data: T) -> Option<T> {
+    pub fn replace(&mut self, handle: Handle<T>, data: T) -> Option<T> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
             Some(Wrapper::replace(&mut self.data[index], data))
@@ -371,11 +335,10 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         }
     }
 
-    pub fn remove(&mut self, handle: Handle<T, Limits>) -> Option<T> {
+    pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
-            self.generations[index] =
-                self.generations[index].wrapping_add(1) % Limits::max_generation();
+            self.generations[index] = self.generations[index].wrapping_add(1) % (u32::MAX - 1);
             self.empty.push(index as _);
             return Some(Wrapper::take(&mut self.data[index]));
         }
@@ -383,31 +346,29 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
         None
     }
 
-    pub fn is_handle_valid(&self, handle: Handle<T, Limits>) -> bool {
+    pub fn is_handle_valid(&self, handle: Handle<T>) -> bool {
         let index = handle.index() as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
 
-    pub fn iter(&self) -> Iter<T, Wrapper, Limits> {
+    pub fn iter(&self) -> Iter<T, Wrapper> {
         Iter {
             container: self,
             current: 0,
         }
     }
 
-    pub fn enumerate(&self) -> EnumerateHandlesIter<T, Wrapper, Limits> {
+    pub fn enumerate(&self) -> EnumerateHandlesIter<T, Wrapper> {
         EnumerateHandlesIter {
             container: self,
             current: 0,
-            _phantom: PhantomData,
         }
     }
 
-    pub fn drain(&mut self) -> Drain<T, Wrapper, Limits> {
+    pub fn drain(&mut self) -> Drain<T, Wrapper> {
         Drain {
             data: std::mem::take(&mut self.data),
             current: 0,
-            _phantom: PhantomData,
         }
     }
 
@@ -420,32 +381,22 @@ impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Pool<T, Wrapper, Limit
     }
 }
 
-impl<T, Wrapper: PoolValueWrapper<T>> Default for Pool<T, Wrapper> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct Iter<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
-    container: &'a Pool<T, Wrapper, Limits>,
+pub struct Iter<'a, T, Wrapper: PoolValueWrapper<T>> {
+    container: &'a Pool<T, Wrapper>,
     current: usize,
 }
 
-pub struct EnumerateHandlesIter<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
-    container: &'a Pool<T, Wrapper, Limits>,
+pub struct EnumerateHandlesIter<'a, T, Wrapper: PoolValueWrapper<T>> {
+    container: &'a Pool<T, Wrapper>,
     current: usize,
-    _phantom: PhantomData<Limits>,
 }
 
-pub struct Drain<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> {
+pub struct Drain<T, Wrapper: PoolValueWrapper<T>> {
     data: Vec<Wrapper::Wrapped>,
     current: usize,
-    _phantom: PhantomData<Limits>,
 }
 
-impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
-    for Iter<'a, T, Wrapper, Limits>
-{
+impl<'a, T, Wrapper: PoolValueWrapper<T>> Iterator for Iter<'a, T, Wrapper> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -470,10 +421,8 @@ impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
     }
 }
 
-impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
-    for EnumerateHandlesIter<'a, T, Wrapper, Limits>
-{
-    type Item = (Handle<T, Limits>, &'a T);
+impl<'a, T, Wrapper: PoolValueWrapper<T>> Iterator for EnumerateHandlesIter<'a, T, Wrapper> {
+    type Item = (Handle<T>, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.current != self.container.data.len()
@@ -503,7 +452,7 @@ impl<'a, T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator
     }
 }
 
-impl<T, Wrapper: PoolValueWrapper<T>, Limits: PoolLimits> Iterator for Drain<T, Wrapper, Limits> {
+impl<T, Wrapper: PoolValueWrapper<T>> Iterator for Drain<T, Wrapper> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -535,6 +484,13 @@ where
     WrapperT: PoolValueWrapper<T>,
     WrapperU: PoolValueWrapper<U>,
 {
+    pub fn new(max_space: usize) -> Self {
+        Self {
+            hot: Pool::new(max_space),
+            cold: Pool::new(max_space),
+        }
+    }
+
     pub fn hot(&self) -> &Pool<T, WrapperT> {
         &self.hot
     }
@@ -545,10 +501,12 @@ where
 
     pub fn push(&mut self, hot: T, cold: U) -> Handle<T> {
         let hot_handle = self.hot.push(hot);
+        let cold_handle = self.cold.push(cold);
         #[cfg(debug_assertions)]
         {
-            let cold_handle = self.cold.push(cold);
-            if hot_handle.data != cold_handle.data {
+            if hot_handle.generation != cold_handle.generation
+                && cold_handle.index != hot_handle.index
+            {
                 panic!("Mismatched handles");
             }
         }
@@ -726,19 +684,6 @@ where
     }
 }
 
-impl<T, U, WrapperT, WrapperU> Default for HotColdPool<T, U, WrapperT, WrapperU>
-where
-    WrapperT: PoolValueWrapper<T>,
-    WrapperU: PoolValueWrapper<U>,
-{
-    fn default() -> Self {
-        Self {
-            hot: Default::default(),
-            cold: Default::default(),
-        }
-    }
-}
-
 pub struct HotColdDrain<T, U, WrapperT: PoolValueWrapper<T>, WrapperU: PoolValueWrapper<U>> {
     hot: Vec<WrapperT::Wrapped>,
     cold: Vec<WrapperU::Wrapped>,
@@ -780,7 +725,7 @@ mod test {
 
     #[test]
     fn handle_container_push_get() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         let handle1 = container.push(1);
         let handle2 = container.push(2);
         let handle3 = container.push(3);
@@ -791,7 +736,7 @@ mod test {
 
     #[test]
     fn reuse_slot() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         let handle = container.push(1);
         container.remove(handle);
         let handle = container.push(2);
@@ -802,7 +747,7 @@ mod test {
 
     #[test]
     fn old_handle_returns_none() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         let handle1 = container.push(1);
         assert_eq!(Some(1), container.remove(handle1));
         let handle2 = container.push(2);
@@ -812,7 +757,7 @@ mod test {
 
     #[test]
     fn mutate_by_handle() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         let handle = container.push(1);
         assert_eq!(Some(&1), container.get(handle));
         assert_eq!(Some(1), container.replace(handle, 2));
@@ -823,14 +768,14 @@ mod test {
 
     #[test]
     fn iterate_empty() {
-        let container = Pool::<u32>::new();
+        let container = Pool::<u32>::new(100);
         let cont = container.iter().copied().collect::<Vec<_>>();
         assert!(cont.is_empty());
     }
 
     #[test]
     fn iterate_full() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         container.push(1);
         container.push(2);
         container.push(3);
@@ -840,7 +785,7 @@ mod test {
 
     #[test]
     fn iterate_hole() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         container.push(1);
         let handle = container.push(2);
         container.push(3);
@@ -851,7 +796,7 @@ mod test {
 
     #[test]
     fn drain() {
-        let mut container = Pool::<u32>::new();
+        let mut container = Pool::<u32>::new(100);
         container.push(1);
         container.push(2);
         container.push(3);

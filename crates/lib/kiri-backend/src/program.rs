@@ -22,7 +22,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
-use kiri_common::{DefaultPoolLimits, PoolLimits, TempList};
+use kiri_common::TempList;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{DescriptorSetCount, Error, SamplerDesc};
@@ -87,13 +87,14 @@ pub enum DescriptorCount {
     Finite(u32),
     Bindless,
 }
+pub const MAX_BINDLESS_RESOURCES: usize = 0xffff;
 
 impl From<DescriptorCount> for u32 {
     fn from(value: DescriptorCount) -> Self {
         match value {
             DescriptorCount::Single => 1,
             DescriptorCount::Finite(count) => count,
-            DescriptorCount::Bindless => DefaultPoolLimits::max_index(),
+            DescriptorCount::Bindless => MAX_BINDLESS_RESOURCES as u32,
         }
     }
 }
