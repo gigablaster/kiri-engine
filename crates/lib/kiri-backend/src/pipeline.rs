@@ -15,14 +15,15 @@
 
 use std::{
     fs::{create_dir_all, File},
-    io::{self},
+    io::{self, Cursor, Seek, Write},
+    mem,
     path::Path,
     slice,
     sync::Arc,
 };
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
 use crate::{Error, Program, RenderDevice};
@@ -195,6 +196,31 @@ pub trait PipelineVertex {
     fn layout() -> &'static [InputVertexStreamLayout<'static>];
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SpecializationValue {
+    Int(i32),
+    Uint(u32),
+    Float(f32),
+}
+
+impl SpecializationValue {
+    fn write<W: Write>(self, mut w: W) -> io::Result<()> {
+        match self {
+            SpecializationValue::Int(value) => Ok(w.write_i32::<NativeEndian>(value)?),
+            SpecializationValue::Uint(value) => Ok(w.write_u32::<NativeEndian>(value)?),
+            SpecializationValue::Float(value) => Ok(w.write_f32::<NativeEndian>(value)?),
+        }
+    }
+
+    fn size(self) -> usize {
+        match self {
+            SpecializationValue::Int(_) => mem::size_of::<i32>(),
+            SpecializationValue::Uint(_) => mem::size_of::<u32>(),
+            SpecializationValue::Float(_) => mem::size_of::<f32>(),
+        }
+    }
+}
+
 impl<'a> InputVertexStreamLayout<'a> {
     fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let attributes = self
@@ -219,8 +245,27 @@ pub fn compile_raster_pipeline<'a>(
     program: &Arc<Program>,
     layout: RenderAttachmentLayoutDesc<'a>,
     streams: &[InputVertexStreamLayout<'a>],
+    specialization: &[(u32, SpecializationValue)],
     desc: RasterPipelineCreateDesc,
 ) -> Result<vk::Pipeline, Error> {
+    let mut specialization_values = Cursor::new(Vec::new());
+    let specialization_entires = specialization
+        .iter()
+        .map(|(index, value)| {
+            let offset = specialization_values.stream_position().unwrap();
+            let size = value.size();
+            value.write(&mut specialization_values).unwrap();
+            vk::SpecializationMapEntry::default()
+                .constant_id(*index)
+                .offset(offset as _)
+                .size(size)
+        })
+        .collect::<Vec<_>>();
+    let specialization_values = specialization_values.into_inner();
+    let specialization_info = vk::SpecializationInfo::default()
+        .map_entries(&specialization_entires)
+        .data(&specialization_values);
+
     let shader_create_info = program
         .shaders
         .iter()
@@ -228,6 +273,7 @@ pub fn compile_raster_pipeline<'a>(
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(*stage)
                 .module(*shader)
+                .specialization_info(&specialization_info)
                 .name(entry)
         })
         .collect::<Vec<_>>();

@@ -26,9 +26,10 @@ use ash::vk::{self};
 use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetCount,
-    DescriptorSetLayoutDesc, Frame, GpuAllocator, Image, ImageCreateDesc, ImageViewDesc,
-    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc,
-    RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
+    DescriptorSetDesc, DescriptorSetLayoutDesc, DescriptorSetType, Frame, GpuAllocator, Image,
+    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
+    RenderAttachmentLayoutDesc, RenderDevice, SpecializationValue, Swapchain,
+    MAX_BINDLESS_RESOURCES, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use lazy_static::lazy_static;
@@ -126,6 +127,7 @@ struct PipelineCompilationData {
     program: Arc<Program>,
     layout: RenderAttachmentLayoutDesc<'static>,
     streams: &'static [InputVertexStreamLayout<'static>],
+    specializaton: Vec<(u32, SpecializationValue)>,
     desc: RasterPipelineCreateDesc,
 }
 
@@ -283,6 +285,7 @@ impl Renderer {
         program: &Arc<Program>,
         layout: RenderAttachmentLayoutDesc<'static>,
         streams: &'static [InputVertexStreamLayout<'static>],
+        specialization: &[(u32, SpecializationValue)],
         desc: RasterPipelineCreateDesc,
     ) -> PipelineHandle {
         let handle = self
@@ -295,6 +298,7 @@ impl Renderer {
                 program: program.clone(),
                 layout,
                 streams,
+                specializaton: specialization.to_vec(),
                 desc,
             },
         );
@@ -523,6 +527,7 @@ impl Renderer {
                     &data.program,
                     data.layout,
                     data.streams,
+                    &data.specializaton,
                     data.desc,
                 )?,
                 data.program.pipeline_layout,
