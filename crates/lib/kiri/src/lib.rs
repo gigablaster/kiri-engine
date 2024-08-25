@@ -18,7 +18,7 @@ mod gpu;
 mod image_pool;
 mod mesh;
 mod resource_cache;
-// mod scene;
+mod scene;
 
 use std::io;
 
@@ -26,7 +26,7 @@ pub use const_buffer::*;
 pub use image_pool::*;
 pub use mesh::*;
 pub use resource_cache::*;
-// pub use scene::*;
+pub use scene::*;
 
 use thiserror::Error;
 

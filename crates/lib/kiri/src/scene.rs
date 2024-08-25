@@ -51,16 +51,9 @@ pub trait SceneCuller: Send + Sync {
     fn cull(&self, bounds: Bounds) -> bool;
 }
 
-/// Сцена
-///
-/// Служит для хранения иерархии объектов и определения видимости. Работа состит из двух этапов.
-/// 1. Манипуляции сценой - все операции сохраняются но никаких изменений не происходит
-/// 2. Обновление - операции испольняются и сцена реально меняется
-/// Запросы видимости возможны только после выполнения обновления.
-///
-/// Внтури содержит SOA предсатвление сцены, при перестройке сцены ноды ремаппятся на реальные
-/// индексы в внутреннем представлении.
-#[derive(Debug, Default)]
+const MAX_SCENE_NODES: usize = 0xfffff;
+
+#[derive(Debug)]
 pub struct Scene {
     nodes: NodePool,
     data: Vec<NodeData>,
@@ -82,6 +75,22 @@ pub trait MeshResolver {
 #[derive(Debug)]
 pub struct CullResult {
     pub static_meshes: Vec<(Affine3A, StaticMeshHandle)>,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            nodes: NodePool::new(MAX_SCENE_NODES),
+            data: Default::default(),
+            parents: Default::default(),
+            local_transforms: Default::default(),
+            world_transforms: Default::default(),
+            bounds: Default::default(),
+            rebuild_scene: Default::default(),
+            recalculate_transforms: Default::default(),
+            update_bounds: Default::default(),
+        }
+    }
 }
 
 impl Scene {
@@ -225,9 +234,12 @@ impl Scene {
                             .copied()
                             .for_each(|(node_index, mesh_index)| {
                                 let tranform =
-                                    parent_transform * scene.world_transforms[node_index];
-                                if culler.cull(scene.bounds[mesh_index].transform(tranform)) {
-                                    static_meshes.push((tranform, scene.meshes[mesh_index]));
+                                    parent_transform * scene.world_transforms[node_index as usize];
+                                if culler
+                                    .cull(scene.bounds[mesh_index as usize].transform(tranform))
+                                {
+                                    static_meshes
+                                        .push((tranform, scene.mesh_handles[mesh_index as usize]));
                                 }
                             });
                     }
