@@ -15,7 +15,7 @@
 
 use arrayvec::ArrayVec;
 use ash::vk;
-use kiri_backend::{AttachmentClearValue, Image, ImageViewDesc, MAX_COLOR_ATTACHMENTS};
+use kiri_backend::{Image, ImageViewDesc, RenderTargetClearValue, MAX_COLOR_ATTACHMENTS};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -143,7 +143,7 @@ impl RenderTarget {
         self
     }
 
-    pub fn clear(mut self, value: AttachmentClearValue) -> Self {
+    pub fn clear(mut self, value: RenderTargetClearValue) -> Self {
         self.load = vk::AttachmentLoadOp::CLEAR;
         self.clear = value.into();
         self

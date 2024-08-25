@@ -4,7 +4,7 @@ use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
 use kiri::{ImagePool, ResourceCache, ResourceLoader};
-use kiri_backend::AttachmentClearValue;
+use kiri_backend::RenderTargetClearValue;
 use kiri_gfx::{ImageBarrierType, ImageHandle, RenderContext, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
@@ -56,7 +56,7 @@ impl GameClient<LoopError> for Loop {
         let mut pass = context.create_render_pass(
             "main",
             &[RenderTarget::color(target.handle)
-                .clear(AttachmentClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
+                .clear(RenderTargetClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
             None,
         );
         pass.image_barrier(

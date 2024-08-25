@@ -26,6 +26,7 @@ mod physical_device;
 mod pipeline;
 mod program;
 mod render_device;
+mod render_pass;
 mod swapchain; // Copyright (C) 2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
@@ -52,4 +53,5 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
 pub use render_device::*;
+pub use render_pass::*;
 pub use swapchain::*;

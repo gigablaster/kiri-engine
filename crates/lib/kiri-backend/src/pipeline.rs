@@ -28,28 +28,6 @@ use log::{info, warn};
 
 use crate::{Error, Program, RenderDevice};
 
-pub const MAX_COLOR_ATTACHMENTS: usize = 8;
-pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
-
-#[derive(Debug, Clone, Copy)]
-pub enum AttachmentClearValue {
-    Color([f32; 4]),
-    DepthStencil(f32, u32),
-}
-
-impl From<AttachmentClearValue> for vk::ClearValue {
-    fn from(value: AttachmentClearValue) -> Self {
-        match value {
-            AttachmentClearValue::Color(color) => vk::ClearValue {
-                color: vk::ClearColorValue { float32: color },
-            },
-            AttachmentClearValue::DepthStencil(depth, stencil) => vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RenderAttachmentLayoutDesc<'a> {
     pub color: &'a [vk::Format],

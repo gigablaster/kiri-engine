@@ -214,14 +214,12 @@ impl Staging {
         Ok(can_send)
     }
 
-    pub fn upload(&mut self) -> Result<Option<vk::Semaphore>, Error> {
-        self.upload_impl(true)
+    pub fn upload(&mut self) -> Result<vk::Semaphore, Error> {
+        let semaphore = self.upload_impl(true)?;
+        Ok(semaphore.unwrap())
     }
 
     fn upload_impl(&mut self, need_semaphore: bool) -> Result<Option<vk::Semaphore>, Error> {
-        if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
-            return Ok(None);
-        }
         unsafe {
             self.device
                 .raw
@@ -247,12 +245,8 @@ impl Staging {
         self.upload_buffers.clear();
         self.upload_images.clear();
         if need_semaphore {
-            self.device.submit(
-                &[self.command_buffer],
-                self.fence,
-                &[],
-                &[(self.semaphore, vk::PipelineStageFlags2::DRAW_INDIRECT)],
-            )?;
+            self.device
+                .submit(&[self.command_buffer], self.fence, &[], &[self.semaphore])?;
             Ok(Some(self.semaphore))
         } else {
             self.device
@@ -266,12 +260,10 @@ impl Staging {
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::BufferMemoryBarrier2::default()
+                let barrier = vk::BufferMemoryBarrier::default()
                     .buffer(*x.0)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags2::INDIRECT_COMMAND_READ)
-                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .dst_stage_mask(vk::PipelineStageFlags2::DRAW_INDIRECT)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::INDEX_READ)
                     .offset(op.dst_offset)
                     .size(op.size);
                 buffer_barriers.push(barrier);
@@ -281,11 +273,9 @@ impl Staging {
         let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::ImageMemoryBarrier2::default()
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .image(*x.0)
@@ -294,12 +284,23 @@ impl Staging {
             })
         });
         unsafe {
-            self.device.raw.cmd_pipeline_barrier2(
+            self.device.raw.cmd_pipeline_barrier(
                 self.command_buffer,
-                &vk::DependencyInfo::default()
-                    .buffer_memory_barriers(&buffer_barriers)
-                    .image_memory_barriers(&image_barriers)
-                    .dependency_flags(vk::DependencyFlags::BY_REGION),
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::VERTEX_INPUT,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &buffer_barriers,
+                &[],
+            );
+            self.device.raw.cmd_pipeline_barrier(
+                self.command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &[],
+                &image_barriers,
             );
         };
     }
@@ -309,12 +310,10 @@ impl Staging {
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::BufferMemoryBarrier2::default()
+                let barrier = vk::BufferMemoryBarrier::default()
                     .buffer(*x.0)
-                    .src_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .offset(op.dst_offset)
                     .size(op.size);
                 buffer_barriers.push(barrier);
@@ -324,11 +323,9 @@ impl Staging {
         let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::ImageMemoryBarrier2::default()
-                    .src_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .image(*x.0)
@@ -337,14 +334,16 @@ impl Staging {
             })
         });
         unsafe {
-            self.device.raw.cmd_pipeline_barrier2(
+            self.device.raw.cmd_pipeline_barrier(
                 self.command_buffer,
-                &vk::DependencyInfo::default()
-                    .buffer_memory_barriers(&buffer_barriers)
-                    .image_memory_barriers(&image_barriers)
-                    .dependency_flags(vk::DependencyFlags::BY_REGION),
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &buffer_barriers,
+                &image_barriers,
             );
-        }
+        };
     }
 
     fn copy_buffers(&self) {

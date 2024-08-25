@@ -77,7 +77,6 @@ impl RenderDevice {
             ash::khr::maintenance1::NAME,
             ash::khr::maintenance2::NAME,
             ash::khr::maintenance3::NAME,
-            ash::khr::maintenance4::NAME,
         ];
 
         for ext in device_extension_names.iter() {
@@ -106,29 +105,8 @@ impl RenderDevice {
             .queue_family_index(universal_queue_family.index)
             .queue_priorities(&queue_priorities)];
 
-        let mut synchronization2 =
-            vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
-        let mut buffer_device_address =
-            vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
-        let mut dynamic_rendering =
-            vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
-        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
-        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
-            .runtime_descriptor_array(true)
-            .descriptor_binding_partially_bound(true)
-            .descriptor_binding_sampled_image_update_after_bind(true)
-            .descriptor_binding_storage_buffer_update_after_bind(true)
-            .descriptor_binding_storage_image_update_after_bind(true)
-            .shader_sampled_image_array_non_uniform_indexing(true)
-            .shader_storage_buffer_array_non_uniform_indexing(true)
-            .shader_storage_image_array_non_uniform_indexing(true);
         let mut features = vk::PhysicalDeviceFeatures2::default()
-            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
-            .push_next(&mut synchronization2)
-            .push_next(&mut buffer_device_address)
-            .push_next(&mut dynamic_rendering)
-            .push_next(&mut maintenance4)
-            .push_next(&mut descriptor_indexing);
+            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
             .enabled_extension_names(&device_extension_names)
@@ -258,37 +236,26 @@ impl RenderDevice {
         &self,
         cbs: &[vk::CommandBuffer],
         fence: vk::Fence,
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
-        signal: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        signal: &[vk::Semaphore],
     ) -> Result<(), Error> {
         puffin::profile_function!();
-        let command_info = cbs
+        let wait_sems = wait
             .iter()
-            .map(|x| vk::CommandBufferSubmitInfo::default().command_buffer(*x))
+            .map(|(semaphore, _)| *semaphore)
             .collect::<ArrayVec<_, MAX_SUBMITS>>();
-        let wait_info = wait
+        let wait_stages = wait
             .iter()
-            .map(|(semaphore, stage)| {
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(*semaphore)
-                    .stage_mask(*stage)
-            })
+            .map(|(_, stage)| *stage)
             .collect::<ArrayVec<_, MAX_SUBMITS>>();
-        let signal_info = signal
-            .iter()
-            .map(|(semaphore, stage)| {
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(*semaphore)
-                    .stage_mask(*stage)
-            })
-            .collect::<ArrayVec<_, MAX_SUBMITS>>();
-        let submit_info = vk::SubmitInfo2::default()
-            .command_buffer_infos(&command_info)
-            .wait_semaphore_infos(&wait_info)
-            .signal_semaphore_infos(&signal_info);
+        let submit_info = vk::SubmitInfo::default()
+            .command_buffers(cbs)
+            .wait_semaphores(&wait_sems)
+            .wait_dst_stage_mask(&wait_stages)
+            .signal_semaphores(signal);
         unsafe {
             self.raw
-                .queue_submit2(*self.universal_queue.lock(), &[submit_info], fence)
+                .queue_submit(*self.universal_queue.lock(), &[submit_info], fence)
         }?;
         Ok(())
     }
@@ -346,13 +313,13 @@ impl RenderDevice {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-            self.begin_label(cb, "prsent");
+            self.begin_label(cb, "Present");
             let barriers = [
-                vk::ImageMemoryBarrier2::default()
-                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    // .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    // .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .image(target.image.raw)
@@ -363,11 +330,11 @@ impl RenderDevice {
                         base_array_layer: 0,
                         layer_count: 1,
                     }),
-                vk::ImageMemoryBarrier2::default()
-                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // ?
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
-                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                    // .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    // .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .image(image.raw)
@@ -379,11 +346,14 @@ impl RenderDevice {
                         layer_count: 1,
                     }),
             ];
-            self.raw.cmd_pipeline_barrier2(
+            self.raw.cmd_pipeline_barrier(
                 cb,
-                &vk::DependencyInfo::default()
-                    .dependency_flags(vk::DependencyFlags::BY_REGION)
-                    .image_memory_barriers(&barriers),
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &[],
+                &barriers,
             );
             self.raw.cmd_blit_image(
                 cb,
@@ -420,11 +390,11 @@ impl RenderDevice {
                     })],
                 vk::Filter::LINEAR,
             );
-            let barrier = vk::ImageMemoryBarrier2::default()
-                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE) // ?
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                .dst_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+            let barrier = vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE) // ?
+                .dst_access_mask(vk::AccessFlags::MEMORY_READ)
+                // .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                // .dst_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .image(target.image.raw)
@@ -435,11 +405,14 @@ impl RenderDevice {
                     base_array_layer: 0,
                     layer_count: 1,
                 });
-            self.raw.cmd_pipeline_barrier2(
+            self.raw.cmd_pipeline_barrier(
                 cb,
-                &vk::DependencyInfo::default()
-                    .dependency_flags(vk::DependencyFlags::BY_REGION)
-                    .image_memory_barriers(&[barrier]),
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &[],
+                &[barrier],
             );
             self.end_labe(cb);
             self.raw.end_command_buffer(cb)?;
@@ -449,17 +422,14 @@ impl RenderDevice {
                 &[
                     (
                         frame.render_finished,
-                        vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     ),
                     (
                         target.acquire_semaphore,
-                        vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     ),
                 ],
-                &[(
-                    target.present_finished,
-                    vk::PipelineStageFlags2::TOP_OF_PIPE,
-                )],
+                &[target.present_finished],
             )?;
         }
         let binding = target.swapchain.raw;

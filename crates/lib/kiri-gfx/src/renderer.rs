@@ -398,27 +398,15 @@ impl Renderer {
             self.device.raw.end_command_buffer(command_buffer)?;
         }
         // Submit
-        if let Some(semaphore) = semaphore {
-            self.device.submit(
-                &[command_buffer],
-                frame.render_fence,
-                &[(semaphore, vk::PipelineStageFlags2::VERTEX_INPUT)],
-                &[(
-                    frame.render_finished,
-                    vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                )],
-            )?;
-        } else {
-            self.device.submit(
-                &[command_buffer],
-                frame.render_fence,
-                &[],
-                &[(
-                    frame.render_finished,
-                    vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                )],
-            )?;
-        }
+        self.device.submit(
+            &[command_buffer],
+            frame.render_fence,
+            &[(
+                semaphore,
+                vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+            )],
+            &[frame.render_finished],
+        )?;
         // Present
         self.device
             .present(target, images.get(image).unwrap(), &frame)?;
