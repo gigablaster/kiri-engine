@@ -20,7 +20,8 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool, Renderer,
+    DynamicGpuMemory, DynamicWriter, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool,
+    Renderer,
 };
 
 #[derive(Clone, Copy)]
@@ -47,10 +48,16 @@ impl<'a> RenderPassBuilder<'a> {
         self.streams.push(stream);
     }
 
-    pub fn push<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
+    pub fn push_dynamic_data<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
         self.context
             .dynamic
             .push(&self.context.renderer.device.physical_device, data)
+    }
+
+    pub fn write_dynamic_data<T: Copy>(&self, count: usize) -> Result<DynamicWriter<T>, Error> {
+        self.context
+            .dynamic
+            .write(&self.context.renderer.device.physical_device, count)
     }
 
     pub fn get_temprary_buffer(&self) -> BufferHandle {

@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    marker::PhantomData,
     mem,
     ptr::{copy_nonoverlapping, NonNull},
     sync::Arc,
@@ -79,6 +80,29 @@ impl DynamicGpuMemory {
         }
     }
 
+    pub fn write<'a, T: Copy>(
+        &self,
+        pdevice: &PhysicalDevice,
+        count: usize,
+    ) -> Result<DynamicWriter<'a, T>, Error> {
+        let size = mem::size_of::<T>() * count;
+        if let Some(offset) = self.allocator.allocate(
+            size as _,
+            pdevice
+                .properties
+                .limits
+                .min_uniform_buffer_offset_alignment as _,
+        ) {
+            Ok(DynamicWriter::<T>::new(
+                self.mapping.as_ptr(),
+                offset,
+                count,
+            ))
+        } else {
+            Err(Error::OutOfDynamicMemory)
+        }
+    }
+
     pub fn get_buffer_handle(&self) -> BufferHandle {
         self.buffer
     }
@@ -113,5 +137,40 @@ impl DynamicGpuMemoryPool {
         self.pool.append(&mut self.recycle);
         self.recycle.append(&mut self.used);
         self.pool.iter().for_each(|x| x.recycle());
+    }
+}
+
+#[derive(Debug)]
+pub struct DynamicWriter<'a, T: Copy> {
+    memory: *mut u8,
+    cursor: usize,
+    size: usize,
+    pub offset: u64,
+    _phantom: PhantomData<&'a T>,
+}
+
+impl<'a, T: Copy> DynamicWriter<'a, T> {
+    fn new(memory: *mut u8, offset: u64, count: usize) -> Self {
+        Self {
+            memory: unsafe { memory.add(offset as _) },
+            cursor: 0,
+            size: count * mem::size_of::<T>(),
+            offset,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn push(&mut self, data: T) -> Result<(), Error> {
+        let data_size = mem::size_of::<T>();
+        if data_size > (self.size - self.cursor) {
+            return Err(Error::OutOfDynamicMemory);
+        }
+        let src = [data].as_ptr() as *const u8;
+        unsafe {
+            let dst = self.memory.add(self.cursor);
+            copy_nonoverlapping(src, dst, data_size);
+        }
+        self.cursor += data_size;
+        Ok(())
     }
 }
