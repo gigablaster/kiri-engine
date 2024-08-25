@@ -13,22 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod const_buffer;
 mod gpu;
 mod image_pool;
 mod mesh;
 mod pipeline_cache;
 mod resource_cache;
 mod scene;
+mod uniforms;
+// mod scene;
 
 use std::io;
 
-pub use const_buffer::*;
 pub use image_pool::*;
 pub use mesh::*;
 pub use pipeline_cache::*;
 pub use resource_cache::*;
 pub use scene::*;
+pub use uniforms::*;
+// pub use scene::*;
 
 use thiserror::Error;
 
@@ -44,8 +46,8 @@ pub enum Error {
     AssetImportError(kiri_assets::Error),
     #[error("Out of mesh memory")]
     OutOfMeshMemory,
-    #[error("Not enough memory to keep constant data")]
-    NotEnoughGpuConstMemory,
+    #[error("Too many uniforms")]
+    TooManyUniforms,
 }
 
 impl From<kiri_backend::Error> for Error {

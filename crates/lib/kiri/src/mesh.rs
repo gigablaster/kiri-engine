@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use kiri_assets::{MeshMaterialBlend, NodeIndex};
-use kiri_gfx::{BufferHandle, ImageHandle};
+use kiri_gfx::{BufferHandle, DescriptorHandle, ImageHandle};
 
 use crate::{Bounds, StaticMeshHandle};
 
@@ -46,7 +46,7 @@ pub enum RenderMaterialType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RenderMaterialDesc {
-    pub index: u32,
+    pub ds: DescriptorHandle,
     pub ty: RenderMaterialType,
 }
 

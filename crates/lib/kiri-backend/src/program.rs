@@ -25,7 +25,7 @@ use byte_slice_cast::AsSliceOf;
 use kiri_common::TempList;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
-use crate::{DescriptorSetCount, Error, SamplerDesc};
+use crate::{DescriptorCount, Error, SamplerDesc};
 
 use super::RenderDevice;
 
@@ -81,25 +81,7 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DescriptorCount {
-    Single,
-    Finite(u32),
-    Bindless,
-}
-pub const MAX_BINDLESS_RESOURCES: usize = 0xffff;
-
-impl From<DescriptorCount> for u32 {
-    fn from(value: DescriptorCount) -> Self {
-        match value {
-            DescriptorCount::Single => 1,
-            DescriptorCount::Finite(count) => count,
-            DescriptorCount::Bindless => MAX_BINDLESS_RESOURCES as u32,
-        }
-    }
-}
-
-type ReflectedDescriptorSetDesc = HashMap<u32, (String, vk::DescriptorType, DescriptorCount)>;
+type ReflectedDescriptorSetDesc = HashMap<u32, (String, vk::DescriptorType, u32)>;
 type ReflectedDescriptorSetLayoutDesc = HashMap<u32, ReflectedDescriptorSetDesc>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -110,16 +92,8 @@ pub struct DescriptorSetDesc {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub enum DescriptorSetType {
-    #[default]
-    Bindfull,
-    Bindless,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct DescriptorSetLayoutDesc {
     layout: Vec<(u32, DescriptorSetDesc)>,
-    ty: DescriptorSetType,
 }
 
 impl DescriptorSetLayoutDesc {
@@ -135,13 +109,8 @@ impl DescriptorSetLayoutDesc {
         self
     }
 
-    pub fn bindless(mut self) -> Self {
-        self.ty = DescriptorSetType::Bindless;
-        self
-    }
-
-    pub fn get_descriptor_count(&self) -> DescriptorSetCount {
-        let mut count = DescriptorSetCount::default();
+    pub fn get_descriptor_count(&self) -> DescriptorCount {
+        let mut count = DescriptorCount::default();
         for (_, data) in &self.layout {
             match data.ty {
                 vk::DescriptorType::SAMPLED_IMAGE => count.sampled_images += data.count,
@@ -196,10 +165,6 @@ impl DescriptorSetLayoutDesc {
 
 impl From<ReflectedDescriptorSetDesc> for DescriptorSetLayoutDesc {
     fn from(value: ReflectedDescriptorSetDesc) -> Self {
-        let has_bindless = value.iter().any(|x| x.1 .2 == DescriptorCount::Bindless);
-        if has_bindless && !value.iter().all(|x| x.1 .2 == DescriptorCount::Bindless) {
-            panic!("Entire descriptor set has to be bindless or not");
-        }
         let layout = value
             .into_iter()
             .map(|(slot, data)| {
@@ -208,17 +173,12 @@ impl From<ReflectedDescriptorSetDesc> for DescriptorSetLayoutDesc {
                     DescriptorSetDesc {
                         name: data.0,
                         ty: data.1,
-                        count: data.2.into(),
+                        count: data.2,
                     },
                 )
             })
             .collect();
-        let ty = if has_bindless {
-            DescriptorSetType::Bindless
-        } else {
-            DescriptorSetType::Bindfull
-        };
-        DescriptorSetLayoutDesc { layout, ty }
+        DescriptorSetLayoutDesc { layout }
     }
 }
 
@@ -332,9 +292,9 @@ impl Program {
                 _ => panic!("Not supported {}", info.ty.0),
             };
             let count = match info.binding_count {
-                BindingCount::One => DescriptorCount::Single,
-                BindingCount::StaticSized(count) => DescriptorCount::Finite(count as u32),
-                BindingCount::Unbounded => DescriptorCount::Bindless,
+                BindingCount::One => 1,
+                BindingCount::StaticSized(count) => count as u32,
+                BindingCount::Unbounded => panic!("Unbounded descriptors aren't supported"),
             };
             result.insert(index, (info.name, ty, count));
         }
@@ -342,7 +302,7 @@ impl Program {
     }
 }
 
-pub fn create_descriptor_layout(
+pub(super) fn create_descriptor_layout(
     device: &RenderDevice,
     stage: vk::ShaderStageFlags,
     layout: &DescriptorSetLayoutDesc,
@@ -368,19 +328,7 @@ pub fn create_descriptor_layout(
             binding
         })
         .collect::<Vec<_>>();
-    let flags = vec![
-        vk::DescriptorBindingFlags::PARTIALLY_BOUND
-            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
-        bindings.len()
-    ];
-    let mut binding_flags =
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
-    let mut create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
-    if layout.ty == DescriptorSetType::Bindless {
-        create_info = create_info
-            .push_next(&mut binding_flags)
-            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL);
-    }
+    let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
     Ok(unsafe {
         device
             .raw
@@ -464,64 +412,28 @@ fn merge_reflected_layout_set(
 mod test {
     use ash::vk;
 
-    use crate::{program::merge_reflected_layouts, DescriptorCount};
+    use crate::program::merge_reflected_layouts;
 
     use super::{ReflectedDescriptorSetDesc, ReflectedDescriptorSetLayoutDesc};
 
     #[test]
     fn merge_refected_layouts() {
         let mut set1 = ReflectedDescriptorSetDesc::new();
-        set1.insert(
-            0,
-            (
-                "shared1".into(),
-                vk::DescriptorType::SAMPLED_IMAGE,
-                DescriptorCount::Single,
-            ),
-        );
-        set1.insert(
-            1,
-            (
-                "shared2".into(),
-                vk::DescriptorType::UNIFORM_BUFFER,
-                DescriptorCount::Single,
-            ),
-        );
+        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE, 1));
+        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER, 1));
         let mut set2 = ReflectedDescriptorSetDesc::new();
-        set2.insert(
-            0,
-            (
-                "set_a".into(),
-                vk::DescriptorType::STORAGE_BUFFER,
-                DescriptorCount::Single,
-            ),
-        );
+        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
         let mut set3 = ReflectedDescriptorSetDesc::new();
         set3.insert(
             1,
-            (
-                "set_b".into(),
-                vk::DescriptorType::STORAGE_TEXEL_BUFFER,
-                DescriptorCount::Single,
-            ),
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
         );
 
         let mut combined = ReflectedDescriptorSetDesc::new();
-        combined.insert(
-            0,
-            (
-                "set_a".into(),
-                vk::DescriptorType::STORAGE_BUFFER,
-                DescriptorCount::Single,
-            ),
-        );
+        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
         combined.insert(
             1,
-            (
-                "set_b".into(),
-                vk::DescriptorType::STORAGE_TEXEL_BUFFER,
-                DescriptorCount::Single,
-            ),
+            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
         );
 
         let mut a = ReflectedDescriptorSetLayoutDesc::new();

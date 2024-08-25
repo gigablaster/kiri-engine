@@ -25,14 +25,12 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
-    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetCount,
-    DescriptorSetDesc, DescriptorSetLayoutDesc, DescriptorSetType, Frame, GpuAllocator, Image,
-    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
-    RenderAttachmentLayoutDesc, RenderDevice, Swapchain, MAX_BINDLESS_RESOURCES,
-    MAX_COLOR_ATTACHMENTS,
+    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
+    DescriptorSetLayoutDesc, Frame, GpuAllocator, Image, ImageCreateDesc, ImageViewDesc,
+    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc,
+    RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
-use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -44,7 +42,6 @@ pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-pub type BindlessHandle = Handle<vk::ImageView>;
 
 pub(super) type ImagePool = Pool<Image>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
@@ -53,15 +50,6 @@ pub(super) type PipelinePool = Pool<
     SentinelPoolStrategy<(vk::Pipeline, vk::PipelineLayout)>,
 >;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
-
-pub(super) type BindlessPool = HotColdPool<vk::ImageView, (ImageHandle, ImageViewDesc)>;
-
-lazy_static! {
-    static ref BINDLESS_DESCRIPTOR_DESC: DescriptorSetLayoutDesc =
-        DescriptorSetLayoutDesc::default()
-            .slot(0, "images", vk::DescriptorType::SAMPLED_IMAGE, 0xffff,)
-            .bindless();
-}
 
 pub enum FrameState {
     Rendered,
@@ -139,57 +127,27 @@ pub struct Renderer {
     buffers: RwLock<BufferPool>,
     pipelines: RwLock<PipelinePool>,
     descriptors: RwLock<DescriptorPool>,
-    bindless: RwLock<BindlessPool>,
     staging: Mutex<Staging>,
     pipelines_to_compile: Mutex<HashMap<PipelineHandle, PipelineCompilationData>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
-    bindless_to_update: Mutex<Vec<BindlessHandle>>,
-    bindless_pool: vk::DescriptorPool,
-    bindless_descriptor: vk::DescriptorSet,
 }
 
 unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
-const MAX_RESOURCE_COUNT: usize = 0x7ffff;
+const MAX_RESOURCE_COUNT: usize = 0xffff;
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
-        let layout =
-            device.get_or_create_layout(vk::ShaderStageFlags::ALL, &BINDLESS_DESCRIPTOR_DESC)?;
-        let bindless_pool = unsafe {
-            device.raw.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .pool_sizes(
-                        &BINDLESS_DESCRIPTOR_DESC
-                            .get_descriptor_count()
-                            .to_pool_size(1),
-                    )
-                    .max_sets(1)
-                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
-                None,
-            )
-        }?;
-        let mut allocation_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(bindless_pool)
-            .set_layouts(slice::from_ref(&layout));
-        allocation_info.descriptor_set_count = 1;
-        let bindless_descriptor =
-            unsafe { device.raw.allocate_descriptor_sets(&allocation_info) }?[0];
-        device.set_object_name(bindless_descriptor, "Bindless images");
         Ok(Arc::new(Self {
             device: device.clone(),
             staging: Mutex::new(Staging::new(device)?),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             pipelines: RwLock::new(PipelinePool::new(MAX_RESOURCE_COUNT)),
-            bindless: RwLock::new(BindlessPool::new(MAX_RESOURCE_COUNT)),
             descriptors: RwLock::new(DescriptorPool::new(MAX_RESOURCE_COUNT)),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
-            bindless_to_update: Default::default(),
-            bindless_pool,
-            bindless_descriptor,
         }))
     }
 
@@ -326,31 +284,6 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
-    pub fn create_bindless_view(&self, image: ImageHandle, desc: ImageViewDesc) -> BindlessHandle {
-        let handle = self
-            .bindless
-            .write()
-            .push(vk::ImageView::null(), (image, desc));
-        self.bindless_to_update.lock().push(handle);
-        handle
-    }
-
-    pub fn update_bindless_view(
-        &self,
-        handle: BindlessHandle,
-        image: ImageHandle,
-        desc: ImageViewDesc,
-    ) {
-        self.bindless
-            .write()
-            .replace_hot_cold(handle, vk::ImageView::null(), (image, desc));
-        self.bindless_to_update.lock().push(handle);
-    }
-
-    pub fn destory_bindless_view(&self, handle: BindlessHandle) {
-        self.bindless.write().remove(handle);
-    }
-
     pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<ImageHandle, Error>>(
         &self,
         swapchain: &Swapchain,
@@ -406,7 +339,7 @@ impl Renderer {
                 vk::ShaderStageFlags::ALL_GRAPHICS,
                 &DescriptorSetLayoutDesc::default(),
             )?,
-            DescriptorSetCount::default(),
+            DescriptorCount::default(),
         )?;
         let mut descriptors_to_clean = Vec::new();
         for pass in passes {
@@ -451,7 +384,6 @@ impl Renderer {
                 descriptors: &descriptors,
                 buffers: &buffers,
                 empty: empty_descriptor_set,
-                bindless: self.bindless_descriptor,
                 render_area: area,
             };
             for stream in pass.streams {
@@ -667,34 +599,6 @@ impl Renderer {
                     );
                 }
             }
-            let mut bindless = self.bindless.write();
-            let mut bindless_to_update: Vec<_> = mem::take(&mut self.bindless_to_update.lock());
-            bindless_to_update.sort();
-            bindless_to_update.dedup();
-            for handle in bindless_to_update {
-                if let Some((image_handle, desc)) = bindless.get_cold(handle).copied() {
-                    let image = images
-                        .get(image_handle)
-                        .ok_or(Error::InvalidImageHandle(image_handle))?;
-                    let view = image.view(desc)?;
-                    bindless.replace(handle, view);
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .image_info(slice::from_ref(
-                                image_writes.add(
-                                    vk::DescriptorImageInfo::default()
-                                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                        .image_view(view),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                            .dst_array_element(handle.index())
-                            .dst_binding(0)
-                            .dst_set(self.bindless_descriptor),
-                    );
-                }
-            }
             unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
             Ok(())
         })?;
@@ -707,29 +611,12 @@ impl Renderer {
                 .iter_mut()
                 .filter(|x| x.data.handle == image)
                 .for_each(|x| x.data.view = vk::ImageView::null());
-        });
-        let mut bindless_to_update = self.bindless_to_update.lock();
-        let bindless = self.bindless.write();
-        bindless
-            .enumerate()
-            .filter_map(|(handle, _, (image_handle, _))| {
-                if *image_handle == image {
-                    Some(handle)
-                } else {
-                    None
-                }
-            })
-            .for_each(|handle| bindless_to_update.push(handle));
+        })
     }
 }
 
 impl Drop for Renderer {
     fn drop(&mut self) {
-        unsafe {
-            self.device
-                .raw
-                .destroy_descriptor_pool(self.bindless_pool, None)
-        };
         self.pipelines
             .write()
             .drain()

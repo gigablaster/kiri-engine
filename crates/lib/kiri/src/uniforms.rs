@@ -16,72 +16,74 @@
 use std::{any::type_name, marker::PhantomData, mem, sync::Arc};
 
 use kiri_backend::{BufferCreateDesc, GpuAllocator};
-use kiri_common::{Align, BumpAllocator};
-use kiri_gfx::{BufferHandle, BufferPointer, Renderer};
+use kiri_common::BlockAllocator;
+use kiri_gfx::{BufferHandle, BufferPointer, BufferSlice, Renderer};
+use parking_lot::Mutex;
 
 use crate::Error;
 
-/// Push data into GPU storag buffer
+/// Static uniform allocator
 ///
-/// Data can't be deallocated and must be addressed by index in shader.
+/// Allocate uniforms of single type.
 #[derive(Debug)]
-pub struct ConstStorageBuffer<T: Copy> {
+pub struct ConstUniforms<T: Copy> {
     renderer: Arc<Renderer>,
     pub buffer: BufferHandle,
-    allocator: BumpAllocator,
-    element_size: u64,
+    allocator: Mutex<BlockAllocator>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Copy> Drop for ConstStorageBuffer<T> {
+impl<T: Copy> Drop for ConstUniforms<T> {
     fn drop(&mut self) {
         self.renderer.destroy_buffer(self.buffer);
     }
 }
 
-impl<T: Copy> ConstStorageBuffer<T> {
+impl<T: Copy> ConstUniforms<T> {
     pub fn new(
         renderer: &Arc<Renderer>,
         allocator: &GpuAllocator,
         count: u64,
     ) -> Result<Self, Error> {
-        let element_size = mem::size_of::<T>().align(
+        let block_size = mem::size_of::<T>().max(
             renderer
                 .device
                 .physical_device
                 .properties
                 .limits
-                .min_storage_buffer_offset_alignment
-                .max(16) as _,
+                .min_uniform_buffer_offset_alignment as _,
         ) as u64;
         let buffer = renderer.create_buffer(
-            BufferCreateDesc::gpu(element_size * count)
-                .storage_buffer()
+            BufferCreateDesc::gpu(block_size * count)
+                .uniform_buffer()
                 .transfer_destination()
                 .allocator(allocator)
-                .name(&format!("{:?}", type_name::<T>())),
+                .name(&format!("{:?} uniforms", type_name::<T>())),
         )?;
         Ok(Self {
             renderer: renderer.clone(),
             buffer,
-            element_size,
-            allocator: BumpAllocator::new(element_size * count),
+            allocator: Mutex::new(BlockAllocator::new(block_size as _, count as _)),
             _phantom: PhantomData,
         })
     }
 
-    pub fn push_and_get_index(&self, data: T) -> Result<u32, Error> {
+    pub fn push(&self, data: T) -> Result<BufferSlice, Error> {
         let offset = self
             .allocator
-            .allocate(self.element_size, self.element_size)
-            .ok_or(Error::NotEnoughGpuConstMemory)?;
+            .lock()
+            .allocate()
+            .ok_or(Error::TooManyUniforms)?;
         self.renderer
             .upload_buffer(BufferPointer::new(self.buffer, offset), &[data])?;
-
-        Ok((offset / self.element_size) as u32)
+        Ok(BufferSlice::new(
+            self.buffer,
+            offset,
+            mem::size_of::<T>() as _,
+        ))
     }
 
-    pub fn get_buffer(&self) -> BufferPointer {
-        BufferPointer::new(self.buffer, 0)
+    pub fn free(&self, buffer: BufferSlice) {
+        self.allocator.lock().dealloc(buffer.offset);
     }
 }

@@ -487,11 +487,11 @@ impl RenderDevice {
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let key = desc.normalize();
         let layouts = self.layouts.upgradable_read();
-        if let Some(layout) = layouts.get(desc) {
+        if let Some(layout) = layouts.get(&key) {
             Ok(*layout)
         } else {
             let mut layouts = RwLockUpgradableReadGuard::upgrade(layouts);
-            if let Some(layout) = layouts.get(desc) {
+            if let Some(layout) = layouts.get(&key) {
                 Ok(*layout)
             } else {
                 let layout = create_descriptor_layout(self, stage, desc)?;

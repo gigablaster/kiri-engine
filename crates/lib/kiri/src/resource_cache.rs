@@ -15,22 +15,23 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, mem, sync::Arc};
 
-use ash::vk::{self, ImageAspectFlags};
+use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     load_asset, Asset, AssetSource, GltfSceneSource, ImageAssetSource, ImageAssetType, ImportAsset,
     ImportMode, MeshAssetMaterial,
 };
-use kiri_backend::{BufferCreateDesc, GpuAllocator, ImageCreateDesc, ImageViewDesc};
+use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, GpuAllocator, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
-use kiri_gfx::{BindlessHandle, BufferPointer, ImageHandle, ImageUploadData, Renderer};
+use kiri_gfx::{DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer};
 use kiri_vfs::{vfs_load, AssetReference};
+use lazy_static::lazy_static;
 use log::{debug, error, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
     gpu::{GpuMeshMaterial, GpuStaticVertex},
-    Bounds, ConstStorageBuffer, Error, RenderMaterialDesc, RenderMeshSurface, RenderScene,
+    Bounds, ConstUniforms, Error, RenderMaterialDesc, RenderMeshSurface, RenderScene,
     StaticRenderMesh,
 };
 
@@ -42,22 +43,50 @@ type StaticMeshPool = Pool<(SceneHandle, usize)>;
 
 type LoadingTask = Task<()>;
 
+lazy_static! {
+    static ref MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
+        DescriptorSetLayoutDesc::default()
+            .slot(0, "material", vk::DescriptorType::UNIFORM_BUFFER, 1)
+            .slot(
+                1,
+                "base_color",
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                1
+            )
+            .slot(2, "normal", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1)
+            .slot(
+                3,
+                "metallic_roughness",
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                1
+            )
+            .slot(
+                4,
+                "occlusion",
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                1
+            )
+            .slot(5, "emissive", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1);
+}
+
 pub trait ResourceLoader {
-    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<BindlessHandle, Error>;
-    fn get_or_load_material(&self, material: &MeshAssetMaterial) -> Result<u32, Error>;
+    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error>;
+    fn get_or_load_material(&self, material: &MeshAssetMaterial)
+        -> Result<DescriptorHandle, Error>;
     fn get_or_load_scene(&self, name: &str) -> Result<SceneHandle, Error>;
 }
 
 impl ResourceLoader for Arc<ResourceCache> {
-    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<BindlessHandle, Error> {
+    fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
         let source = ImageAssetSource::new(name).ty(ty);
-        let (_, bindless) = self
-            .images
-            .get_or_load(source, |source| load_image_impl(self, source))?;
-        Ok(bindless)
+        self.images
+            .get_or_load(source, |source| load_image_impl(self, source))
     }
 
-    fn get_or_load_material(&self, material: &MeshAssetMaterial) -> Result<u32, Error> {
+    fn get_or_load_material(
+        &self,
+        material: &MeshAssetMaterial,
+    ) -> Result<DescriptorHandle, Error> {
         let materials = self.materials.upgradable_read();
         if let Some(material) = materials.get(material) {
             Ok(*material)
@@ -95,19 +124,24 @@ impl ResourceLoader for Arc<ResourceCache> {
                     self.dummy_image
                 };
 
-                let index = self
-                    .material_gpu_data
-                    .push_and_get_index(GpuMeshMaterial::new(
-                        material,
-                        base_color,
-                        normals,
-                        metallic_roughness,
-                        occlusion,
-                        emissive,
-                    ))?;
-                materials.insert(material.clone(), index);
-
-                Ok(index)
+                // Allocate and copy uniform data
+                let builder = DescriptorSetBuilder::new(
+                    vk::ShaderStageFlags::ALL_GRAPHICS,
+                    &MATERIAL_DESCRIPTOR_LAYOUT,
+                )
+                .bind_uniform_buffer(
+                    0,
+                    self.material_uniforms
+                        .push(GpuMeshMaterial::new(material))?,
+                )
+                .bind_image(1, base_color, vk::ImageAspectFlags::COLOR)
+                .bind_image(2, normals, vk::ImageAspectFlags::COLOR)
+                .bind_image(3, metallic_roughness, vk::ImageAspectFlags::COLOR)
+                .bind_image(4, occlusion, vk::ImageAspectFlags::COLOR)
+                .bind_image(5, emissive, vk::ImageAspectFlags::COLOR);
+                let descriptor_set = self.renderer.create_descriptor_set(builder)?;
+                materials.insert(material.clone(), descriptor_set);
+                Ok(descriptor_set)
             }
         }
     }
@@ -180,7 +214,7 @@ fn do_load_scene(
     let mut materials = Vec::new();
     for material in &asset.materials {
         materials.push(RenderMaterialDesc {
-            index: manager.get_or_load_material(material)?,
+            ds: manager.get_or_load_material(material)?,
             ty: material.blend.into(),
         });
     }
@@ -191,14 +225,14 @@ fn do_load_scene(
             .veretex_buffer()
             .transfer_destination()
             .name(&format!("{} - VB", reference))
-            .allocator(&manager.allocator),
+            .allocator(&manager.allocatpr),
     )?;
     let indices = manager.renderer.create_buffer(
         BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
             .index_buffer()
             .transfer_destination()
             .name(&format!("{} - IB", reference))
-            .allocator(&manager.allocator),
+            .allocator(&manager.allocatpr),
     )?;
     let mut meshes = Vec::new();
     let mut bounds = Vec::new();
@@ -266,10 +300,6 @@ fn do_load_scene(
     scene.update_world_transforms();
     for i in 0..scene.meshes.len() {
         let name = format!("{}#{}", scene_name, scene.mesh_names[i]);
-        debug!(
-            "Register static mesh: {} -> {}",
-            name, scene.mesh_handles[i]
-        );
         named_meshes.insert(name, scene.mesh_handles[i]);
     }
     Ok(())
@@ -293,23 +323,19 @@ pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: 
 fn load_image_impl(
     manager: &Arc<ResourceCache>,
     source: ImageAssetSource,
-) -> Result<(ImageHandle, BindlessHandle), Error> {
+) -> Result<ImageHandle, Error> {
     let handle = manager.renderer.create_image(
-        &manager.allocator,
-        ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1])
-            .name(&format!("{} proxy", source.reference())),
+        &manager.allocatpr,
+        ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1]),
         Some(&[ImageUploadData {
             data: &[128, 128, 128, 255],
         }]),
     )?;
-    let bindless = manager
-        .renderer
-        .create_bindless_view(handle, ImageViewDesc::new(ImageAspectFlags::COLOR));
     manager
         .loading_tasks
         .lock()
         .push(IoTaskPool::get().spawn(load_image(manager.clone(), handle, source)));
-    Ok((handle, bindless))
+    Ok(handle)
 }
 
 async fn load_image(manager: Arc<ResourceCache>, handle: ImageHandle, source: ImageAssetSource) {
@@ -331,7 +357,7 @@ fn do_load_image(
         .collect::<Vec<_>>();
     manager.renderer.update_image(
         handle,
-        &manager.allocator,
+        &manager.allocatpr,
         ImageCreateDesc::texture(asset.format, asset.dims)
             .mip_levels(asset.mips.len() as _)
             .name(&format!("{}", source.reference())),
@@ -350,45 +376,39 @@ const MAX_RESOURCES: usize = 0xffff;
 pub struct ResourceCache {
     renderer: Arc<Renderer>,
     loading_tasks: Mutex<Vec<LoadingTask>>,
-    images: AssetTracker<(ImageHandle, BindlessHandle)>,
+    images: AssetTracker<ImageHandle>,
     scenes: AssetTracker<SceneHandle>,
     scene_assets: RwLock<ScenePool>,
     meshes: RwLock<HashMap<String, StaticMeshHandle>>,
     meshe_assets: RwLock<StaticMeshPool>,
-    material_gpu_data: ConstStorageBuffer<GpuMeshMaterial>,
-    materials: RwLock<HashMap<MeshAssetMaterial, u32>>,
-    dummy_image_data: ImageHandle,
-    dummy_image: BindlessHandle,
-    allocator: GpuAllocator,
+    material_uniforms: ConstUniforms<GpuMeshMaterial>,
+    materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
+    dummy_image: ImageHandle,
+    allocatpr: GpuAllocator,
 }
 
 impl ResourceCache {
     pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource manager");
         let allocator = GpuAllocator::new(&renderer.device);
-        let dummy_image_data = renderer.create_image(
-            &allocator,
-            ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy"),
-            Some(&[ImageUploadData {
-                data: &[255, 0, 255, 255],
-            }]),
-        )?;
         Ok(Arc::new(Self {
             renderer: renderer.clone(),
             loading_tasks: Default::default(),
             images: Default::default(),
             materials: Default::default(),
-            material_gpu_data: ConstStorageBuffer::new(renderer, &allocator, MAX_MATERIALS_COUNT)?,
-            dummy_image_data,
-            dummy_image: renderer.create_bindless_view(
-                dummy_image_data,
-                ImageViewDesc::new(vk::ImageAspectFlags::COLOR),
-            ),
+            material_uniforms: ConstUniforms::new(renderer, &allocator, MAX_MATERIALS_COUNT)?,
+            dummy_image: renderer.create_image(
+                &allocator,
+                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy image"),
+                Some(&[ImageUploadData {
+                    data: &[127, 127, 127, 255],
+                }]),
+            )?,
             scenes: Default::default(),
             scene_assets: RwLock::new(ScenePool::new(MAX_RESOURCES)),
             meshe_assets: RwLock::new(StaticMeshPool::new(MAX_RESOURCES)),
             meshes: Default::default(),
-            allocator,
+            allocatpr: allocator,
         }))
     }
 
@@ -404,27 +424,23 @@ impl ResourceCache {
             }
         }
     }
-
-    pub fn get_material_gpu_buffer(&self) -> BufferPointer {
-        self.material_gpu_data.get_buffer()
-    }
 }
 
 impl Drop for ResourceCache {
     fn drop(&mut self) {
-        self.renderer.destory_bindless_view(self.dummy_image);
-        self.renderer.destroy_image(self.dummy_image_data);
+        self.renderer.destroy_image(self.dummy_image);
         self.images
             .assets
             .write()
             .drain()
-            .for_each(|(_, (handle, bindless))| {
-                self.renderer.destroy_image(handle);
-                self.renderer.destory_bindless_view(bindless);
-            });
+            .for_each(|(_, handle)| self.renderer.destroy_image(handle));
         self.scene_assets.write().drain().for_each(|scene| {
             self.renderer.destroy_buffer(scene.vertices);
             self.renderer.destroy_buffer(scene.vertices);
         });
+        self.materials
+            .write()
+            .drain()
+            .for_each(|(_, ds)| self.renderer.destroy_descriptor_set(ds));
     }
 }
