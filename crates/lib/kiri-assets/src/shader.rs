@@ -42,6 +42,13 @@ pub struct ShaderAssetSource {
 }
 
 impl ShaderAssetSource {
+    pub fn new(path: &str, ty: ShaderType) -> Self {
+        Self {
+            path: path.into(),
+            ty,
+        }
+    }
+
     pub fn fragment(path: &str) -> Self {
         Self {
             path: path.to_owned(),

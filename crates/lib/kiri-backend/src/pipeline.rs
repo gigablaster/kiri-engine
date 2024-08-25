@@ -15,7 +15,7 @@
 
 use std::{
     fs::{create_dir_all, File},
-    io::{self, Cursor, Seek, Write},
+    io::{self, Cursor, Seek},
     mem,
     path::Path,
     slice,
@@ -196,31 +196,6 @@ pub trait PipelineVertex {
     fn layout() -> &'static [InputVertexStreamLayout<'static>];
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum SpecializationValue {
-    Int(i32),
-    Uint(u32),
-    Float(f32),
-}
-
-impl SpecializationValue {
-    fn write<W: Write>(self, mut w: W) -> io::Result<()> {
-        match self {
-            SpecializationValue::Int(value) => Ok(w.write_i32::<NativeEndian>(value)?),
-            SpecializationValue::Uint(value) => Ok(w.write_u32::<NativeEndian>(value)?),
-            SpecializationValue::Float(value) => Ok(w.write_f32::<NativeEndian>(value)?),
-        }
-    }
-
-    fn size(self) -> usize {
-        match self {
-            SpecializationValue::Int(_) => mem::size_of::<i32>(),
-            SpecializationValue::Uint(_) => mem::size_of::<u32>(),
-            SpecializationValue::Float(_) => mem::size_of::<f32>(),
-        }
-    }
-}
-
 impl<'a> InputVertexStreamLayout<'a> {
     fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let attributes = self
@@ -245,7 +220,7 @@ pub fn compile_raster_pipeline<'a>(
     program: &Arc<Program>,
     layout: RenderAttachmentLayoutDesc<'a>,
     streams: &[InputVertexStreamLayout<'a>],
-    specialization: &[(u32, SpecializationValue)],
+    specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
 ) -> Result<vk::Pipeline, Error> {
     let mut specialization_values = Cursor::new(Vec::new());
@@ -253,8 +228,10 @@ pub fn compile_raster_pipeline<'a>(
         .iter()
         .map(|(index, value)| {
             let offset = specialization_values.stream_position().unwrap();
-            let size = value.size();
-            value.write(&mut specialization_values).unwrap();
+            let size = mem::size_of::<u32>();
+            specialization_values
+                .write_u32::<NativeEndian>(*value)
+                .unwrap();
             vk::SpecializationMapEntry::default()
                 .constant_id(*index)
                 .offset(offset as _)

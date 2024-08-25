@@ -17,6 +17,7 @@ mod const_buffer;
 mod gpu;
 mod image_pool;
 mod mesh;
+mod pipeline_cache;
 mod resource_cache;
 mod scene;
 
@@ -25,6 +26,7 @@ use std::io;
 pub use const_buffer::*;
 pub use image_pool::*;
 pub use mesh::*;
+pub use pipeline_cache::*;
 pub use resource_cache::*;
 pub use scene::*;
 

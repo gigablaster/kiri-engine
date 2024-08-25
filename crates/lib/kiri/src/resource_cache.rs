@@ -275,7 +275,7 @@ fn do_load_scene(
     Ok(())
 }
 
-fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
+pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
     source: &T,
 ) -> Result<U, Error> {
     // First, attempt to load compiled asset

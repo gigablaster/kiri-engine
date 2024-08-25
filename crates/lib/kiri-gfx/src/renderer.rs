@@ -28,8 +28,8 @@ use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetCount,
     DescriptorSetDesc, DescriptorSetLayoutDesc, DescriptorSetType, Frame, GpuAllocator, Image,
     ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
-    RenderAttachmentLayoutDesc, RenderDevice, SpecializationValue, Swapchain,
-    MAX_BINDLESS_RESOURCES, MAX_COLOR_ATTACHMENTS,
+    RenderAttachmentLayoutDesc, RenderDevice, Swapchain, MAX_BINDLESS_RESOURCES,
+    MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use lazy_static::lazy_static;
@@ -127,7 +127,7 @@ struct PipelineCompilationData {
     program: Arc<Program>,
     layout: RenderAttachmentLayoutDesc<'static>,
     streams: &'static [InputVertexStreamLayout<'static>],
-    specializaton: Vec<(u32, SpecializationValue)>,
+    specializaton: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
 }
 
@@ -285,7 +285,7 @@ impl Renderer {
         program: &Arc<Program>,
         layout: RenderAttachmentLayoutDesc<'static>,
         streams: &'static [InputVertexStreamLayout<'static>],
-        specialization: &[(u32, SpecializationValue)],
+        specialization: &[(u32, u32)],
         desc: RasterPipelineCreateDesc,
     ) -> PipelineHandle {
         let handle = self
