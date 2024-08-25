@@ -13,12 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{any::type_name, marker::PhantomData, mem, sync::Arc};
+use std::{mem, sync::Arc};
 
 use kiri_backend::{BufferCreateDesc, GpuAllocator};
-use kiri_common::BlockAllocator;
+use kiri_common::BumpAllocator;
 use kiri_gfx::{BufferHandle, BufferPointer, BufferSlice, Renderer};
-use parking_lot::Mutex;
 
 use crate::Error;
 
@@ -26,64 +25,52 @@ use crate::Error;
 ///
 /// Allocate uniforms of single type.
 #[derive(Debug)]
-pub struct ConstUniforms<T: Copy> {
+pub struct ConstUniformBuffer {
     renderer: Arc<Renderer>,
     pub buffer: BufferHandle,
-    allocator: Mutex<BlockAllocator>,
-    _phantom: PhantomData<T>,
+    allocator: BumpAllocator,
 }
 
-impl<T: Copy> Drop for ConstUniforms<T> {
+impl Drop for ConstUniformBuffer {
     fn drop(&mut self) {
         self.renderer.destroy_buffer(self.buffer);
     }
 }
 
-impl<T: Copy> ConstUniforms<T> {
+impl ConstUniformBuffer {
     pub fn new(
         renderer: &Arc<Renderer>,
         allocator: &GpuAllocator,
-        count: u64,
+        size: u64,
     ) -> Result<Self, Error> {
-        let block_size = mem::size_of::<T>().max(
-            renderer
-                .device
-                .physical_device
-                .properties
-                .limits
-                .min_uniform_buffer_offset_alignment as _,
-        ) as u64;
         let buffer = renderer.create_buffer(
-            BufferCreateDesc::gpu(block_size * count)
+            BufferCreateDesc::gpu(size)
                 .uniform_buffer()
                 .transfer_destination()
-                .allocator(allocator)
-                .name(&format!("{:?} uniforms", type_name::<T>())),
+                .allocator(allocator),
         )?;
         Ok(Self {
             renderer: renderer.clone(),
             buffer,
-            allocator: Mutex::new(BlockAllocator::new(block_size as _, count as _)),
-            _phantom: PhantomData,
+            allocator: BumpAllocator::new(size),
         })
     }
 
-    pub fn push(&self, data: T) -> Result<BufferSlice, Error> {
+    pub fn push<T: Copy>(&self, data: T) -> Result<BufferSlice, Error> {
+        let aligment = self
+            .renderer
+            .device
+            .physical_device
+            .properties
+            .limits
+            .min_uniform_buffer_offset_alignment;
+        let size = mem::size_of::<T>() as u64;
         let offset = self
             .allocator
-            .lock()
-            .allocate()
+            .allocate(size, aligment)
             .ok_or(Error::TooManyUniforms)?;
         self.renderer
             .upload_buffer(BufferPointer::new(self.buffer, offset), &[data])?;
-        Ok(BufferSlice::new(
-            self.buffer,
-            offset,
-            mem::size_of::<T>() as _,
-        ))
-    }
-
-    pub fn free(&self, buffer: BufferSlice) {
-        self.allocator.lock().dealloc(buffer.offset);
+        Ok(BufferSlice::new(self.buffer, offset, size))
     }
 }

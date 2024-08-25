@@ -31,7 +31,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
     gpu::{GpuMeshMaterial, GpuStaticVertex},
-    Bounds, ConstUniforms, Error, RenderMaterialDesc, RenderMeshSurface, RenderScene,
+    Bounds, ConstUniformBuffer, Error, RenderMaterialDesc, RenderMeshSurface, RenderScene,
     StaticRenderMesh,
 };
 
@@ -370,8 +370,9 @@ fn do_load_image(
     Ok(())
 }
 
-const MAX_MATERIALS_COUNT: u64 = 8192;
+const MATERIAL_BUFFER_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_RESOURCES: usize = 0xffff;
+
 #[derive(Debug)]
 pub struct ResourceCache {
     renderer: Arc<Renderer>,
@@ -381,7 +382,7 @@ pub struct ResourceCache {
     scene_assets: RwLock<ScenePool>,
     meshes: RwLock<HashMap<String, StaticMeshHandle>>,
     meshe_assets: RwLock<StaticMeshPool>,
-    material_uniforms: ConstUniforms<GpuMeshMaterial>,
+    material_uniforms: ConstUniformBuffer,
     materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
     dummy_image: ImageHandle,
     allocatpr: GpuAllocator,
@@ -396,7 +397,7 @@ impl ResourceCache {
             loading_tasks: Default::default(),
             images: Default::default(),
             materials: Default::default(),
-            material_uniforms: ConstUniforms::new(renderer, &allocator, MAX_MATERIALS_COUNT)?,
+            material_uniforms: ConstUniformBuffer::new(renderer, &allocator, MATERIAL_BUFFER_SIZE)?,
             dummy_image: renderer.create_image(
                 &allocator,
                 ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy image"),
