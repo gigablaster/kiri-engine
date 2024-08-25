@@ -73,8 +73,8 @@ pub trait MeshResolver {
 }
 
 #[derive(Debug)]
-pub struct CullResult {
-    pub static_meshes: Vec<(Affine3A, StaticMeshHandle)>,
+pub struct CullResult<'a> {
+    pub static_meshes: Vec<(Affine3A, &'a StaticRenderMesh)>,
 }
 
 impl Default for Scene {
@@ -209,7 +209,11 @@ impl Scene {
         self.recalculate_transforms = false;
     }
 
-    pub fn cull<T: SceneCuller, U: MeshResolver>(&self, culler: T, resolver: &U) -> CullResult {
+    pub fn cull<'a, T: SceneCuller, U: MeshResolver>(
+        &'a self,
+        culler: T,
+        resolver: &'a U,
+    ) -> CullResult<'a> {
         assert!(
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
             "Scene must be updated before culling"
@@ -222,7 +226,9 @@ impl Scene {
                 NodeData::StaticMesh(handle) => {
                     let transform = self.world_transforms[index];
                     if culler.cull(self.bounds[index].transform(transform)) {
-                        static_meshes.push((transform, *handle));
+                        if let Some(mesh) = resolver.resolve_static_mesh(*handle) {
+                            static_meshes.push((transform, mesh));
+                        }
                     }
                 }
                 NodeData::Scene(handle) => {
@@ -238,8 +244,11 @@ impl Scene {
                                 if culler
                                     .cull(scene.bounds[mesh_index as usize].transform(tranform))
                                 {
-                                    static_meshes
-                                        .push((tranform, scene.mesh_handles[mesh_index as usize]));
+                                    if let Some(mesh) = resolver.resolve_static_mesh(
+                                        scene.mesh_handles[mesh_index as usize],
+                                    ) {
+                                        static_meshes.push((tranform, mesh));
+                                    }
                                 }
                             });
                     }
