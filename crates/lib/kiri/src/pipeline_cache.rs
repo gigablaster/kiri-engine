@@ -17,10 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use kiri_assets::{ShaderAssetSource, ShaderType};
-use kiri_backend::{
-    InputVertexStreamLayout, PipelineVertex, Program, RasterPipelineCreateDesc, ShaderDesc,
-};
-use kiri_gfx::{PipelineHandle, Renderer};
+use kiri_backend::{InputVertexStreamLayout, PipelineVertex, RasterPipelineCreateDesc, ShaderDesc};
+use kiri_gfx::{PipelineHandle, ProgramHandle, RenderPassHandle, Renderer};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{load_or_compile_asset, Error};
@@ -29,7 +27,8 @@ use crate::{load_or_compile_asset, Error};
 pub struct RasterPipelineDesc {
     pub vertex_shader: String,
     pub fragment_shader: String,
-    pub pass_layout: RenderAttachmentLayoutDesc<'static>,
+    pub render_pass: RenderPassHandle,
+    pub subpass: u32,
     pub input_layout: &'static [InputVertexStreamLayout<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
@@ -39,12 +38,14 @@ impl RasterPipelineDesc {
     pub fn new<T: PipelineVertex>(
         vertex_shader: &str,
         fragment_shader: &str,
-        pass_layout: RenderAttachmentLayoutDesc<'static>,
+        render_pass: RenderPassHandle,
+        subpass: u32,
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
             fragment_shader: fragment_shader.into(),
-            pass_layout,
+            render_pass,
+            subpass,
             input_layout: T::layout(),
             specialization: Default::default(),
             desc: Default::default(),
@@ -68,7 +69,7 @@ struct ProgramKey(String, String);
 pub struct PipelineCache {
     renderer: Arc<Renderer>,
     shaders: Mutex<HashMap<(String, ShaderType), Bytes>>,
-    programs: Mutex<HashMap<ProgramKey, Arc<Program>>>,
+    programs: Mutex<HashMap<ProgramKey, ProgramHandle>>,
     raster_pipelines: RwLock<HashMap<RasterPipelineDesc, PipelineHandle>>,
 }
 
@@ -99,7 +100,7 @@ impl PipelineCache {
         &self,
         vertex_shader: &str,
         fragment_shader: &str,
-    ) -> Result<Arc<Program>, Error> {
+    ) -> Result<ProgramHandle, Error> {
         let mut programs = self.programs.lock();
         let key = ProgramKey(vertex_shader.into(), fragment_shader.into());
         if let Some(program) = programs.get(&key) {
@@ -107,14 +108,11 @@ impl PipelineCache {
         } else {
             let vertex_shader = self.get_or_load_shader(vertex_shader, ShaderType::Vertex)?;
             let fragment_shader = self.get_or_load_shader(fragment_shader, ShaderType::Fragment)?;
-            let program = Arc::new(Program::new(
-                &self.renderer.device,
-                &[
-                    ShaderDesc::vertex(&vertex_shader),
-                    ShaderDesc::fragment(&fragment_shader),
-                ],
-            )?);
-            programs.insert(key, program.clone());
+            let program = self.renderer.create_program(&[
+                ShaderDesc::vertex(&vertex_shader),
+                ShaderDesc::fragment(&fragment_shader),
+            ])?;
+            programs.insert(key, program);
             Ok(program)
         }
     }
@@ -134,8 +132,9 @@ impl PipelineCache {
                 let program =
                     self.get_or_load_program(&desc.vertex_shader, &desc.fragment_shader)?;
                 let pipeline = self.renderer.create_pipeline(
-                    &program,
-                    desc.pass_layout,
+                    program,
+                    desc.render_pass,
+                    desc.subpass,
                     desc.input_layout,
                     &desc.specialization,
                     desc.desc,
