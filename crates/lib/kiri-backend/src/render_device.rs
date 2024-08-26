@@ -31,7 +31,6 @@ use super::{
 };
 
 const MAX_SUBMITS: usize = 32;
-const MEMORY_PAGE_SIZE: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {

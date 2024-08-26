@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{drop_list, GpuAllocator, GpuMemoryBlock, RenderDevice};
+use crate::{GpuMemoryBlock, RenderDevice};
 
 use super::{DropList, Error};
 
