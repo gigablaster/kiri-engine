@@ -18,8 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use bytes::Bytes;
 use kiri_assets::{ShaderAssetSource, ShaderType};
 use kiri_backend::{
-    InputVertexStreamLayout, PipelineVertex, Program, RasterPipelineCreateDesc,
-    RenderAttachmentLayoutDesc, ShaderDesc,
+    InputVertexStreamLayout, PipelineVertex, Program, RasterPipelineCreateDesc, ShaderDesc,
 };
 use kiri_gfx::{PipelineHandle, Renderer};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
