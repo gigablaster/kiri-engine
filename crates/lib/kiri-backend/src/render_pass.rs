@@ -16,7 +16,7 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use arrayvec::ArrayVec;
-use ash::vk;
+use ash::vk::{self};
 use parking_lot::Mutex;
 use std::cmp::Ord;
 
@@ -24,6 +24,7 @@ use crate::{Error, Image, ImageViewDesc, RenderDevice};
 
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+pub const MAX_SUBPASSES: usize = 16;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RenderTargetClearValue {
@@ -50,7 +51,7 @@ pub struct RenderTargetDesc {
     pub load: vk::AttachmentLoadOp,
     pub store: vk::AttachmentStoreOp,
     pub samples: vk::SampleCountFlags,
-    pub inital_layout: Option<vk::ImageLayout>,
+    pub initial_layout: Option<vk::ImageLayout>,
     pub final_layout: Option<vk::ImageLayout>,
 }
 
@@ -76,7 +77,7 @@ impl RenderTargetDesc {
             load: vk::AttachmentLoadOp::DONT_CARE,
             store: vk::AttachmentStoreOp::STORE,
             samples: vk::SampleCountFlags::TYPE_1,
-            inital_layout: None,
+            initial_layout: None,
             final_layout: None,
         }
     }
@@ -102,7 +103,7 @@ impl RenderTargetDesc {
     }
 
     pub fn initial_layout(mut self, layout: vk::ImageLayout) -> Self {
-        self.inital_layout = Some(layout);
+        self.initial_layout = Some(layout);
         self
     }
 
@@ -112,7 +113,7 @@ impl RenderTargetDesc {
         final_layout: vk::ImageLayout,
     ) -> vk::AttachmentDescription {
         vk::AttachmentDescription::default()
-            .initial_layout(self.inital_layout.unwrap_or(initial_layout))
+            .initial_layout(self.initial_layout.unwrap_or(initial_layout))
             .final_layout(self.final_layout.unwrap_or(final_layout))
             .format(self.format)
             .load_op(self.load)
@@ -122,7 +123,7 @@ impl RenderTargetDesc {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct FramebufferDesc {
+struct FboDesc {
     pub dims: [u32; 2],
     pub attachments: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
 }
@@ -133,7 +134,7 @@ pub struct RenderTarget<'a> {
     pub aspect: vk::ImageAspectFlags,
 }
 
-impl FramebufferDesc {
+impl FboDesc {
     pub fn new(attachments: &[RenderTarget]) -> Result<Self, Error> {
         let dims = attachments
             .iter()
@@ -159,13 +160,93 @@ impl FramebufferDesc {
 pub struct RenderPass {
     device: Arc<RenderDevice>,
     pub raw: vk::RenderPass,
-    framebuffers: Mutex<HashMap<FramebufferDesc, vk::Framebuffer>>,
+    fbos: Mutex<HashMap<FboDesc, vk::Framebuffer>>,
 }
 
 impl RenderPass {
-    pub fn framebuffer(&self, attachments: &[RenderTarget]) -> Result<vk::Framebuffer, Error> {
-        let mut cache = self.framebuffers.lock();
-        let key = FramebufferDesc::new(attachments)?;
+    pub fn new(device: &Arc<RenderDevice>, layout: RenderPassLayout) -> Result<Self, Error> {
+        let attachments = layout
+            .color
+            .iter()
+            .map(|x| {
+                x.build(
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                )
+            })
+            .chain(layout.depth.iter().map(|x| {
+                x.build(
+                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                )
+            }))
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        assert!(!attachments.is_empty(), "Need at least one attachment");
+        let depth_index = attachments.len() - 1;
+        let mut color_attachments_per_subpass = ArrayVec::<_, MAX_SUBPASSES>::new();
+        let mut depth_attachments_per_subpass = ArrayVec::<_, MAX_SUBPASSES>::new();
+        for subpass in layout.subpasses.iter() {
+            let mut color_references = subpass
+                .color_reads
+                .iter()
+                .chain(subpass.color_writes)
+                .copied()
+                .collect::<Vec<_>>();
+            color_references.sort();
+            color_references.dedup();
+            let color_references = color_references
+                .into_iter()
+                .map(|x| {
+                    vk::AttachmentReference::default()
+                        .attachment(x as _)
+                        .layout(attachments[x].initial_layout)
+                })
+                .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+            if subpass.depth_read || subpass.depth_write {
+                assert!(
+                    layout.depth.is_some(),
+                    "Subpass wants to access depth attachment, but there's no depth attachment."
+                );
+                depth_attachments_per_subpass.push(Some(
+                    vk::AttachmentReference::default()
+                        .attachment(depth_index as _)
+                        .layout(attachments[depth_index].initial_layout),
+                ));
+            } else {
+                depth_attachments_per_subpass.push(None);
+            }
+            color_attachments_per_subpass.push(color_references);
+        }
+        let subpasses = layout
+            .subpasses
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let mut subpass = vk::SubpassDescription::default()
+                    .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                    .color_attachments(&color_attachments_per_subpass[index]);
+                if let Some(depth) = &depth_attachments_per_subpass[index] {
+                    subpass = subpass.depth_stencil_attachment(depth);
+                }
+                subpass
+            })
+            .collect::<ArrayVec<_, MAX_SUBPASSES>>();
+        let dependencies = build_dependencies(layout);
+        let create_info = vk::RenderPassCreateInfo::default()
+            .attachments(&attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
+        let raw = unsafe { device.raw.create_render_pass(&create_info, None) }?;
+        Ok(Self {
+            device: device.clone(),
+            raw,
+            fbos: Default::default(),
+        })
+    }
+
+    pub fn fbo(&self, attachments: &[RenderTarget]) -> Result<vk::Framebuffer, Error> {
+        let mut cache = self.fbos.lock();
+        let key = FboDesc::new(attachments)?;
         if let Some(fbo) = cache.get(&key) {
             Ok(*fbo)
         } else {
@@ -182,8 +263,8 @@ impl RenderPass {
         }
     }
 
-    pub fn clear_framebuffers(&self) {
-        let mut cache = self.framebuffers.lock();
+    pub fn clear_fbos(&self) {
+        let mut cache = self.fbos.lock();
         for (_, fbo) in cache.iter() {
             unsafe { self.device.raw.destroy_framebuffer(*fbo, None) }
         }
@@ -193,7 +274,7 @@ impl RenderPass {
 
 impl Drop for RenderPass {
     fn drop(&mut self) {
-        self.clear_framebuffers();
+        self.clear_fbos();
         unsafe { self.device.raw.destroy_render_pass(self.raw, None) }
     }
 }
@@ -201,14 +282,18 @@ impl Drop for RenderPass {
 #[derive(Debug, Clone, Copy)]
 struct ResourceState {
     pub last_read: u32,
-    pub last_written: u32,
+    pub last_write: u32,
+    pub load: bool,
+    pub store: bool,
 }
 
-impl Default for ResourceState {
-    fn default() -> Self {
+impl ResourceState {
+    pub fn new(target: &RenderTargetDesc) -> Self {
         Self {
             last_read: vk::SUBPASS_EXTERNAL,
-            last_written: vk::SUBPASS_EXTERNAL,
+            last_write: vk::SUBPASS_EXTERNAL,
+            load: target.load == vk::AttachmentLoadOp::LOAD,
+            store: target.store == vk::AttachmentStoreOp::STORE,
         }
     }
 }
@@ -258,8 +343,8 @@ fn merge_subpasses(subpasses: Vec<vk::SubpassDependency>) -> Vec<vk::SubpassDepe
                 let next = subpasses.remove(0);
                 subpass.src_access_mask |= next.src_access_mask;
                 subpass.dst_access_mask |= next.dst_access_mask;
-                subpass.src_stage_mask |= next.src_stage_mask;
-                subpass.dst_stage_mask |= next.dst_stage_mask;
+                subpass.src_stage_mask = subpass.src_stage_mask.max(next.src_stage_mask);
+                subpass.dst_stage_mask = subpass.dst_stage_mask.max(next.dst_stage_mask);
             } else {
                 index += 1;
             }
@@ -270,91 +355,140 @@ fn merge_subpasses(subpasses: Vec<vk::SubpassDependency>) -> Vec<vk::SubpassDepe
     result
 }
 
-fn build_subpasses(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
+fn build_dependencies(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
     // For every pass track state of every resource and add dependencies if needed
     let mut state = layout
         .color
         .iter()
-        .map(|x| ResourceState::default())
-        .chain(layout.depth.iter().map(|x| ResourceState::default()))
+        .map(|x| ResourceState::new(x))
+        .chain(layout.depth.iter().map(|x| ResourceState::new(x)))
         .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-    let depth_index = layout.depth.map(|_| state.len() - 1);
-    let mut subpasses = Vec::new();
+    let depth_index = state.len() - 1;
+    let mut dependencies = Vec::new();
+    // Add external dependencies at first subpass
+    for index in 0..state.len() {
+        if state[index].load {
+            dependencies.push(vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
+                dependency_flags: vk::DependencyFlags::BY_REGION,
+            });
+            state[index].last_read = 0;
+        }
+        if state[index].store {
+            dependencies.push(vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dependency_flags: vk::DependencyFlags::BY_REGION,
+            });
+            state[index].last_write = 0;
+        }
+    }
+    if let Some(depth) = layout.depth {
+        if state[depth_index].load {
+            dependencies.push(vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+                dependency_flags: vk::DependencyFlags::BY_REGION,
+            });
+            state[depth_index].last_read = 0;
+        }
+        if state[depth_index].store {
+            dependencies.push(vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dependency_flags: vk::DependencyFlags::BY_REGION,
+            });
+            state[depth_index].last_write = 0;
+        }
+    }
     for index in 0..layout.subpasses.len() {
         let subpass = layout.subpasses[index];
         // For all resources we read from - check last stage we wrote into them and add write-read dependency
         let index = index as u32;
         for read in subpass.color_reads.iter().copied() {
             let last_state = state[read];
-            if last_state.last_written != index {
-                subpasses.push(vk::SubpassDependency {
-                    src_subpass: last_state.last_written,
+            if last_state.last_write != index {
+                dependencies.push(vk::SubpassDependency {
+                    src_subpass: last_state.last_write,
                     dst_subpass: index,
                     src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
                     src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
                     dependency_flags: vk::DependencyFlags::BY_REGION,
-                })
+                });
+                state[read].last_read = index;
             }
-            state[read].last_read = index;
         }
-        if subpass.depth_read {
-            if let Some(depth_index) = depth_index {
-                let last_state = state[depth_index];
-                if last_state.last_written != index {
-                    subpasses.push(vk::SubpassDependency {
-                        src_subpass: last_state.last_written,
-                        dst_subpass: index,
-                        src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                        dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-                        src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
-                        dependency_flags: vk::DependencyFlags::BY_REGION,
-                    });
-                    state[depth_index].last_read = index;
-                }
+        if subpass.depth_read && layout.depth.is_some() {
+            let last_state = state[depth_index];
+            if last_state.last_write != index {
+                dependencies.push(vk::SubpassDependency {
+                    src_subpass: last_state.last_write,
+                    dst_subpass: index,
+                    src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+                    dependency_flags: vk::DependencyFlags::BY_REGION,
+                });
+                state[depth_index].last_read = index;
             }
         }
 
         // For all resources we write into - check last stage we wrote into them and add write-write dependency
         for write in subpass.color_writes.iter().copied() {
             let last_state = state[write];
-            if last_state.last_written != index {
-                subpasses.push(vk::SubpassDependency {
-                    src_subpass: last_state.last_written,
+            if last_state.last_write != index {
+                dependencies.push(vk::SubpassDependency {
+                    src_subpass: last_state.last_write,
                     dst_subpass: index,
                     src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                     dependency_flags: vk::DependencyFlags::BY_REGION,
-                })
+                });
+                state[write].last_write = index;
             }
-            state[write].last_written = index;
         }
-        if subpass.depth_write {
-            if let Some(depth_index) = depth_index {
-                let last_state = state[depth_index];
-                if last_state.last_written != index {
-                    subpasses.push(vk::SubpassDependency {
-                        src_subpass: last_state.last_written,
-                        dst_subpass: index,
-                        src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                        dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-                        src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        dependency_flags: vk::DependencyFlags::BY_REGION,
-                    });
-                    state[depth_index].last_written = index;
-                }
+        if subpass.depth_write && layout.depth.is_some() {
+            let last_state = state[depth_index];
+            if last_state.last_write != index {
+                dependencies.push(vk::SubpassDependency {
+                    src_subpass: last_state.last_write,
+                    dst_subpass: index,
+                    src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dependency_flags: vk::DependencyFlags::BY_REGION,
+                });
+                state[depth_index].last_write = index;
             }
         }
         // For all resources we write into - check last stage we read from them and add read-write dependenct
         for write in subpass.color_writes.iter().copied() {
             let last_state = state[write];
             if last_state.last_read != index {
-                subpasses.push(vk::SubpassDependency {
+                dependencies.push(vk::SubpassDependency {
                     src_subpass: last_state.last_read,
                     dst_subpass: index,
                     src_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -363,24 +497,22 @@ fn build_subpasses(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
                     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                     dependency_flags: vk::DependencyFlags::BY_REGION,
                 });
-                state[write].last_written = index;
+                state[write].last_write = index;
             }
         }
-        if subpass.depth_write {
-            if let Some(depth_index) = depth_index {
-                let last_state = state[depth_index];
-                if last_state.last_read != index {
-                    subpasses.push(vk::SubpassDependency {
-                        src_subpass: last_state.last_written,
-                        dst_subpass: index,
-                        src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                        dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-                        src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
-                        dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                        dependency_flags: vk::DependencyFlags::BY_REGION,
-                    });
-                    state[depth_index].last_written = index;
-                }
+        if subpass.depth_write && layout.depth.is_some() {
+            let last_state = state[depth_index];
+            if last_state.last_read != index {
+                dependencies.push(vk::SubpassDependency {
+                    src_subpass: last_state.last_write,
+                    dst_subpass: index,
+                    src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+                    dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dependency_flags: vk::DependencyFlags::BY_REGION,
+                });
+                state[depth_index].last_write = index;
             }
         }
         // For all resources we read from - check last stage we read from them and just remember that
@@ -390,20 +522,18 @@ fn build_subpasses(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
                 state[read].last_read = index;
             }
         }
-        if subpass.depth_read {
-            if let Some(depth_index) = depth_index {
-                let last_state = state[depth_index];
-                if last_state.last_read != index {
-                    state[depth_index].last_read = index;
-                }
+        if subpass.depth_read && layout.depth.is_some() {
+            let last_state = state[depth_index];
+            if last_state.last_read != index {
+                state[depth_index].last_read = index;
             }
         }
     }
     // For all targets that aren't discarded we add write->read dependecny to external pass
     for (index, target) in layout.color.iter().enumerate() {
         if target.store == vk::AttachmentStoreOp::STORE {
-            let last_write = state[index].last_written;
-            subpasses.push(vk::SubpassDependency {
+            let last_write = state[index].last_write;
+            dependencies.push(vk::SubpassDependency {
                 src_subpass: last_write,
                 dst_subpass: vk::SUBPASS_EXTERNAL,
                 src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
@@ -416,8 +546,8 @@ fn build_subpasses(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
     }
     if let Some(depth) = layout.depth {
         if depth.store == vk::AttachmentStoreOp::STORE {
-            let last_write = state[state.len() - 1].last_written;
-            subpasses.push(vk::SubpassDependency {
+            let last_write = state[depth_index].last_write;
+            dependencies.push(vk::SubpassDependency {
                 src_subpass: last_write,
                 dst_subpass: vk::SUBPASS_EXTERNAL,
                 src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
@@ -428,5 +558,5 @@ fn build_subpasses(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
             })
         }
     }
-    merge_subpasses(subpasses)
+    merge_subpasses(dependencies)
 }
