@@ -38,16 +38,11 @@ impl Drop for ConstUniformBuffer {
 }
 
 impl ConstUniformBuffer {
-    pub fn new(
-        renderer: &Arc<Renderer>,
-        allocator: &GpuAllocator,
-        size: u64,
-    ) -> Result<Self, Error> {
+    pub fn new(renderer: &Arc<Renderer>, size: u64) -> Result<Self, Error> {
         let buffer = renderer.create_buffer(
             BufferCreateDesc::gpu(size)
                 .uniform_buffer()
-                .transfer_destination()
-                .allocator(allocator),
+                .transfer_destination(),
         )?;
         Ok(Self {
             renderer: renderer.clone(),

@@ -27,8 +27,8 @@ use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
     DescriptorSetLayoutDesc, Frame, GpuAllocator, Image, ImageCreateDesc, ImageViewDesc,
-    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderAttachmentLayoutDesc,
-    RenderDevice, Swapchain, MAX_COLOR_ATTACHMENTS,
+    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderDevice, RenderPass,
+    Swapchain, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
 use parking_lot::{Mutex, RwLock};
@@ -42,6 +42,7 @@ pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+pub type RenderPassHandle = Handle<RenderPass>;
 
 pub(super) type ImagePool = Pool<Image>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
@@ -50,6 +51,7 @@ pub(super) type PipelinePool = Pool<
     SentinelPoolStrategy<(vk::Pipeline, vk::PipelineLayout)>,
 >;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+pub(super) type RenderPassPool = Pool<RenderPass>;
 
 pub enum FrameState {
     Rendered,
@@ -113,7 +115,8 @@ impl From<BufferSlice> for BufferPointer {
 #[derive(Debug)]
 struct PipelineCompilationData {
     program: Arc<Program>,
-    layout: RenderAttachmentLayoutDesc<'static>,
+    render_pass: Arc<RenderPass>,
+    subpass: u32,
     streams: &'static [InputVertexStreamLayout<'static>],
     specializaton: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
@@ -157,11 +160,10 @@ impl Renderer {
 
     pub fn create_image(
         &self,
-        allocator: &GpuAllocator,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
     ) -> Result<ImageHandle, Error> {
-        let image = Image::new(&self.device, allocator, desc)?;
+        let image = Image::new(&self.device, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(&image, data)?;
         }
@@ -176,11 +178,10 @@ impl Renderer {
     pub fn update_image(
         &self,
         handle: ImageHandle,
-        allocator: &GpuAllocator,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
     ) -> Result<(), Error> {
-        let image = Image::new(&self.device, allocator, desc)?;
+        let image = Image::new(&self.device, desc)?;
         if let Some(data) = data {
             self.staging.lock().upload_image(&image, data)?;
         }
@@ -241,7 +242,8 @@ impl Renderer {
     pub fn create_pipeline(
         &self,
         program: &Arc<Program>,
-        layout: RenderAttachmentLayoutDesc<'static>,
+        render_pass: &Arc<RenderPass>,
+        subpass: u32,
         streams: &'static [InputVertexStreamLayout<'static>],
         specialization: &[(u32, u32)],
         desc: RasterPipelineCreateDesc,
@@ -254,7 +256,8 @@ impl Renderer {
             handle,
             PipelineCompilationData {
                 program: program.clone(),
-                layout,
+                render_pass: render_pass.clone(),
+                subpass,
                 streams,
                 specializaton: specialization.to_vec(),
                 desc,
@@ -445,7 +448,8 @@ impl Renderer {
                     &device,
                     vk::PipelineCache::null(),
                     &data.program,
-                    data.layout,
+                    &data.render_pass,
+                    data.subpass,
                     data.streams,
                     &data.specializaton,
                     data.desc,

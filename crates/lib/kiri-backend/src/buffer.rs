@@ -16,8 +16,9 @@
 use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk;
+use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{Error, GpuAllocator, GpuMemoryPage, RenderDevice};
+use crate::{Error, GpuMemoryBlock, RenderDevice};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
@@ -34,16 +35,16 @@ pub struct Buffer {
     pub raw: vk::Buffer,
     pub desc: BufferDesc,
     pub mapping: Option<NonNull<u8>>,
-    dedicated: Option<GpuMemoryPage>,
+    memory: Option<GpuMemoryBlock>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferCreateDesc<'a> {
     pub size: u64,
     pub usage: vk::BufferUsageFlags,
-    pub memory_location: vk::MemoryPropertyFlags,
+    pub memory_usage: gpu_alloc::UsageFlags,
     pub name: Option<&'a str>,
-    pub allocator: Option<&'a GpuAllocator>,
+    pub dedicated: bool,
 }
 
 impl<'a> BufferCreateDesc<'a> {
@@ -51,9 +52,9 @@ impl<'a> BufferCreateDesc<'a> {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
-            memory_location: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            memory_usage: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             name: None,
-            allocator: None,
+            dedicated: false,
         }
     }
 
@@ -61,9 +62,19 @@ impl<'a> BufferCreateDesc<'a> {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
-            memory_location: vk::MemoryPropertyFlags::HOST_VISIBLE,
+            memory_usage: gpu_alloc::UsageFlags::HOST_ACCESS,
             name: None,
-            allocator: None,
+            dedicated: false,
+        }
+    }
+
+    pub fn upload(size: u64) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_usage: gpu_alloc::UsageFlags::HOST_ACCESS | gpu_alloc::UsageFlags::UPLOAD,
+            name: None,
+            dedicated: false,
         }
     }
 
@@ -71,11 +82,10 @@ impl<'a> BufferCreateDesc<'a> {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
-            memory_location: vk::MemoryPropertyFlags::DEVICE_LOCAL
-                | vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            memory_usage: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS
+                | gpu_alloc::UsageFlags::HOST_ACCESS,
             name: None,
-            allocator: None,
+            dedicated: false,
         }
     }
 
@@ -114,23 +124,18 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
-    pub fn device_address(mut self) -> Self {
-        self.usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-        self
-    }
-
     pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
         self.usage = usage;
         self
     }
 
-    pub fn allocator(mut self, value: &'a GpuAllocator) -> Self {
-        self.allocator = Some(value);
+    pub fn name(mut self, value: &'a str) -> Self {
+        self.name = Some(value);
         self
     }
 
-    pub fn name(mut self, value: &'a str) -> Self {
-        self.name = Some(value);
+    pub fn dedicated(mut self) -> Self {
+        self.dedicated = true;
         self
     }
 
@@ -144,11 +149,11 @@ impl<'a> BufferCreateDesc<'a> {
 impl Drop for Buffer {
     fn drop(&mut self) {
         self.device.with_drop_list(|drop_list| {
-            drop_list.drop_buffer(self.raw);
+            if let Some(memory) = self.memory.take() {
+                drop_list.drop_buffer(self.raw);
+                drop_list.drop_memory(memory);
+            }
         });
-        if let Some(memory) = self.dedicated.take() {
-            memory.free(&self.device.raw);
-        }
     }
 }
 
@@ -160,23 +165,15 @@ impl Buffer {
             device.set_object_name(buffer, name);
         }
 
-        let (memory, offset, page) = device.use_allocator_or_dedicated(
-            desc.allocator,
-            requirements,
-            desc.memory_location,
-        )?;
-        unsafe { device.raw.bind_buffer_memory(buffer, memory, offset) }?;
+        let mut memory = device.allocate(requirements, desc.memory_usage, desc.dedicated)?;
+        unsafe {
+            device
+                .raw
+                .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
+        }?;
 
-        let mapping = if desc
-            .memory_location
-            .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
-            && page.is_some()
-        {
-            NonNull::new(unsafe {
-                device
-                    .raw
-                    .map_memory(memory, 0, desc.size as _, vk::MemoryMapFlags::empty())
-            }? as *mut u8)
+        let mapping = if desc.memory_usage.contains(gpu_alloc::UsageFlags::UPLOAD) {
+            Some(unsafe { memory.map(AshMemoryDevice::wrap(&device.raw), 0, desc.size as _) }?)
         } else {
             None
         };
@@ -187,8 +184,8 @@ impl Buffer {
                 size: desc.size,
                 usage: desc.usage,
             },
-            dedicated: page,
             mapping,
+            memory: Some(memory),
         })
     }
 

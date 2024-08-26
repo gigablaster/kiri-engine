@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
-use kiri_backend::{GpuAllocator, ImageCreateDesc};
+use kiri_backend::ImageCreateDesc;
 use kiri_gfx::{ImageHandle, Renderer};
 use log::debug;
 use parking_lot::Mutex;
@@ -41,7 +41,6 @@ struct TempImageKey {
 #[derive(Debug)]
 pub struct ImagePool {
     renderer: Arc<Renderer>,
-    allocator: GpuAllocator,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
@@ -56,7 +55,6 @@ impl ImagePool {
     pub fn new(renderer: &Arc<Renderer>) -> Self {
         Self {
             renderer: renderer.clone(),
-            allocator: GpuAllocator::new(&renderer.device),
             images: Default::default(),
         }
     }
@@ -86,7 +84,6 @@ impl ImagePool {
                 dims, format, usage,
             );
             let image = self.renderer.create_image(
-                &self.allocator,
                 ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
@@ -105,7 +102,6 @@ impl ImagePool {
         images.drain().for_each(|(_, mut group)| {
             group.drain(..).for_each(|x| self.renderer.destroy_image(x))
         });
-        self.allocator.recycle();
     }
 
     fn recycle(&self, image: ImageHandle, key: TempImageKey) {

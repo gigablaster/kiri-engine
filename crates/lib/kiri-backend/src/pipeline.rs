@@ -26,24 +26,7 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Program, RenderDevice};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RenderAttachmentLayoutDesc<'a> {
-    pub color: &'a [vk::Format],
-    pub depth: Option<vk::Format>,
-}
-
-impl<'a> RenderAttachmentLayoutDesc<'a> {
-    fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
-        let mut info =
-            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(self.color);
-        if let Some(depth) = self.depth {
-            info = info.depth_attachment_format(depth);
-        }
-        info
-    }
-}
+use crate::{Error, Program, RenderDevice, RenderPass};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PipelineBlendDesc {
@@ -196,7 +179,8 @@ pub fn compile_raster_pipeline<'a>(
     device: &Arc<RenderDevice>,
     cache: vk::PipelineCache,
     program: &Arc<Program>,
-    layout: RenderAttachmentLayoutDesc<'a>,
+    render_pass: &Arc<RenderPass>,
+    subpass: u32,
     streams: &[InputVertexStreamLayout<'a>],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
@@ -320,8 +304,6 @@ pub fn compile_raster_pipeline<'a>(
         .attachments(slice::from_ref(&color_blend_attachment))
         .logic_op_enable(false);
 
-    let mut rendering_info = layout.build();
-
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&shader_create_info)
         .dynamic_state(&dynamic_state_create_info)
@@ -332,7 +314,8 @@ pub fn compile_raster_pipeline<'a>(
         .rasterization_state(&rasterizer_state)
         .depth_stencil_state(&depthstencil_state)
         .vertex_input_state(&vertex_input)
-        .push_next(&mut rendering_info);
+        .render_pass(render_pass.raw)
+        .subpass(subpass);
 
     let pipeline = unsafe {
         device

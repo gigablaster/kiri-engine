@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{GpuAllocator, RenderDevice};
+use crate::{drop_list, GpuAllocator, GpuMemoryBlock, RenderDevice};
 
 use super::{DropList, Error};
 
@@ -268,18 +268,21 @@ pub struct Image {
     device: Arc<RenderDevice>,
     pub raw: vk::Image,
     pub desc: ImageDesc,
-    external: bool,
+    memory: Option<GpuMemoryBlock>,
     views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 impl Drop for Image {
     fn drop(&mut self) {
-        self.device.with_drop_list(|drop_list| {
-            if !self.external {
+        if let Some(memory) = self.memory.take() {
+            self.device.with_drop_list(|drop_list| {
                 drop_list.drop_image(self.raw);
-            }
-            self.clear_views_impl(drop_list);
-        });
+                drop_list.drop_memory(memory);
+                self.clear_views_impl(drop_list);
+            });
+        } else {
+            self.clear_views();
+        }
     }
 }
 
@@ -305,7 +308,7 @@ impl Image {
             raw: image,
             desc,
             views: Default::default(),
-            external: true,
+            memory: None,
         }
     }
 
@@ -313,11 +316,7 @@ impl Image {
     ///
     /// Including memory allocation. All resources will be freed when instance
     /// is dropped.    
-    pub fn new(
-        device: &Arc<RenderDevice>,
-        allocator: &GpuAllocator,
-        desc: ImageCreateDesc,
-    ) -> Result<Self, Error> {
+    pub fn new(device: &Arc<RenderDevice>, desc: ImageCreateDesc) -> Result<Self, Error> {
         let image = unsafe { device.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             device.set_object_name(image, name);
@@ -326,9 +325,20 @@ impl Image {
         // Workaround - gpu_alloc returns wrong offset when size < aligment.
         requirements.size = requirements.size.max(requirements.alignment);
 
-        let (memory, offset) =
-            allocator.allocate(requirements, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        unsafe { device.raw.bind_image_memory(image, memory, offset) }?;
+        let mut memory_usage = gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS;
+        if desc.usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            || desc
+                .usage
+                .contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+        {
+            memory_usage |= gpu_alloc::UsageFlags::TRANSIENT;
+        }
+        let memory = device.allocate(requirements, memory_usage, false)?;
+        unsafe {
+            device
+                .raw
+                .bind_image_memory(image, *memory.memory(), memory.offset())
+        }?;
         Ok(Self {
             device: device.clone(),
             raw: image,
@@ -341,7 +351,7 @@ impl Image {
                 array_elements: desc.array_elements,
             },
             views: Default::default(),
-            external: false,
+            memory: Some(memory),
         })
     }
 

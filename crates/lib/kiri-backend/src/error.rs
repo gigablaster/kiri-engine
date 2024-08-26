@@ -44,6 +44,12 @@ pub enum Error {
     SamplerNotFound(SamplerDesc),
     #[error("Shader reflection error: {0}")]
     ShaderReflectionError(rspirv_reflect::ReflectError),
+    #[error("Wrong memory type")]
+    WrongMemoryType,
+    #[error("Memory mapping failed")]
+    MapFailed,
+    #[error("Memory is already mapped")]
+    AlreadyMapped,
 }
 
 impl From<vk::Result> for Error {
@@ -55,6 +61,29 @@ impl From<vk::Result> for Error {
             vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => Self::OutOfDeviceMemory,
             vk::Result::ERROR_TOO_MANY_OBJECTS => Self::TooManyObjects,
             _ => panic!("Unexpected error {:?}", value),
+        }
+    }
+}
+
+impl From<gpu_alloc::AllocationError> for Error {
+    fn from(value: gpu_alloc::AllocationError) -> Self {
+        match value {
+            gpu_alloc::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
+            gpu_alloc::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
+            gpu_alloc::AllocationError::NoCompatibleMemoryTypes => Error::NoSuitableMemoryType,
+            gpu_alloc::AllocationError::TooManyObjects => Error::TooManyObjects,
+        }
+    }
+}
+
+impl From<gpu_alloc::MapError> for Error {
+    fn from(value: gpu_alloc::MapError) -> Self {
+        match value {
+            gpu_alloc::MapError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
+            gpu_alloc::MapError::OutOfHostMemory => Error::OutOfHostMemory,
+            gpu_alloc::MapError::NonHostVisible => Error::WrongMemoryType,
+            gpu_alloc::MapError::MapFailed => Error::MapFailed,
+            gpu_alloc::MapError::AlreadyMapped => Error::AlreadyMapped,
         }
     }
 }

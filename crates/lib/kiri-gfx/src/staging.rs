@@ -74,9 +74,13 @@ impl Staging {
         }?;
         let staging = Buffer::new(
             device,
-            BufferCreateDesc::host(STAGING_SIZE).transfer_source(),
+            BufferCreateDesc::upload(STAGING_SIZE)
+                .transfer_source()
+                .dedicated(),
         )?;
-        let mapping = staging.mapping.unwrap();
+        let mapping = staging
+            .mapping
+            .expect("Staging memory must be perma-mapped");
 
         Ok(Self {
             device: device.clone(),

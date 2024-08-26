@@ -17,11 +17,12 @@ use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use gpu_alloc_ash::AshMemoryDevice;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
-    create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryPage, Image, Instance,
+    create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryBlock, Image, Instance,
 };
 
 use super::{
@@ -50,7 +51,7 @@ pub struct RenderDevice {
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
     layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
-    allocated_memory: Mutex<HashMap<u32, Vec<GpuMemoryPage>>>,
+    allocator: Mutex<GpuAllocator>,
 }
 
 impl Debug for RenderDevice {
@@ -130,10 +131,19 @@ impl RenderDevice {
 
         let samplers = Self::generate_samplers(&device);
 
+        let allocator_config = gpu_alloc::Config {
+            dedicated_threshold: 128 * 1024 * 1024,
+            preferred_dedicated_threshold: 64 * 1024 * 1024,
+            transient_dedicated_threshold: 128 * 1024 * 1024,
+            starting_free_list_chunk: 4 * 1024 * 1024,
+            final_free_list_chunk: 32 * 1024 * 1024,
+            minimal_buddy_size: 256 * 1024,
+            initial_buddy_dedicated_size: 256 * 1024 * 1024,
+        };
+
         Ok(Arc::new(Self {
             instance: instance.clone(),
             samplers,
-            physical_device: pdevice,
             universal_queue,
             frames: [
                 Mutex::new(Arc::new(Frame::new(&device)?)),
@@ -143,7 +153,14 @@ impl RenderDevice {
             raw: device,
             debug,
             layouts: Default::default(),
-            allocated_memory: Default::default(),
+            allocator: Mutex::new(GpuAllocator::new(allocator_config, unsafe {
+                gpu_alloc_ash::device_properties(
+                    &instance.raw,
+                    Instance::vulkan_version(),
+                    pdevice.raw,
+                )
+            }?)),
+            physical_device: pdevice,
         }))
     }
 
@@ -275,7 +292,7 @@ impl RenderDevice {
                     u64::MAX,
                 )?
             };
-            frame.reset(&self.raw)?;
+            frame.reset(&self.raw, &mut self.allocator.lock())?;
         }
         Ok(frame.clone())
     }
@@ -471,74 +488,31 @@ impl RenderDevice {
         }
     }
 
-    pub(super) fn get_suitable_memory_index(
+    pub(super) fn allocate(
         &self,
-        required_type_bits: u32,
-        flags: vk::MemoryPropertyFlags,
-    ) -> Option<u32> {
-        unsafe {
-            self.instance
-                .raw
-                .get_physical_device_memory_properties(self.physical_device.raw)
-                .memory_types_as_slice()
-                .iter()
-                .enumerate()
-                .find_map(|(index, data)| {
-                    let type_bits = 1 << index;
-                    let is_required_type = required_type_bits & type_bits != 0;
-                    let has_required_properties = data.property_flags & flags == flags;
-                    if is_required_type && has_required_properties {
-                        Some(index as u32)
-                    } else {
-                        None
-                    }
-                })
-        }
-    }
-
-    pub(super) fn get_memory_page(&self, index: u32) -> Result<GpuMemoryPage, Error> {
-        let mut pages = self.allocated_memory.lock();
-        let group = pages.entry(index).or_default();
-        if let Some(page) = group.pop() {
-            Ok(page)
+        requirement: vk::MemoryRequirements,
+        usage: gpu_alloc::UsageFlags,
+        dedicated: bool,
+    ) -> Result<GpuMemoryBlock, Error> {
+        let mut allocator = self.allocator.lock();
+        let request = gpu_alloc::Request {
+            size: requirement.size.max(requirement.alignment),
+            align_mask: requirement.alignment,
+            memory_types: requirement.memory_type_bits,
+            usage,
+        };
+        let block = if dedicated {
+            unsafe {
+                allocator.alloc_with_dedicated(
+                    AshMemoryDevice::wrap(&self.raw),
+                    request,
+                    gpu_alloc::Dedicated::Required,
+                )
+            }?
         } else {
-            self.allocate_page(index, MEMORY_PAGE_SIZE)
-        }
-    }
-
-    pub(super) fn release_memory_page(&self, page: GpuMemoryPage) {
-        // We only do it when there's state transition. So it's fine to stall
-        unsafe { self.raw.device_wait_idle() }.unwrap();
-        page.reset();
-        self.allocated_memory
-            .lock()
-            .entry(page.index)
-            .or_default()
-            .push(page);
-    }
-
-    pub(super) fn use_allocator_or_dedicated(
-        &self,
-        allocator: Option<&GpuAllocator>,
-        requirements: vk::MemoryRequirements,
-        memory_location: vk::MemoryPropertyFlags,
-    ) -> Result<(vk::DeviceMemory, vk::DeviceSize, Option<GpuMemoryPage>), Error> {
-        if let Some(allocator) = allocator {
-            let (memory, offset) = allocator.allocate(requirements, memory_location)?;
-
-            Ok((memory, offset, None))
-        } else {
-            let index = self
-                .get_suitable_memory_index(requirements.memory_type_bits, memory_location)
-                .ok_or(Error::NoSuitableMemoryType)?;
-            let page = self.allocate_page(index, requirements.size)?;
-            self.set_object_name(page.memory, format!("Memory page index {}", index));
-            Ok((page.memory, 0, Some(page)))
-        }
-    }
-
-    pub(super) fn allocate_page(&self, index: u32, size: u64) -> Result<GpuMemoryPage, Error> {
-        GpuMemoryPage::new(&self.raw, index, size)
+            unsafe { allocator.alloc(AshMemoryDevice::wrap(&self.raw), request) }?
+        };
+        Ok(block)
     }
 }
 
@@ -546,17 +520,18 @@ impl Drop for RenderDevice {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         let mut drop_list = self.current_drop_list.lock();
-        drop_list.purge(&self.raw);
+        let mut allocator = self.allocator.lock();
+        drop_list.purge(&self.raw, &mut allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
                 .expect("Nothing should hold a frame at point when we destroy rendering context")
-                .reset(&self.raw)
+                .reset(&self.raw, &mut allocator)
                 .unwrap();
         });
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
                 .expect("Nothing should hold frame at this point")
-                .free(&self.raw)
+                .free(&self.raw, &mut allocator);
         });
         self.samplers
             .drain()
@@ -564,11 +539,8 @@ impl Drop for RenderDevice {
         self.layouts.write().drain().for_each(|(_, layout)| unsafe {
             self.raw.destroy_descriptor_set_layout(layout, None)
         });
-        self.allocated_memory
-            .lock()
-            .drain()
-            .for_each(|(_, mut group)| group.drain(..).for_each(|page| page.free(&self.raw)));
         unsafe {
+            allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
             self.raw.destroy_device(None);
         }
     }

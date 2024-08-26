@@ -21,7 +21,7 @@ use kiri_assets::{
     load_asset, Asset, AssetSource, GltfSceneSource, ImageAssetSource, ImageAssetType, ImportAsset,
     ImportMode, MeshAssetMaterial,
 };
-use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, GpuAllocator, ImageCreateDesc};
+use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer};
 use kiri_vfs::{vfs_load, AssetReference};
@@ -224,15 +224,13 @@ fn do_load_scene(
         BufferCreateDesc::gpu((mem::size_of::<GpuStaticVertex>() * vertices.len()) as _)
             .veretex_buffer()
             .transfer_destination()
-            .name(&format!("{} - VB", reference))
-            .allocator(&manager.allocatpr),
+            .name(&format!("{} - VB", reference)),
     )?;
     let indices = manager.renderer.create_buffer(
         BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
             .index_buffer()
             .transfer_destination()
-            .name(&format!("{} - IB", reference))
-            .allocator(&manager.allocatpr),
+            .name(&format!("{} - IB", reference)),
     )?;
     let mut meshes = Vec::new();
     let mut bounds = Vec::new();
@@ -325,7 +323,6 @@ fn load_image_impl(
     source: ImageAssetSource,
 ) -> Result<ImageHandle, Error> {
     let handle = manager.renderer.create_image(
-        &manager.allocatpr,
         ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1]),
         Some(&[ImageUploadData {
             data: &[128, 128, 128, 255],
@@ -357,7 +354,6 @@ fn do_load_image(
         .collect::<Vec<_>>();
     manager.renderer.update_image(
         handle,
-        &manager.allocatpr,
         ImageCreateDesc::texture(asset.format, asset.dims)
             .mip_levels(asset.mips.len() as _)
             .name(&format!("{}", source.reference())),
@@ -385,21 +381,18 @@ pub struct ResourceCache {
     material_uniforms: ConstUniformBuffer,
     materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
     dummy_image: ImageHandle,
-    allocatpr: GpuAllocator,
 }
 
 impl ResourceCache {
     pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource manager");
-        let allocator = GpuAllocator::new(&renderer.device);
         Ok(Arc::new(Self {
             renderer: renderer.clone(),
             loading_tasks: Default::default(),
             images: Default::default(),
             materials: Default::default(),
-            material_uniforms: ConstUniformBuffer::new(renderer, &allocator, MATERIAL_BUFFER_SIZE)?,
+            material_uniforms: ConstUniformBuffer::new(renderer, MATERIAL_BUFFER_SIZE)?,
             dummy_image: renderer.create_image(
-                &allocator,
                 ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy image"),
                 Some(&[ImageUploadData {
                     data: &[127, 127, 127, 255],
@@ -409,7 +402,6 @@ impl ResourceCache {
             scene_assets: RwLock::new(ScenePool::new(MAX_RESOURCES)),
             meshe_assets: RwLock::new(StaticMeshPool::new(MAX_RESOURCES)),
             meshes: Default::default(),
-            allocatpr: allocator,
         }))
     }
 

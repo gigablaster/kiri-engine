@@ -24,7 +24,7 @@ use std::{
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::Error;
+use crate::{Error, GpuAllocator};
 
 use super::DropList;
 
@@ -142,8 +142,12 @@ impl Frame {
         }
     }
 
-    pub(super) fn reset(&mut self, device: &ash::Device) -> Result<(), Error> {
-        self.drop_list.purge(device);
+    pub(super) fn reset(
+        &mut self,
+        device: &ash::Device,
+        allocator: &mut GpuAllocator,
+    ) -> Result<(), Error> {
+        self.drop_list.purge(device, allocator);
         unsafe {
             device.reset_fences(&[self.present_fence, self.render_fence])?;
         }
@@ -156,13 +160,13 @@ impl Frame {
         Ok(())
     }
 
-    pub(super) fn free(&mut self, device: &ash::Device) {
+    pub(super) fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
         unsafe {
             device.destroy_fence(self.present_fence, None);
             device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.render_finished, None);
         }
-        self.drop_list.purge(device);
+        self.drop_list.purge(device, allocator);
         self.per_thread_pools
             .lock()
             .drain()
