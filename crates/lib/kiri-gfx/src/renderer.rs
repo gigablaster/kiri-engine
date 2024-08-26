@@ -15,27 +15,25 @@
 
 use core::slice;
 use std::{
-    collections::HashMap,
     mem::{self},
     ptr::NonNull,
     sync::Arc,
 };
 
-use arrayvec::ArrayVec;
 use ash::vk::{self};
-use bevy_tasks::{block_on, ComputeTaskPool};
+use bevy_tasks::ComputeTaskPool;
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
     DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
     Program, RasterPipelineCreateDesc, RenderDevice, RenderPass, RenderPassLayout, ShaderDesc,
-    Swapchain, MAX_COLOR_ATTACHMENTS,
+    Swapchain,
 };
-use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
+use kiri_common::{Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    record_barriers, DescriptorSetBuilder, DescriptorSetData, DrawStreamExecuteContext,
-    DynamicGpuMemoryPool, Error, ImageUploadData, RenderContext, Staging,
+    DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, ImageUploadData,
+    RenderContext, RenderResourceResolver, Staging,
 };
 
 pub type ImageHandle = Handle<Image>;
@@ -339,7 +337,7 @@ impl Renderer {
         drop(dynamic_memory);
 
         // Generate render streams
-        let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
+        let context = RenderContext::new(self, &dynamic, &self.descriptors, &target.image);
         let image = render(&context)?;
 
         // Prepare
@@ -352,7 +350,7 @@ impl Renderer {
         // Actual rendering
         let command_buffer =
             frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
-        let passes = context.passes.into_inner();
+        let (mut thrash_descriptors, passes) = context.consume();
         unsafe {
             self.device.raw.begin_command_buffer(
                 command_buffer,
@@ -369,57 +367,18 @@ impl Renderer {
             )?,
             DescriptorCount::default(),
         )?;
-        let mut descriptors_to_clean = Vec::new();
+        let render_passes = self.render_passes.read();
+        let resolver = RenderResourceResolver {
+            buffers: &buffers,
+            images: &images,
+            descriptors: &descriptors,
+            render_passes: &render_passes,
+            pipelines: &pipelines,
+            empty_descriptor_set,
+        };
         for pass in passes {
-            self.device.begin_label(command_buffer, &pass.name);
-            record_barriers(
-                &self.device.raw,
-                command_buffer,
-                &images,
-                &pass.image_barriers,
-            )?;
-            descriptors_to_clean.extend(&pass.descriptor_sets);
-            let color_attachments = pass
-                .color
-                .iter()
-                .map(|x| x.build(&images, vk::ImageAspectFlags::COLOR).unwrap())
-                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-            let area = vk::Rect2D::default().extent(
-                vk::Extent2D::default()
-                    .width(target.image.desc.dims[0])
-                    .height(target.image.desc.dims[1]),
-            );
-            let mut render_info = vk::RenderingInfo::default()
-                .render_area(area)
-                .color_attachments(&color_attachments)
-                .layer_count(1);
-            let depth = pass
-                .depth
-                .iter()
-                .map(|x| x.build(&images, vk::ImageAspectFlags::DEPTH).unwrap())
-                .next();
-            if let Some(depth) = &depth {
-                render_info = render_info.depth_attachment(depth);
-            }
-            unsafe {
-                self.device
-                    .raw
-                    .cmd_begin_rendering(command_buffer, &render_info);
-            }
-            let context = DrawStreamExecuteContext {
-                device: &self.device.raw,
-                pipelines: &pipelines,
-                descriptors: &descriptors,
-                buffers: &buffers,
-                empty: empty_descriptor_set,
-                render_area: area,
-            };
-            for stream in pass.streams {
-                stream.execute(&context, command_buffer)?;
-            }
-            unsafe {
-                self.device.raw.cmd_end_rendering(command_buffer);
-            }
+            self.device.begin_label(command_buffer, &pass.name());
+            pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
             self.device.end_labe(command_buffer);
         }
         unsafe {
@@ -439,7 +398,7 @@ impl Renderer {
         self.device
             .present(target, images.get(image).unwrap(), &frame)?;
         // Cleanup
-        descriptors_to_clean.drain(..).for_each(|x| {
+        thrash_descriptors.drain(..).for_each(|x| {
             descriptors.remove(x);
         });
         self.device.end_frame(frame);
@@ -461,7 +420,7 @@ impl Renderer {
             let (handle, data) = it?;
             pipelines.replace(handle, data);
         }
-        todo!()
+        Ok(())
     }
 
     async fn compile_pipeline<'a>(

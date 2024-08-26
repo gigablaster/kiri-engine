@@ -4,14 +4,15 @@ use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
 use kiri::{ImagePool, ResourceCache, ResourceLoader};
-use kiri_backend::RenderTargetClearValue;
-use kiri_gfx::{ImageBarrierType, ImageHandle, RenderContext, RenderTarget, Renderer};
+use kiri_backend::{ImageAttachmentDesc, RenderPassLayout, SubpassLayout};
+use kiri_gfx::{ImageHandle, RenderContext, RenderPassHandle, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
     cache: Arc<ResourceCache>,
     pool: ImagePool,
+    pass: RenderPassHandle,
 }
 
 #[derive(Debug)]
@@ -29,9 +30,20 @@ impl GameClient<LoopError> for Loop {
         let cache = ResourceCache::new(renderer)?;
         cache.get_or_load_scene("PBR/gun.gltf")?;
         cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
+        let layout = RenderPassLayout {
+            color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
+            depth: None,
+            subpasses: &[SubpassLayout {
+                depth_write: false,
+                depth_read: false,
+                color_writes: &[0],
+                color_reads: &[],
+            }],
+        };
         Ok(Self {
             cache,
             pool: ImagePool::new(renderer),
+            pass: renderer.create_render_pass(layout)?,
         })
     }
     fn title(&self) -> &str {
@@ -51,18 +63,14 @@ impl GameClient<LoopError> for Loop {
         let target = self.pool.get(
             vk::Format::A2R10G10B10_UNORM_PACK32,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-            context.backbuffer_dims,
+            context.backbuffer.desc.dims,
         )?;
-        let mut pass = context.create_render_pass(
+        let pass = context.create_rasterizer_pass(
             "main",
-            &[RenderTarget::color(target.handle)
-                .clear(RenderTargetClearValue::Color([0.1, 0.1, 0.9, 1.0]))],
+            self.pass,
+            &[RenderTarget::new(target.handle).clear_color([0.2, 0.2, 0.8, 1.0])],
             None,
-        );
-        pass.image_barrier(
-            target.handle,
-            ImageBarrierType::DiscardToWriteColor,
-            vk::ImageAspectFlags::COLOR,
+            None,
         );
         context.submit(pass.build());
         Ok(target.handle)

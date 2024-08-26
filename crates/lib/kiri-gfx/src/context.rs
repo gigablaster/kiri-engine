@@ -14,36 +14,28 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
-use ash::vk;
-use kiri_backend::{Image, ImageViewDesc, RenderTargetClearValue, MAX_COLOR_ATTACHMENTS};
+use ash::vk::{self, Rect2D};
+use kiri_backend::{Image, MAX_COLOR_ATTACHMENTS};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, DynamicWriter, Error, ImageBarrier, ImageBarrierType, ImageHandle, ImagePool,
-    Renderer,
+    DynamicGpuMemory, DynamicWriter, Error, PassDispatcher, RasterizerPassDispatcher,
+    RenderPassHandle, RenderTarget, Renderer,
 };
 
-#[derive(Clone, Copy)]
-pub struct RenderTarget {
-    pub image: ImageHandle,
-    pub layout: vk::ImageLayout,
-    pub load: vk::AttachmentLoadOp,
-    pub store: vk::AttachmentStoreOp,
-    pub clear: vk::ClearValue,
-}
-
-pub struct RenderPassBuilder<'a> {
+pub struct RasterizerPassBuilder<'a> {
     context: &'a RenderContext<'a>,
-    color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    depth: Option<RenderTarget>,
+    render_pass: RenderPassHandle,
+    color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+    depth_target: Option<RenderTarget>,
     streams: Vec<DrawStream>,
     descriptor_sets: Vec<DescriptorHandle>,
-    image_barriers: Vec<ImageBarrier>,
+    area: Option<Rect2D>,
     name: &'a str,
 }
 
-impl<'a> RenderPassBuilder<'a> {
+impl<'a> RasterizerPassBuilder<'a> {
     pub fn draw(&mut self, stream: DrawStream) {
         self.streams.push(stream);
     }
@@ -76,95 +68,29 @@ impl<'a> RenderPassBuilder<'a> {
         Ok(handle)
     }
 
-    pub fn image_barrier(
-        &mut self,
-        image: ImageHandle,
-        ty: ImageBarrierType,
-        aspect: vk::ImageAspectFlags,
-    ) {
-        self.image_barriers.push(ImageBarrier(image, ty, aspect));
+    pub fn build(mut self) -> Box<dyn PassDispatcher> {
+        self.context
+            .trash_descriptors
+            .lock()
+            .append(&mut self.descriptor_sets);
+        Box::new(RasterizerPassDispatcher::new(
+            &self.name,
+            self.render_pass,
+            &self.color_targets,
+            self.depth_target,
+            self.streams,
+            self.area,
+        ))
     }
-
-    pub fn build(self) -> RenderPass {
-        RenderPass {
-            color: self.color,
-            depth: self.depth,
-            streams: self.streams,
-            descriptor_sets: self.descriptor_sets,
-            image_barriers: self.image_barriers,
-            name: self.name.to_owned(),
-        }
-    }
-}
-
-pub struct RenderPass {
-    pub(super) color: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    pub(super) depth: Option<RenderTarget>,
-    pub(super) streams: Vec<DrawStream>,
-    pub(super) descriptor_sets: Vec<DescriptorHandle>,
-    pub(super) image_barriers: Vec<ImageBarrier>,
-    pub(super) name: String,
 }
 
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
     dynamic: &'a DynamicGpuMemory,
-    pub(super) passes: Mutex<Vec<RenderPass>>,
-    pub backbuffer_dims: [u32; 2],
+    passes: Mutex<Vec<Box<dyn PassDispatcher>>>,
     descriptors: &'a RwLock<DescriptorPool>,
-}
-
-impl RenderTarget {
-    fn new(image: ImageHandle, layout: vk::ImageLayout) -> Self {
-        Self {
-            image,
-            layout,
-            load: vk::AttachmentLoadOp::DONT_CARE,
-            store: vk::AttachmentStoreOp::STORE,
-            clear: Default::default(),
-        }
-    }
-
-    pub fn color(image: ImageHandle) -> Self {
-        Self::new(image, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-    }
-
-    pub fn depth(image: ImageHandle) -> Self {
-        Self::new(image, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-    }
-
-    pub fn load(mut self) -> Self {
-        self.load = vk::AttachmentLoadOp::LOAD;
-        self
-    }
-
-    pub fn discard(mut self) -> Self {
-        self.store = vk::AttachmentStoreOp::DONT_CARE;
-        self
-    }
-
-    pub fn clear(mut self, value: RenderTargetClearValue) -> Self {
-        self.load = vk::AttachmentLoadOp::CLEAR;
-        self.clear = value.into();
-        self
-    }
-
-    pub(super) fn build(
-        &self,
-        images: &ImagePool,
-        aspect: vk::ImageAspectFlags,
-    ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let image = images
-            .get(self.image)
-            .ok_or(Error::InvalidImageHandle(self.image))?;
-        let view = image.view(ImageViewDesc::new(aspect))?;
-        Ok(vk::RenderingAttachmentInfo::default()
-            .clear_value(self.clear)
-            .image_layout(self.layout)
-            .image_view(view)
-            .load_op(self.load)
-            .store_op(self.store))
-    }
+    trash_descriptors: Mutex<Vec<DescriptorHandle>>,
+    pub backbuffer: &'a Image,
 }
 
 impl<'a> RenderContext<'a> {
@@ -172,38 +98,49 @@ impl<'a> RenderContext<'a> {
         renderer: &'a Renderer,
         dynamic: &'a DynamicGpuMemory,
         descriptors: &'a RwLock<DescriptorPool>,
-        backbuffer: &Image,
+        backbuffer: &'a Image,
     ) -> Self {
         Self {
             renderer,
             dynamic,
             passes: Default::default(),
             descriptors,
-            backbuffer_dims: backbuffer.desc.dims,
+            trash_descriptors: Default::default(),
+            backbuffer,
         }
     }
 
-    pub fn create_render_pass(
+    pub fn create_rasterizer_pass(
         &'a self,
         name: &'a str,
+        render_pass: RenderPassHandle,
         color: &[RenderTarget],
         depth: Option<RenderTarget>,
-    ) -> RenderPassBuilder {
-        RenderPassBuilder {
+        area: Option<Rect2D>,
+    ) -> RasterizerPassBuilder {
+        RasterizerPassBuilder {
             context: self,
-            color: color
+            render_pass,
+            color_targets: color
                 .iter()
                 .copied()
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
-            depth,
+            depth_target: depth,
             streams: Default::default(),
             descriptor_sets: Default::default(),
-            image_barriers: Default::default(),
             name,
+            area,
         }
     }
 
-    pub fn submit(&self, pass: RenderPass) {
+    pub fn submit(&self, pass: Box<dyn PassDispatcher>) {
         self.passes.lock().push(pass);
+    }
+
+    pub(super) fn consume(self) -> (Vec<DescriptorHandle>, Vec<Box<dyn PassDispatcher>>) {
+        (
+            self.trash_descriptors.into_inner(),
+            self.passes.into_inner(),
+        )
     }
 }

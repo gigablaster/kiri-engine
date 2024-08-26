@@ -172,7 +172,12 @@ impl Buffer {
                 .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
         }?;
 
-        let mapping = if desc.memory_usage.contains(gpu_alloc::UsageFlags::UPLOAD) {
+        let mapping = if desc
+            .memory_usage
+            .contains(gpu_alloc::UsageFlags::HOST_ACCESS)
+            | desc.memory_usage.contains(gpu_alloc::UsageFlags::UPLOAD)
+            | desc.memory_usage.contains(gpu_alloc::UsageFlags::DOWNLOAD)
+        {
             Some(unsafe { memory.map(AshMemoryDevice::wrap(&device.raw), 0, desc.size as _) }?)
         } else {
             None

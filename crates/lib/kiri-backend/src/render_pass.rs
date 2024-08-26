@@ -26,27 +26,8 @@ pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 pub const MAX_SUBPASSES: usize = 16;
 
-#[derive(Debug, Clone, Copy)]
-pub enum RenderTargetClearValue {
-    Color([f32; 4]),
-    DepthStencil(f32, u32),
-}
-
-impl From<RenderTargetClearValue> for vk::ClearValue {
-    fn from(value: RenderTargetClearValue) -> Self {
-        match value {
-            RenderTargetClearValue::Color(color) => vk::ClearValue {
-                color: vk::ClearColorValue { float32: color },
-            },
-            RenderTargetClearValue::DepthStencil(depth, stencil) => vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct RenderTargetDesc {
+pub struct ImageAttachmentDesc {
     pub format: vk::Format,
     pub load: vk::AttachmentLoadOp,
     pub store: vk::AttachmentStoreOp,
@@ -65,12 +46,12 @@ pub struct SubpassLayout<'a> {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RenderPassLayout<'a> {
-    pub color: &'a [RenderTargetDesc],
-    pub depth: Option<RenderTargetDesc>,
+    pub color: &'a [ImageAttachmentDesc],
+    pub depth: Option<ImageAttachmentDesc>,
     pub subpasses: &'a [SubpassLayout<'a>],
 }
 
-impl RenderTargetDesc {
+impl ImageAttachmentDesc {
     pub fn new(format: vk::Format) -> Self {
         Self {
             format,
@@ -129,13 +110,13 @@ struct FboDesc {
 }
 
 #[derive(Debug)]
-pub struct RenderTarget<'a> {
+pub struct ImageAttachment<'a> {
     pub image: &'a Image,
     pub aspect: vk::ImageAspectFlags,
 }
 
 impl FboDesc {
-    pub fn new(attachments: &[RenderTarget]) -> Result<Self, Error> {
+    pub fn new(attachments: &[ImageAttachment]) -> Result<Self, Error> {
         let dims = attachments
             .iter()
             .map(|x| x.image.desc.dims)
@@ -161,6 +142,24 @@ pub struct RenderPass {
     device: Arc<RenderDevice>,
     pub raw: vk::RenderPass,
     fbos: Mutex<HashMap<FboDesc, vk::Framebuffer>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Fbo {
+    pub raw: vk::Framebuffer,
+    pub dims: [u32; 2],
+}
+
+impl Fbo {
+    pub fn area(self) -> vk::Rect2D {
+        vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: vk::Extent2D {
+                width: self.dims[0],
+                height: self.dims[1],
+            },
+        }
+    }
 }
 
 impl RenderPass {
@@ -244,11 +243,14 @@ impl RenderPass {
         })
     }
 
-    pub fn fbo(&self, attachments: &[RenderTarget]) -> Result<vk::Framebuffer, Error> {
+    pub fn fbo(&self, attachments: &[ImageAttachment]) -> Result<Fbo, Error> {
         let mut cache = self.fbos.lock();
         let key = FboDesc::new(attachments)?;
         if let Some(fbo) = cache.get(&key) {
-            Ok(*fbo)
+            Ok(Fbo {
+                raw: *fbo,
+                dims: key.dims,
+            })
         } else {
             let fbo_info = vk::FramebufferCreateInfo::default()
                 .render_pass(self.raw)
@@ -256,10 +258,11 @@ impl RenderPass {
                 .width(key.dims[0])
                 .height(key.dims[1])
                 .layers(1);
-            let framebuffer = unsafe { self.device.raw.create_framebuffer(&fbo_info, None) }?;
-            cache.insert(key, framebuffer);
+            let fbo = unsafe { self.device.raw.create_framebuffer(&fbo_info, None) }?;
+            let dims = key.dims;
+            cache.insert(key, fbo);
 
-            Ok(framebuffer)
+            Ok(Fbo { raw: fbo, dims })
         }
     }
 
@@ -288,7 +291,7 @@ struct ResourceState {
 }
 
 impl ResourceState {
-    pub fn new(target: &RenderTargetDesc) -> Self {
+    pub fn new(target: &ImageAttachmentDesc) -> Self {
         Self {
             last_read: vk::SUBPASS_EXTERNAL,
             last_write: vk::SUBPASS_EXTERNAL,
