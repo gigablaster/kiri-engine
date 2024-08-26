@@ -334,8 +334,6 @@ impl RenderDevice {
                 vk::ImageMemoryBarrier::default()
                     .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
                     .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    // .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                    // .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .image(target.image.raw)
@@ -349,8 +347,6 @@ impl RenderDevice {
                 vk::ImageMemoryBarrier::default()
                     .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
                     .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-                    // .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                    // .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .image(image.raw)
@@ -406,11 +402,9 @@ impl RenderDevice {
                     })],
                 vk::Filter::LINEAR,
             );
-            let barrier = vk::ImageMemoryBarrier::default()
+            let barriers = [vk::ImageMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE) // ?
                 .dst_access_mask(vk::AccessFlags::MEMORY_READ)
-                // .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                // .dst_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .image(target.image.raw)
@@ -420,15 +414,15 @@ impl RenderDevice {
                     level_count: 1,
                     base_array_layer: 0,
                     layer_count: 1,
-                });
+                })];
             self.raw.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
                 vk::DependencyFlags::BY_REGION,
                 &[],
                 &[],
-                &[barrier],
+                &barriers,
             );
             self.end_labe(cb);
             self.raw.end_command_buffer(cb)?;

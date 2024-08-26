@@ -5,13 +5,15 @@ use std::{error::Error, fmt::Display, sync::Arc};
 use ash::vk;
 use kiri::ResourceCache;
 use kiri_backend::{ImageAttachmentDesc, RenderPassLayout, SubpassLayout};
-use kiri_gfx::{ImageHandle, ImagePool, RenderContext, RenderPassHandle, RenderTarget, Renderer};
+use kiri_gfx::{
+    ImageHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool, Renderer,
+};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
     cache: Arc<ResourceCache>,
-    pool: ImagePool,
+    pool: RenderTargetPool,
     pass: RenderPassHandle,
 }
 
@@ -42,7 +44,7 @@ impl GameClient<LoopError> for Loop {
         };
         Ok(Self {
             cache,
-            pool: ImagePool::new(renderer),
+            pool: RenderTargetPool::new(renderer),
             pass: renderer.create_render_pass(layout)?,
         })
     }
@@ -72,6 +74,7 @@ impl GameClient<LoopError> for Loop {
             None,
             None,
         );
+        self.pool.insert_barriers(context);
         context.submit(pass.build());
         Ok(target.handle)
     }
