@@ -14,7 +14,6 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod gpu;
-mod image_pool;
 mod mesh;
 mod pipeline_cache;
 mod resource_cache;
@@ -24,7 +23,6 @@ mod uniforms;
 
 use std::io;
 
-pub use image_pool::*;
 pub use mesh::*;
 pub use pipeline_cache::*;
 pub use resource_cache::*;

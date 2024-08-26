@@ -15,11 +15,13 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use crate::{ImageHandle, Renderer};
 use ash::vk;
 use kiri_backend::ImageCreateDesc;
-use kiri_gfx::{ImageHandle, Renderer};
 use log::debug;
 use parking_lot::Mutex;
+
+use crate::Error;
 
 pub trait ResolutionScale {
     fn scale_down(&self, scale: u32) -> [u32; 2];
@@ -39,19 +41,19 @@ struct TempImageKey {
 }
 
 #[derive(Debug)]
-pub struct ImagePool {
+pub struct RenderTargetPool {
     renderer: Arc<Renderer>,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
 #[derive(Debug)]
-pub struct PooledImageGuard<'a> {
-    pool: &'a ImagePool,
+pub struct RenderTargetGuard<'a> {
+    pool: &'a RenderTargetPool,
     key: TempImageKey,
     pub handle: ImageHandle,
 }
 
-impl ImagePool {
+impl RenderTargetPool {
     pub fn new(renderer: &Arc<Renderer>) -> Self {
         Self {
             renderer: renderer.clone(),
@@ -64,7 +66,7 @@ impl ImagePool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
-    ) -> Result<PooledImageGuard, kiri_gfx::Error> {
+    ) -> Result<RenderTargetGuard, Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {
             dims,
@@ -73,7 +75,7 @@ impl ImagePool {
         };
         let group = images.entry(key).or_default();
         if let Some(image) = group.pop() {
-            Ok(PooledImageGuard {
+            Ok(RenderTargetGuard {
                 pool: self,
                 key,
                 handle: image,
@@ -89,7 +91,7 @@ impl ImagePool {
                     .usage(usage),
                 None,
             )?;
-            Ok(PooledImageGuard {
+            Ok(RenderTargetGuard {
                 pool: self,
                 key,
                 handle: image,
@@ -111,7 +113,7 @@ impl ImagePool {
     }
 }
 
-impl<'a> Drop for PooledImageGuard<'a> {
+impl<'a> Drop for RenderTargetGuard<'a> {
     fn drop(&mut self) {
         self.pool.recycle(self.handle, self.key);
     }

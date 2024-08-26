@@ -3,9 +3,9 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri::{ImagePool, ResourceCache, ResourceLoader};
+use kiri::ResourceCache;
 use kiri_backend::{ImageAttachmentDesc, RenderPassLayout, SubpassLayout};
-use kiri_gfx::{ImageHandle, RenderContext, RenderPassHandle, RenderTarget, Renderer};
+use kiri_gfx::{ImageHandle, ImagePool, RenderContext, RenderPassHandle, RenderTarget, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
