@@ -330,9 +330,6 @@ fn subpass_sorter(lhs: &vk::SubpassDependency, rhs: &vk::SubpassDependency) -> O
 
 fn merge_subpasses(subpasses: Vec<vk::SubpassDependency>) -> Vec<vk::SubpassDependency> {
     let mut subpasses = subpasses;
-    // First, we elimenate strange external-external dependencies
-    subpasses
-        .retain(|x| x.src_subpass != vk::SUBPASS_EXTERNAL && x.dst_subpass != vk::SUBPASS_EXTERNAL);
     // Sort
     subpasses.sort_by(subpass_sorter);
     // Combine stages for same pairs
@@ -395,7 +392,7 @@ fn build_dependencies(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
             state[index].last_write = 0;
         }
     }
-    if let Some(depth) = layout.depth {
+    if layout.depth.is_some() {
         if state[depth_index].load {
             dependencies.push(vk::SubpassDependency {
                 src_subpass: vk::SUBPASS_EXTERNAL,

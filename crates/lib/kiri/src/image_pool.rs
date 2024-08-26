@@ -62,8 +62,8 @@ impl ImagePool {
     pub fn get(
         &self,
         format: vk::Format,
-        usage: vk::ImageUsageFlags,
         dims: [u32; 2],
+        usage: vk::ImageUsageFlags,
     ) -> Result<PooledImageGuard, kiri_gfx::Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {

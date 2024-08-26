@@ -28,8 +28,8 @@ impl Error for LoopError {}
 impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let cache = ResourceCache::new(renderer)?;
-        cache.get_or_load_scene("PBR/gun.gltf")?;
-        cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
+        // cache.get_or_load_scene("PBR/gun.gltf")?;
+        // cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
         let layout = RenderPassLayout {
             color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
             depth: None,
@@ -62,8 +62,8 @@ impl GameClient<LoopError> for Loop {
     ) -> Result<ImageHandle, kiri_gfx::Error> {
         let target = self.pool.get(
             vk::Format::A2R10G10B10_UNORM_PACK32,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
             context.backbuffer.desc.dims,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
         )?;
         let pass = context.create_rasterizer_pass(
             "main",

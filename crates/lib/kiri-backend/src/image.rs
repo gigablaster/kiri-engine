@@ -100,6 +100,7 @@ pub struct ImageCreateDesc<'a> {
     pub name: Option<&'a str>,
     pub flags: vk::ImageCreateFlags,
     pub tiling: vk::ImageTiling,
+    pub initial_layout: Option<vk::ImageLayout>,
 }
 
 impl<'a> ImageCreateDesc<'a> {
@@ -116,6 +117,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_layout: None,
         }
     }
 
@@ -132,6 +134,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_layout: None,
         }
     }
 
@@ -148,6 +151,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 6,
             dedicated: false,
             name: None,
+            initial_layout: None,
         }
     }
 
@@ -164,6 +168,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_layout: Some(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
         }
     }
 
@@ -180,6 +185,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_layout: Some(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL),
         }
     }
 
@@ -233,6 +239,11 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
+    pub fn initial_layout(mut self, value: vk::ImageLayout) -> Self {
+        self.initial_layout = Some(value);
+        self
+    }
+
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
             .array_layers(self.array_elements)
@@ -244,6 +255,7 @@ impl<'a> ImageCreateDesc<'a> {
             .image_type(self.ty)
             .tiling(self.tiling)
             .extent(self.to_extent())
+            .initial_layout(self.initial_layout.unwrap_or(vk::ImageLayout::UNDEFINED))
     }
 
     fn to_extent(self) -> vk::Extent3D {
