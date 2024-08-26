@@ -228,6 +228,11 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
+    pub fn transient(mut self) -> Self {
+        self.usage |= vk::ImageUsageFlags::TRANSIENT_ATTACHMENT;
+        self
+    }
+
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
             .array_layers(self.array_elements)
@@ -326,10 +331,9 @@ impl Image {
         requirements.size = requirements.size.max(requirements.alignment);
 
         let mut memory_usage = gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS;
-        if desc.usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-            || desc
-                .usage
-                .contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+        if desc
+            .usage
+            .contains(vk::ImageUsageFlags::TRANSIENT_ATTACHMENT)
         {
             memory_usage |= gpu_alloc::UsageFlags::TRANSIENT;
         }
