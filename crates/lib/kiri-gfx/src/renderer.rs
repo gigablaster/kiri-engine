@@ -26,8 +26,8 @@ use ash::vk::{self};
 use bevy_tasks::{block_on, ComputeTaskPool};
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
-    DescriptorSetLayoutDesc, Frame, GpuAllocator, Image, ImageCreateDesc, ImageViewDesc,
-    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderDevice, RenderPass,
+    DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
+    Program, RasterPipelineCreateDesc, RenderDevice, RenderPass, RenderPassLayout, ShaderDesc,
     Swapchain, MAX_COLOR_ATTACHMENTS,
 };
 use kiri_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy, TempList};
@@ -43,15 +43,15 @@ pub type BufferHandle = Handle<vk::Buffer>;
 pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
 pub type RenderPassHandle = Handle<RenderPass>;
+pub type ProgramHandle = Handle<Program>;
 
 pub(super) type ImagePool = Pool<Image>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
-pub(super) type PipelinePool = Pool<
-    (vk::Pipeline, vk::PipelineLayout),
-    SentinelPoolStrategy<(vk::Pipeline, vk::PipelineLayout)>,
->;
+pub(super) type PipelinePool =
+    HotColdPool<(vk::Pipeline, vk::PipelineLayout), PipelineCompilationData>;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
 pub(super) type RenderPassPool = Pool<RenderPass>;
+pub(super) type ProgramPool = Pool<Program>;
 
 pub enum FrameState {
     Rendered,
@@ -113,12 +113,12 @@ impl From<BufferSlice> for BufferPointer {
 }
 
 #[derive(Debug)]
-struct PipelineCompilationData {
-    program: Arc<Program>,
-    render_pass: Arc<RenderPass>,
+pub(super) struct PipelineCompilationData {
+    program: ProgramHandle,
+    render_pass: RenderPassHandle,
     subpass: u32,
     streams: &'static [InputVertexStreamLayout<'static>],
-    specializaton: Vec<(u32, u32)>,
+    specialization: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
 }
 
@@ -130,8 +130,10 @@ pub struct Renderer {
     buffers: RwLock<BufferPool>,
     pipelines: RwLock<PipelinePool>,
     descriptors: RwLock<DescriptorPool>,
+    render_passes: RwLock<RenderPassPool>,
+    programs: RwLock<ProgramPool>,
     staging: Mutex<Staging>,
-    pipelines_to_compile: Mutex<HashMap<PipelineHandle, PipelineCompilationData>>,
+    pipelines_to_compile: Mutex<Vec<PipelineHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
 }
 
@@ -139,6 +141,10 @@ unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
 const MAX_RESOURCE_COUNT: usize = 0xffff;
+const MAX_RENDER_PASSES: usize = 1024;
+const MAX_PIPELINES: usize = 8192;
+const MAX_PROGRAMS: usize = 1024;
+const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
@@ -147,8 +153,10 @@ impl Renderer {
             staging: Mutex::new(Staging::new(device)?),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
-            pipelines: RwLock::new(PipelinePool::new(MAX_RESOURCE_COUNT)),
-            descriptors: RwLock::new(DescriptorPool::new(MAX_RESOURCE_COUNT)),
+            pipelines: RwLock::new(PipelinePool::new(MAX_PIPELINES)),
+            descriptors: RwLock::new(DescriptorPool::new(MAX_DESCRIPTORS)),
+            render_passes: RwLock::new(RenderPassPool::new(MAX_RENDER_PASSES)),
+            programs: RwLock::new(ProgramPool::new(MAX_PROGRAMS)),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
         }))
@@ -241,33 +249,31 @@ impl Renderer {
 
     pub fn create_pipeline(
         &self,
-        program: &Arc<Program>,
-        render_pass: &Arc<RenderPass>,
+        program: ProgramHandle,
+        render_pass: RenderPassHandle,
         subpass: u32,
         streams: &'static [InputVertexStreamLayout<'static>],
         specialization: &[(u32, u32)],
         desc: RasterPipelineCreateDesc,
     ) -> PipelineHandle {
+        let data = PipelineCompilationData {
+            program,
+            render_pass,
+            subpass,
+            streams,
+            specialization: specialization.to_vec(),
+            desc,
+        };
         let handle = self
             .pipelines
             .write()
-            .push((vk::Pipeline::null(), program.pipeline_layout));
-        self.pipelines_to_compile.lock().insert(
-            handle,
-            PipelineCompilationData {
-                program: program.clone(),
-                render_pass: render_pass.clone(),
-                subpass,
-                streams,
-                specializaton: specialization.to_vec(),
-                desc,
-            },
-        );
+            .push((vk::Pipeline::null(), vk::PipelineLayout::null()), data);
+        self.pipelines_to_compile.lock().push(handle);
         handle
     }
 
     pub fn destroy_pipeline(&self, handle: PipelineHandle) {
-        if let Some((pipeline, _)) = self.pipelines.write().remove(handle) {
+        if let Some(((pipeline, _), _)) = self.pipelines.write().remove(handle) {
             unsafe { self.device.raw.destroy_pipeline(pipeline, None) }
         }
     }
@@ -287,6 +293,32 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
+    pub fn import_render_pass(&self, pass: RenderPass) -> RenderPassHandle {
+        self.render_passes.write().push(pass)
+    }
+
+    pub fn create_render_pass(&self, layout: RenderPassLayout) -> Result<RenderPassHandle, Error> {
+        let render_pass = RenderPass::new(&self.device, layout)?;
+        Ok(self.import_render_pass(render_pass))
+    }
+
+    pub fn destory_render_pass(&self, handle: RenderPassHandle) {
+        self.render_passes.write().remove(handle);
+    }
+
+    pub fn import_program(&self, program: Program) -> ProgramHandle {
+        self.programs.write().push(program)
+    }
+
+    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
+        let program = Program::new(&self.device, shaders)?;
+        Ok(self.import_program(program))
+    }
+
+    pub fn destroy_program(&self, handle: ProgramHandle) {
+        self.programs.write().remove(handle);
+    }
+
     pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<ImageHandle, Error>>(
         &self,
         swapchain: &Swapchain,
@@ -294,36 +326,29 @@ impl Renderer {
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
         // Preparations
+        self.compile_pipelines()?;
         let target = match swapchain.acquire_next_image()? {
             AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
             AcquiredSurface::Image(target) => target,
         };
-        let pipeline_compilation = ComputeTaskPool::get().spawn(Self::compile_pipelines(
-            self.device.clone(),
-            mem::take(&mut self.pipelines_to_compile.lock()),
-        ));
         let frame = self.device.begin_frame()?;
         let semaphore = self.staging.lock().upload()?;
-        let mut pipelines = self.pipelines.write();
         let mut dynamic_memory = self.dynamic_memory.lock();
         dynamic_memory.recycle();
         let dynamic = dynamic_memory.get(self)?;
         drop(dynamic_memory);
+
         // Generate render streams
         let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
         let image = render(&context)?;
+
         // Prepare
         let images = self.images.read();
         let buffers = self.buffers.read();
+        let pipelines = self.pipelines.read();
+
         self.update_descriptors(&frame, &images, &buffers)?;
-        let compiled = block_on(pipeline_compilation);
-        for (handle, data) in compiled {
-            if let Some((old, _)) = pipelines.replace(handle, data) {
-                if old != vk::Pipeline::null() {
-                    unsafe { self.device.raw.destroy_pipeline(old, None) };
-                }
-            }
-        }
+
         // Actual rendering
         let command_buffer =
             frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
@@ -422,39 +447,54 @@ impl Renderer {
         Ok(FrameState::Rendered)
     }
 
-    async fn compile_pipelines(
-        device: Arc<RenderDevice>,
-        mut data: HashMap<PipelineHandle, PipelineCompilationData>,
-    ) -> HashMap<PipelineHandle, (vk::Pipeline, vk::PipelineLayout)> {
+    fn compile_pipelines(&self) -> Result<(), Error> {
         puffin::profile_function!();
-        let result = ComputeTaskPool::get().scope(|s| {
-            for (handle, data) in data.drain() {
-                s.spawn(Self::compile_pipeline(device.clone(), handle, data));
+        let programs = self.programs.read();
+        let render_passes = self.render_passes.read();
+        let mut pipelines = self.pipelines.write();
+        let mut result = ComputeTaskPool::get().scope(|s| {
+            for handle in self.pipelines_to_compile.lock().drain(..) {
+                s.spawn(self.compile_pipeline(handle, &pipelines, &programs, &render_passes));
             }
         });
-        result.into_iter().map(|x| x.unwrap()).collect()
+        for it in result.drain(..) {
+            let (handle, data) = it?;
+            pipelines.replace(handle, data);
+        }
+        todo!()
     }
 
-    async fn compile_pipeline(
-        device: Arc<RenderDevice>,
+    async fn compile_pipeline<'a>(
+        &self,
         handle: PipelineHandle,
-        data: PipelineCompilationData,
+        pipelines: &PipelinePool,
+        programs: &ProgramPool,
+        render_passes: &RenderPassPool,
     ) -> Result<(PipelineHandle, (vk::Pipeline, vk::PipelineLayout)), Error> {
         puffin::profile_function!();
+        let data = pipelines
+            .get_cold(handle)
+            .ok_or(Error::InvalidPipelineHandle(handle))?;
+        let program = programs
+            .get(data.program)
+            .ok_or(Error::InvalidProgramHandle(data.program))?;
+        let render_pass = render_passes
+            .get(data.render_pass)
+            .ok_or(Error::InvalidRenderPassHandle(data.render_pass))?;
         Ok((
             handle,
             (
                 compile_raster_pipeline(
-                    &device,
+                    &self.device,
                     vk::PipelineCache::null(),
-                    &data.program,
-                    &data.render_pass,
+                    program,
+                    render_pass,
                     data.subpass,
                     data.streams,
-                    &data.specializaton,
+                    &data.specialization,
                     data.desc,
                 )?,
-                data.program.pipeline_layout,
+                program.pipeline_layout,
             ),
         ))
     }
@@ -612,6 +652,8 @@ impl Drop for Renderer {
         self.pipelines
             .write()
             .drain()
-            .for_each(|(pipeline, _)| unsafe { self.device.raw.destroy_pipeline(pipeline, None) })
+            .for_each(|((pipeline, _), _)| unsafe {
+                self.device.raw.destroy_pipeline(pipeline, None)
+            })
     }
 }

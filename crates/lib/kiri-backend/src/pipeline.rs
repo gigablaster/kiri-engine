@@ -176,10 +176,10 @@ impl<'a> InputVertexStreamLayout<'a> {
 }
 
 pub fn compile_raster_pipeline<'a>(
-    device: &Arc<RenderDevice>,
+    device: &RenderDevice,
     cache: vk::PipelineCache,
-    program: &Arc<Program>,
-    render_pass: &Arc<RenderPass>,
+    program: &Program,
+    render_pass: &RenderPass,
     subpass: u32,
     streams: &[InputVertexStreamLayout<'a>],
     specialization: &[(u32, u32)],

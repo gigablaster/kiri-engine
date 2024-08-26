@@ -286,9 +286,10 @@ impl DrawStream {
             let mask = reader.read_u16::<NativeEndian>().unwrap();
             if mask & PIPELINE_MASK == PIPELINE_MASK {
                 let handle = reader.read_u64::<NativeEndian>().unwrap().into();
-                let (pipeline, layout) = *context
+                let (pipeline, layout) = context
                     .pipelines
                     .get(handle)
+                    .copied()
                     .ok_or(Error::InvalidPipelineHandle(handle))?;
                 pipeline_layout = layout;
                 unsafe {
