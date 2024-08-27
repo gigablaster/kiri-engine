@@ -25,6 +25,7 @@ use kiri_backend::{
     Swapchain,
 };
 use kiri_common::{Handle, HotColdPool, Pool, TempList};
+use log::debug;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -167,7 +168,9 @@ impl Renderer {
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self.device, desc)?;
         if let Some(data) = data {
-            self.staging.lock().upload_image(&image, data)?;
+            self.staging
+                .lock()
+                .upload_image(image.raw, image.desc, data)?;
         }
         Ok(self.import_image(image))
     }
@@ -185,7 +188,9 @@ impl Renderer {
     ) -> Result<(), Error> {
         let image = Image::new(&self.device, desc)?;
         if let Some(data) = data {
-            self.staging.lock().upload_image(&image, data)?;
+            self.staging
+                .lock()
+                .upload_image(image.raw, image.desc, data)?;
         }
         self.replace_image(handle, image);
         Ok(())
@@ -218,9 +223,11 @@ impl Renderer {
     }
 
     pub fn upload_buffer<T: Copy>(&self, buffer: BufferPointer, data: &[T]) -> Result<(), Error> {
-        let buffers = self.buffers.read();
-        let vk_buffer = buffers
-            .get_cold(buffer.handle)
+        let vk_buffer = self
+            .buffers
+            .read()
+            .get(buffer.handle)
+            .copied()
             .ok_or(Error::InvalidBufferHandle(buffer.handle))?;
         self.staging
             .lock()
@@ -313,40 +320,41 @@ impl Renderer {
         self.programs.write().remove(handle);
     }
 
-    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<ImageHandle, Error>>(
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> ImageHandle>(
         &self,
         swapchain: &Swapchain,
         render: RenderCB,
     ) -> Result<FrameState, Error> {
         puffin::profile_function!();
         // Preparations
-        self.compile_pipelines()?;
         let target = match swapchain.acquire_next_image()? {
             AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
             AcquiredSurface::Image(target) => target,
         };
         let frame = self.device.begin_frame()?;
-        let semaphore = self.staging.lock().upload()?;
         let mut dynamic_memory = self.dynamic_memory.lock();
         dynamic_memory.recycle();
         let dynamic = dynamic_memory.get(self)?;
-        drop(dynamic_memory);
+        let mut staging = self.staging.lock();
 
         // Generate render streams
         let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
-        let image = render(&context)?;
+        let image = render(&context);
 
         // Prepare
-        let images = self.images.read();
-        let buffers = self.buffers.read();
-        let pipelines = self.pipelines.read();
+
+        self.compile_pipelines()?;
+        let images = self.images.write();
+        let buffers = self.buffers.write();
+        let pipelines = self.pipelines.write();
+        let staging_wait = staging.upload()?;
 
         self.update_descriptors(&frame, &images, &buffers)?;
 
         // Actual rendering
         let command_buffer =
             frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
-        let (mut thrash_descriptors, passes) = context.consume();
+        let (mut trash_descriptors, passes) = context.consume();
         unsafe {
             self.device.raw.begin_command_buffer(
                 command_buffer,
@@ -384,17 +392,23 @@ impl Renderer {
         self.device.submit(
             &[command_buffer],
             frame.render_fence,
-            &[(
-                semaphore,
-                vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
-            )],
+            &[
+                (
+                    staging_wait,
+                    vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                ),
+                (
+                    target.acquire_semaphore,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ),
+            ],
             &[frame.render_finished],
         )?;
         // Present
         self.device
             .present(target, images.get(image).unwrap(), &frame)?;
         // Cleanup
-        thrash_descriptors.drain(..).for_each(|x| {
+        trash_descriptors.drain(..).for_each(|x| {
             descriptors.remove(x);
         });
         self.device.end_frame(frame);
@@ -414,6 +428,7 @@ impl Renderer {
         });
         for it in result.drain(..) {
             let (handle, data) = it?;
+            debug!("Compile pipeline {} -> {:?}", handle, data);
             pipelines.replace(handle, data);
         }
         Ok(())
@@ -599,6 +614,13 @@ impl Renderer {
                 .filter(|x| x.data.handle == image)
                 .for_each(|x| x.data.view = vk::ImageView::null());
         })
+    }
+
+    pub fn invalidate_fbos(&self) {
+        self.render_passes
+            .write()
+            .iter()
+            .for_each(|x| x.clear_fbos());
     }
 }
 

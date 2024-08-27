@@ -429,16 +429,10 @@ impl RenderDevice {
             self.submit(
                 &[cb],
                 frame.present_fence,
-                &[
-                    (
-                        frame.render_finished,
-                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    ),
-                    (
-                        target.acquire_semaphore,
-                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    ),
-                ],
+                &[(
+                    frame.render_finished,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                )],
                 &[target.present_finished],
             )?;
         }

@@ -153,10 +153,17 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         inner.window.inner_size().height,
                     ];
                     let game = self.game.as_mut().unwrap();
+                    let now = Instant::now();
+                    self.game_time.sample(now - self.last_time);
+                    self.last_time = now;
+                    if let GameTickState::Exit = game.update(self.game_time.game_time()).unwrap() {
+                        event_loop.exit();
+                    }
                     if dims[0] > 0 && dims[1] > 0 {
                         if inner.swapchain.is_none() {
                             inner.swapchain =
                                 Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap());
+                            inner.renderer.invalidate_fbos();
                             game.swapchain_created().unwrap();
                         }
                         let swapchain = inner.swapchain.as_ref().unwrap();
@@ -169,13 +176,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         {
                             inner.swapchain = None;
                         }
-                        let now = Instant::now();
-                        self.game_time.sample(self.last_time - now);
-                        if let GameTickState::Exit =
-                            game.update(self.game_time.game_time()).unwrap()
-                        {
-                            event_loop.exit();
-                        }
+
                         inner.window.request_redraw();
                     } else {
                         self.last_time = Instant::now();

@@ -63,7 +63,7 @@ pub trait GameClient<E: Error>: Sized + Send + Sync {
         &self,
         time: GameTime,
         context: &RenderContext,
-    ) -> Result<ImageHandle, kiri_gfx::Error>;
+    ) -> ImageHandle;
     fn resumed(&mut self) -> Result<(), GameError<E>> {
         Ok(())
     }

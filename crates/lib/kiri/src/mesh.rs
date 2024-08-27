@@ -64,7 +64,6 @@ impl From<MeshMaterialBlend> for RenderMaterialType {
 pub struct StaticRenderMesh {
     pub vertex_buffer: BufferPointer,
     pub index_buffer: BufferPointer,
-    pub vertex_offset: u32,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: Bounds,
     // pub position_scale: f32,

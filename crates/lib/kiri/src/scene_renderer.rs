@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, sync::Arc};
+use std::{cmp::Ordering, mem, sync::Arc};
 
 use ash::vk::{self};
 use kiri_backend::{
@@ -44,7 +44,7 @@ lazy_static! {
 }
 
 #[derive(Debug)]
-pub struct SceneRemderer {
+pub struct SceneRenderer {
     target_pool: RenderTargetPool,
     resources: Arc<ResourceCache>,
     pipelines: Arc<PipelineCache>,
@@ -54,7 +54,7 @@ pub struct SceneRemderer {
 struct NullCuller {}
 
 impl SceneCuller for NullCuller {
-    fn cull(&self, bounds: crate::Bounds) -> bool {
+    fn cull(&self, _bounds: crate::Bounds) -> bool {
         true
     }
 }
@@ -76,10 +76,40 @@ struct RenderOp {
     material: DescriptorHandle,
     first_index: u32,
     index_count: u32,
-    vertex_offset: i32,
 }
 
-impl SceneRemderer {
+impl PartialEq for RenderOp {
+    fn eq(&self, other: &Self) -> bool {
+        self.pipeline == other.pipeline
+            && self.model == other.model
+            && self.vertex_buffer == other.vertex_buffer
+            && self.index_buffer == other.index_buffer
+            && self.material == other.material
+            && self.first_index == other.first_index
+            && self.index_count == other.index_count
+    }
+}
+
+impl Eq for RenderOp {}
+
+impl PartialOrd for RenderOp {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for RenderOp {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let pipeline = self.pipeline.cmp(&other.pipeline);
+        let material = self.material.cmp(&other.material);
+        if pipeline == Ordering::Equal {
+            material
+        } else {
+            pipeline
+        }
+    }
+}
+
+impl SceneRenderer {
     pub fn new(
         resource_cache: &Arc<ResourceCache>,
         pipeline_cache: &Arc<PipelineCache>,
@@ -154,15 +184,15 @@ impl SceneRemderer {
         let mut pass = context.create_rasterizer_pass(
             "Main pass",
             self.main_pass,
-            &[RenderTarget::new(color_target.handle).clear_color([0.2, 0.2, 0.2, 1.0])],
+            &[RenderTarget::new(color_target.handle).clear_color([0.0, 0.0, 0.0, 1.0])],
             Some(RenderTarget::new(depth_target.handle).clear_depth_stencil(1.0, 0)),
             None,
         );
         let pipeline = self
             .pipelines
             .get_or_create_raster_pipeline(RasterPipelineDesc::new::<GpuStaticVertex>(
-                "shaders/main.vert",
-                "shaders/main.frag",
+                "shaders/main_vs.glsl",
+                "shaders/main_ps.glsl",
                 self.main_pass,
                 0,
             ))?;
@@ -177,10 +207,10 @@ impl SceneRemderer {
                     material: surface.material.ds,
                     first_index: surface.first_index,
                     index_count: surface.index_count,
-                    vertex_offset: mesh.vertex_offset as i32,
                 })
             }
         }
+        render_ops.sort();
 
         let mut index = 0;
         while index < render_ops.len() {
@@ -190,7 +220,8 @@ impl SceneRemderer {
 
             while instance < DRAWS_PER_STREAM && index < render_ops.len() {
                 let op = &render_ops[index];
-                data.push(GpuInstanceData { model: op.model })?;
+                // debug!("{:?}", op.model.to_scale_rotation_translation());
+                data.write(GpuInstanceData { model: op.model })?;
                 stream.set_pipeline(op.pipeline);
                 stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                 stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
@@ -198,13 +229,18 @@ impl SceneRemderer {
                 stream.set_index_buffer(op.index_buffer);
                 stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
                 stream.set_dynamic_offset(0, Some(data.offset as _));
-                stream.set_vertex_offset(op.vertex_offset);
                 stream.draw(op.first_index, op.index_count, instance as _, 1);
                 instance += 1;
                 index += 1;
             }
             pass.draw(stream.build());
         }
+        self.target_pool.insert_barriers(context);
+        context.submit(pass.build());
         Ok(color_target)
+    }
+
+    pub fn swapchain_changed(&self) {
+        self.target_pool.purge();
     }
 }

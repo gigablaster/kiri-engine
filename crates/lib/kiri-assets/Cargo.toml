@@ -33,3 +33,5 @@ thiserror = "1.0.61"
 shader-prepper = "0.3.0-pre.3"
 ash = "0.38.0"
 uuid = { version = "1.10.0", features = ["v4"] }
+hassle-rs = "0.11.0"
+log = "0.4.20"

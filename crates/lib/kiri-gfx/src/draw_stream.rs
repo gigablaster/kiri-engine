@@ -58,13 +58,12 @@ const PIPELINE_MASK: u16 = 1 << 0;
 const VERTEX_STREAM_MASK: u16 = 1 << 1;
 const INDEX_STREAM_MASK: u16 = VERTEX_STREAM_MASK << MAX_VERTEX_STREAMS;
 const DESCRIPTOR_SET_MASK: u16 = INDEX_STREAM_MASK << 1;
-const DYANMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_DESCRIPTOR_SETS;
-const FIRST_INDEX_MASK: u16 = DYANMIC_OFFSET_MASK << 1;
+const DYNAMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_DESCRIPTOR_SETS;
+const FIRST_INDEX_MASK: u16 = DYNAMIC_OFFSET_MASK << 1;
 const INDEX_COUNT_MASK: u16 = FIRST_INDEX_MASK << 1;
 const FIRST_INSTANCE_MASK: u16 = INDEX_COUNT_MASK << 1;
 const INSTANCE_COUNT_MASK: u16 = FIRST_INSTANCE_MASK << 1;
 const VERTEX_OFFSET_MASK: u16 = INSTANCE_COUNT_MASK << 1;
-const ALL_DESCRIPTOR_SETS_MASK: u16 = ((1 << MAX_DESCRIPTOR_SETS) - 1) << 4;
 
 impl DrawStreamBuilder {
     pub fn new(subpass: u32) -> Self {
@@ -135,7 +134,8 @@ impl DrawStreamBuilder {
         debug_assert!(slot < MAX_DYNAMIC_OFFSETS);
         let offset = offset.unwrap_or(u32::MAX);
         if self.current.dynamic_offsets[slot] != offset {
-            self.mask |= DYANMIC_OFFSET_MASK << slot;
+            // debug!("Set offset {} -> {}", slot, offset);
+            self.mask |= DYNAMIC_OFFSET_MASK << slot;
             self.current.dynamic_offsets[slot] = offset;
         }
     }
@@ -192,7 +192,8 @@ impl DrawStreamBuilder {
             }
         }
         for i in 0..MAX_DYNAMIC_OFFSETS {
-            if self.mask & (DYANMIC_OFFSET_MASK << i) == (DYANMIC_OFFSET_MASK << i) {
+            if self.mask & (DYNAMIC_OFFSET_MASK << i) == (DYNAMIC_OFFSET_MASK << i) {
+                // debug!("Wrte offset {} -> {}", i, self.current.dynamic_offsets[i]);
                 self.stream
                     .write_u32::<NativeEndian>(self.current.dynamic_offsets[i])
                     .unwrap();
@@ -239,7 +240,7 @@ impl Default for DrawState {
             streams: Default::default(),
             indices: Default::default(),
             bind_groups: Default::default(),
-            dynamic_offsets: [0, 0],
+            dynamic_offsets: [u32::MAX, u32::MAX],
         }
     }
 }
@@ -281,7 +282,6 @@ impl DrawStream {
         let mut descriptor_sets = [DescriptorHandle::invalid(); MAX_DESCRIPTOR_SETS];
         let mut vertex_offset = 0;
         let mut dynamic_offset_changed = false;
-        let mut rebind_all = false;
 
         for _ in 0..self.commands {
             let mask = reader.read_u16::<NativeEndian>().unwrap();
@@ -296,7 +296,6 @@ impl DrawStream {
                         pipeline,
                     );
                 }
-                rebind_all = true;
             }
             for i in 0..MAX_VERTEX_STREAMS {
                 if mask & (VERTEX_STREAM_MASK << i) == (VERTEX_STREAM_MASK << i) {
@@ -324,17 +323,16 @@ impl DrawStream {
                 }
             }
 
-            rebind_all |= (mask & ALL_DESCRIPTOR_SETS_MASK) == ALL_DESCRIPTOR_SETS_MASK;
             for (i, target) in descriptor_sets
                 .iter_mut()
                 .enumerate()
-                .take(MAX_DESCRIPTOR_SETS - 1)
+                .take(MAX_DESCRIPTOR_SETS)
             {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                     let descriptor = reader.read_u64::<NativeEndian>().unwrap().into();
                     *target = descriptor;
-                    if !rebind_all {
-                        let ds = resolver.resolve_descriptor_set(descriptor)?;
+                    let ds = resolver.resolve_descriptor_set(descriptor)?;
+                    if i != DYNAMIC_BINDING_SLOT {
                         unsafe {
                             device.cmd_bind_descriptor_sets(
                                 command_buffer,
@@ -345,24 +343,19 @@ impl DrawStream {
                                 &[],
                             )
                         };
+                    } else {
+                        dynamic_offset_changed = true;
                     }
                 }
-            }
-            if mask & (DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT)
-                == DESCRIPTOR_SET_MASK << DYNAMIC_BINDING_SLOT
-            {
-                descriptor_sets[DYNAMIC_BINDING_SLOT] =
-                    reader.read_u64::<NativeEndian>().unwrap().into();
-                dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
-                dynamic_offset_changed = true;
             }
             for (i, target) in dynamic_offsets
                 .iter_mut()
                 .enumerate()
                 .take(MAX_DYNAMIC_OFFSETS)
             {
-                if mask & (DYANMIC_OFFSET_MASK << i) == DYANMIC_OFFSET_MASK << i {
+                if mask & (DYNAMIC_OFFSET_MASK << i) == DYNAMIC_OFFSET_MASK << i {
                     let offset = reader.read_u32::<NativeEndian>().unwrap();
+                    // debug!("Read offset {} -> {}",i, offset );
                     *target = offset;
                     dynamic_offset_changed = true;
                 }
@@ -382,30 +375,7 @@ impl DrawStream {
             if mask & VERTEX_OFFSET_MASK == VERTEX_OFFSET_MASK {
                 vertex_offset = reader.read_i32::<NativeEndian>().unwrap();
             }
-            if rebind_all {
-                let mut descriptors = [resolver.empty_descriptor_set; MAX_DESCRIPTOR_SETS];
-                for (index, descriptor_set) in descriptor_sets.iter().enumerate() {
-                    if descriptor_set.is_valid() {
-                        descriptors[index] = resolver.resolve_descriptor_set(*descriptor_set)?;
-                    }
-                }
-                let offsets = dynamic_offsets
-                    .iter()
-                    .filter_map(|x| (*x != u32::MAX).then_some(*x))
-                    .collect::<ArrayVec<_, MAX_DYNAMIC_OFFSETS>>();
-                unsafe {
-                    device.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline_layout,
-                        0,
-                        &descriptors,
-                        &offsets,
-                    )
-                }
-                rebind_all = false;
-                dynamic_offset_changed = false;
-            }
+
             if dynamic_offset_changed {
                 let descriptor =
                     resolver.resolve_descriptor_set(descriptor_sets[DYNAMIC_BINDING_SLOT])?;

@@ -23,7 +23,7 @@ use std::{
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::{Error, Program, RenderDevice, RenderPass};
 
@@ -216,6 +216,7 @@ pub fn compile_raster_pipeline(
                 .name(entry)
         })
         .collect::<Vec<_>>();
+    debug!("{:?} {:?}", shader_create_info[0].stage, shader_create_info[1].stage);
 
     let streams = streams
         .iter()
@@ -256,17 +257,17 @@ pub fn compile_raster_pipeline(
     let dynamic_state_create_info =
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-    let viewport_state = vk::PipelineViewportStateCreateInfo::default();
+    let viewport = vk::Viewport::default();
+    let scissor  =vk::Rect2D::default();
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default().viewports(slice::from_ref(&viewport)).scissors(slice::from_ref(&scissor));
 
     let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::default()
-        .depth_bias_enable(false)
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
-        .line_width(1.0)
-        .depth_bias_clamp(0.0)
-        .depth_bias_slope_factor(0.0)
         .cull_mode(desc.cull.unwrap_or(vk::CullModeFlags::NONE))
-        .front_face(vk::FrontFace::CLOCKWISE);
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false)
+        .line_width(1.0);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
         .sample_shading_enable(false)
@@ -304,23 +305,27 @@ pub fn compile_raster_pipeline(
         .attachments(slice::from_ref(&color_blend_attachment))
         .logic_op_enable(false);
 
+    let tesslation_state = vk::PipelineTessellationStateCreateInfo::default();
+
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&shader_create_info)
-        .dynamic_state(&dynamic_state_create_info)
-        .viewport_state(&viewport_state)
-        .multisample_state(&multisample_state)
-        .color_blend_state(&blending_state)
-        .input_assembly_state(&assembly_state_create_info)
-        .rasterization_state(&rasterizer_state)
-        .depth_stencil_state(&depthstencil_state)
         .vertex_input_state(&vertex_input)
+        .input_assembly_state(&assembly_state_create_info)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterizer_state)
+        .multisample_state(&multisample_state)
+        .depth_stencil_state(&depthstencil_state)
+        .color_blend_state(&blending_state)
+        .dynamic_state(&dynamic_state_create_info)
+        .tessellation_state(&tesslation_state)
+        .layout(program.pipeline_layout)
         .render_pass(render_pass.raw)
         .subpass(subpass);
 
     let pipeline = unsafe {
         device
             .raw
-            .create_graphics_pipelines(cache, slice::from_ref(&pipeline_create_info), None)
+            .create_graphics_pipelines(cache, &[pipeline_create_info], None)
     }?[0];
 
     Ok(pipeline)

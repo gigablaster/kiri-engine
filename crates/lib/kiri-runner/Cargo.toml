@@ -19,6 +19,7 @@ winit = "0.30.5"
 
 [dev-dependencies]
 simple_logger = "5.0.0"
+glam = "0.29.0"
 
 [build-dependencies]
 winres = "0.1.3"

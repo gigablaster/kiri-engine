@@ -2,19 +2,20 @@
 
 use std::{error::Error, fmt::Display, sync::Arc};
 
-use ash::vk;
-use kiri::{ResourceCache, ResourceLoader};
-use kiri_backend::{ImageAttachmentDesc, RenderPassLayout, SubpassLayout};
-use kiri_gfx::{
-    ImageHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool, Renderer,
-};
+use glam::{vec3, Affine3A, Mat4, Vec3};
+use kiri::{Camera, NodeHandle, PipelineCache, ResourceCache, Scene, SceneRenderer};
+use kiri_common::Handle;
+use kiri_gfx::{ImageHandle, RenderContext, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
-    cache: Arc<ResourceCache>,
-    pool: RenderTargetPool,
-    pass: RenderPassHandle,
+    resources: Arc<ResourceCache>,
+    _pipelines: Arc<PipelineCache>,
+    render: SceneRenderer,
+    scene: Scene,
+    root: NodeHandle,
+    time: f32,
 }
 
 #[derive(Debug)]
@@ -29,58 +30,60 @@ impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
-        let cache = ResourceCache::new(renderer)?;
-        cache.get_or_load_scene("PBR/gun.gltf")?;
-        cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
-        let layout = RenderPassLayout {
-            color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
-            depth: None,
-            subpasses: &[SubpassLayout {
-                depth_write: false,
-                depth_read: false,
-                color_writes: &[0],
-                color_reads: &[],
-            }],
-        };
+        let resources = ResourceCache::new(renderer)?;
+        let _pipelines = PipelineCache::new(renderer);
+        let test = resources.get_or_load_scene("FlightHelmet/FlightHelmet.gltf")?;
+        let mut scene = Scene::default();
+        let root = scene.add_node(
+            Handle::default(),
+            kiri::NodeData::Scene(test),
+            glam::Affine3A::IDENTITY,
+        );
+        scene.add_node(
+            root,
+            kiri::NodeData::Scene(test),
+            Affine3A::from_translation(Vec3::new(-0.5, 0.0, 0.0)),
+        );
+        scene.add_node(
+            root,
+            kiri::NodeData::Scene(test),
+            Affine3A::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+        );
+        let render = SceneRenderer::new(&resources, &_pipelines)?;
         Ok(Self {
-            cache,
-            pool: RenderTargetPool::new(renderer),
-            pass: renderer.create_render_pass(layout)?,
+            resources,
+            _pipelines,
+            scene,
+            render,
+            root,
+            time: 0.0,
         })
     }
     fn title(&self) -> &str {
         "Loop Demo"
     }
 
-    fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
-        self.cache.tick();
+    fn update(&mut self, time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
+        self.resources.tick().unwrap();
+        self.scene
+            .update_node_transform(self.root, Affine3A::from_rotation_y(self.time * 0.5));
+        self.time += time.delta_time;
+        self.scene.update(&self.resources.resolve());
+
         Ok(GameTickState::Continue)
     }
 
-    fn render(
-        &self,
-        _time: kiri_common::GameTime,
-        context: &RenderContext,
-    ) -> Result<ImageHandle, kiri_gfx::Error> {
-        let target = self.pool.get(
-            vk::Format::A2R10G10B10_UNORM_PACK32,
-            context.backbuffer.desc.dims,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-        )?;
-        let pass = context.create_rasterizer_pass(
-            "main",
-            self.pass,
-            &[RenderTarget::new(target.handle).clear_color([0.2, 0.2, 0.8, 1.0])],
-            None,
-            None,
-        );
-        self.pool.insert_barriers(context);
-        context.submit(pass.build());
-        Ok(target.handle)
+    fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) -> ImageHandle {
+        let camera = Camera {
+            view: Mat4::look_at_lh(vec3(0.0, 0.5, 1.5), Vec3::Y * 0.25, Vec3::NEG_Y),
+            projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.001, 10.0),
+        };
+        let target = self.render.render(&self.scene, camera, context).unwrap();
+        target.handle
     }
 
     fn swapchain_created(&mut self) -> Result<(), GameError<LoopError>> {
-        self.pool.purge();
+        self.render.swapchain_changed();
         Ok(())
     }
 }

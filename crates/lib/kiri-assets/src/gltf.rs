@@ -185,7 +185,8 @@ pub struct MeshSurfaceAsset {
 
 #[derive(Debug, Readable, Writable)]
 pub struct StaticMeshAsset {
-    pub vertex_offset: u32,
+    pub first_vertex: u64,
+    pub first_index: u64,
     pub surfaces: Vec<MeshSurfaceAsset>,
     // pub positon_scale: f32,
     // pub uv_scale: [f32; 2],

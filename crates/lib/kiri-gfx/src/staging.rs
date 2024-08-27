@@ -21,7 +21,7 @@ use std::{
 };
 
 use ash::vk::{self};
-use kiri_backend::{Buffer, BufferCreateDesc, Image, RenderDevice};
+use kiri_backend::{Buffer, BufferCreateDesc, ImageDesc, RenderDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{Error, ImageUploadData};
@@ -98,7 +98,7 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        target: &Buffer,
+        target: vk::Buffer,
         offset: u64,
         data: &[T],
     ) -> Result<(), Error> {
@@ -106,7 +106,7 @@ impl Staging {
         loop {
             let data_len = mem::size_of_val(data) as u64;
             let pushed = self.try_push_buffer(
-                target.raw,
+                target,
                 offset + current_offset,
                 data_len - current_offset,
                 unsafe { (data.as_ptr() as *const u8).add(current_offset as _) },
@@ -120,9 +120,16 @@ impl Staging {
         }
     }
 
-    pub fn upload_image(&mut self, target: &Image, data: &[ImageUploadData]) -> Result<(), Error> {
+    pub fn upload_image(
+        &mut self,
+        target: vk::Image,
+        desc: ImageDesc,
+        data: &[ImageUploadData],
+    ) -> Result<(), Error> {
+        // If we have operations for same target then we just cancel them
+        self.upload_images.remove(&target);
         for (mip, data) in data.iter().enumerate() {
-            while !self.try_push_mip(target, mip as _, data)? {
+            while !self.try_push_mip(target, desc, mip as _, data)? {
                 self.upload_impl(false)?;
             }
         }
@@ -131,7 +138,8 @@ impl Staging {
 
     fn try_push_mip(
         &mut self,
-        target: &Image,
+        target: vk::Image,
+        desc: ImageDesc,
         mip: u32,
         data: &ImageUploadData,
     ) -> Result<bool, Error> {
@@ -147,7 +155,7 @@ impl Staging {
                     size as _,
                 )
             };
-            let dims = target.desc.dims;
+            let dims = desc.dims;
             let op = vk::BufferImageCopy::default()
                 .image_extent(vk::Extent3D {
                     width: dims[0] >> mip,
@@ -171,7 +179,7 @@ impl Staging {
             };
 
             self.upload_images
-                .entry(target.raw)
+                .entry(target)
                 .or_default()
                 .push(ImageUploadRequest(op, range));
 
@@ -291,19 +299,10 @@ impl Staging {
             self.device.raw.cmd_pipeline_barrier(
                 self.command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::VERTEX_INPUT,
+                vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
                 vk::DependencyFlags::BY_REGION,
                 &[],
                 &buffer_barriers,
-                &[],
-            );
-            self.device.raw.cmd_pipeline_barrier(
-                self.command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &[],
                 &image_barriers,
             );
         };
@@ -340,7 +339,7 @@ impl Staging {
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 self.command_buffer,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::VERTEX_SHADER,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::BY_REGION,
                 &[],

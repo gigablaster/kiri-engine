@@ -493,4 +493,29 @@ mod test {
             scene.world_transforms[0].translation
         );
     }
+
+    #[test]
+    fn move_attached_objects() {
+        let mut scene = Scene::default();
+        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        scene.add_node(
+            handle1,
+            NodeData::Empty,
+            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+        );
+        scene.update(&DummyResolver::default());
+        scene.update_node_transform(
+            handle1,
+            glam::Affine3A::from_translation(glam::Vec3::new(-1.0, -1.0, -1.0)),
+        );
+        scene.update(&DummyResolver::default());
+        assert_eq!(
+            glam::Vec3A::new(-1.0, -1.0, -1.0),
+            scene.world_transforms[0].translation
+        );
+        assert_eq!(
+            glam::Vec3A::new(0.0, 0.0, 0.0),
+            scene.world_transforms[1].translation
+        );
+    }
 }

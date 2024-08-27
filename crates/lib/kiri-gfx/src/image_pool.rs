@@ -207,12 +207,13 @@ impl PassDispatcher for TempRenderTargetsBarrierDispatcher {
                 depth_barriers.push(
                     vk::ImageMemoryBarrier::default()
                         .image(image.raw)
-                        .src_access_mask(vk::AccessFlags::SHADER_READ)
+                        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ)
                         .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                         .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::DEPTH, // fixme
+                            aspect_mask: vk::ImageAspectFlags::DEPTH
+                                | vk::ImageAspectFlags::STENCIL,
                             base_mip_level: 0,
                             level_count: vk::REMAINING_MIP_LEVELS,
                             base_array_layer: 0,

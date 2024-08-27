@@ -32,6 +32,11 @@ pub struct ImageDesc {
     pub array_elements: u32,
 }
 
+impl ImageDesc {
+    pub fn aspect(&self) -> f32 {
+        self.dims[0] as f32 / self.dims[1] as f32
+    }
+}
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc {
     pub ty: Option<vk::ImageViewType>,
@@ -185,7 +190,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
-            initial_layout: Some(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL),
+            initial_layout: Some(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
         }
     }
 

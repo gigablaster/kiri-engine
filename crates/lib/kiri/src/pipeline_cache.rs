@@ -74,13 +74,13 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
-    pub fn new(renderer: &Arc<Renderer>) -> Self {
-        Self {
+    pub fn new(renderer: &Arc<Renderer>) -> Arc<Self> {
+        Arc::new(Self {
             renderer: renderer.clone(),
             shaders: Default::default(),
             programs: Default::default(),
             raster_pipelines: Default::default(),
-        }
+        })
     }
 
     fn get_or_load_shader(&self, name: &str, ty: ShaderType) -> Result<Bytes, Error> {

@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use log::info;
+
 use crate::{MeshAssetMaterial, MeshSurfaceAsset, StaticMeshAsset, StaticMeshVertex};
 
 #[derive(Debug)]
@@ -120,7 +122,7 @@ impl MeshSurfaceBuilder {
             let vertex = FullVertex {
                 position: self.positions[index],
                 normal: normals[index],
-                tangent: tangent,
+                tangent,
                 uvs: [uv1[index], uv2[index]],
             };
             vertices.push(vertex);
@@ -238,7 +240,8 @@ impl MeshAssetBuilder {
         indices: &mut Vec<u16>,
         materials: &mut Vec<MeshAssetMaterial>,
     ) -> StaticMeshAsset {
-        let index_offset = vertices.len() as u32;
+        let first_vertex = vertices.len() as u64;
+        let first_index = indices.len() as u64;
         let mut mesh_vertices = Vec::new();
         let mut mesh_indices = Vec::new();
         let mut mesh_surfaces = Vec::new();
@@ -254,15 +257,14 @@ impl MeshAssetBuilder {
                 materials.push(material);
                 index
             } as u32;
-            let first_index = mesh_vertices.len() as u32;
-            mesh_vertices.append(&mut vertices);
-            let index_count = indices.len() as u32;
-            mesh_indices.append(&mut indices);
             mesh_surfaces.push(MeshSurfaceAsset {
-                first_index: first_index + index_offset,
-                index_count,
+                first_index: mesh_indices.len() as u32,
+                index_count: indices.len() as u32,
                 material: material_index,
             });
+            info!("indices {} vertices {}", indices.len(), vertices.len());
+            mesh_vertices.append(&mut vertices);
+            mesh_indices.append(&mut indices);
         }
         let bounds = calculate_bounding_sphere(&mesh_vertices);
         // let position_scale = (((find_limit_value(&mesh_vertices, |x| x.position)).min(1.0)) as u32)
@@ -292,11 +294,12 @@ impl MeshAssetBuilder {
         vertices.append(&mut static_vertices);
         indices.append(&mut mesh_indices);
         StaticMeshAsset {
-            vertex_offset: index_offset,
             surfaces: mesh_surfaces,
             // positon_scale: position_scale,
             // uv_scale: [uv1_scale, uv2_scale],
             bounds,
+            first_vertex,
+            first_index,
         }
     }
 }

@@ -18,7 +18,6 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::Mutex;
-use std::cmp::Ord;
 
 use crate::{Error, Image, ImageViewDesc, RenderDevice};
 
@@ -175,8 +174,8 @@ impl RenderPass {
             })
             .chain(layout.depth.iter().map(|x| {
                 x.build(
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 )
             }))
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
@@ -330,6 +329,7 @@ fn subpass_sorter(lhs: &vk::SubpassDependency, rhs: &vk::SubpassDependency) -> O
 
 fn merge_subpasses(subpasses: Vec<vk::SubpassDependency>) -> Vec<vk::SubpassDependency> {
     let mut subpasses = subpasses;
+    subpasses.retain(|x| x.src_subpass != x.dst_subpass);
     // Sort
     subpasses.sort_by(subpass_sorter);
     // Combine stages for same pairs
@@ -343,8 +343,8 @@ fn merge_subpasses(subpasses: Vec<vk::SubpassDependency>) -> Vec<vk::SubpassDepe
                 let next = subpasses.remove(0);
                 subpass.src_access_mask |= next.src_access_mask;
                 subpass.dst_access_mask |= next.dst_access_mask;
-                subpass.src_stage_mask = subpass.src_stage_mask.max(next.src_stage_mask);
-                subpass.dst_stage_mask = subpass.dst_stage_mask.max(next.dst_stage_mask);
+                subpass.src_stage_mask |= next.src_stage_mask;
+                subpass.dst_stage_mask |= next.dst_stage_mask;
             } else {
                 index += 1;
             }

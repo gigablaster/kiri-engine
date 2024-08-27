@@ -160,7 +160,7 @@ impl<'a, T: Copy> DynamicWriter<'a, T> {
         }
     }
 
-    pub fn push(&mut self, data: T) -> Result<(), Error> {
+    pub fn write(&mut self, data: T) -> Result<(), Error> {
         let data_size = mem::size_of::<T>();
         if data_size > (self.size - self.cursor) {
             return Err(Error::OutOfDynamicMemory);
