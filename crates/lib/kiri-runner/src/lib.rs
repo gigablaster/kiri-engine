@@ -59,11 +59,7 @@ pub trait GameClient<E: Error>: Sized + Send + Sync {
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
     fn swapchain_created(&mut self) -> Result<(), GameError<E>>;
-    fn render(
-        &self,
-        time: GameTime,
-        context: &RenderContext,
-    ) -> ImageHandle;
+    fn render(&self, time: GameTime, context: &RenderContext) -> ImageHandle;
     fn resumed(&mut self) -> Result<(), GameError<E>> {
         Ok(())
     }

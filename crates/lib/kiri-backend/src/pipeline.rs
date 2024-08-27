@@ -216,7 +216,10 @@ pub fn compile_raster_pipeline(
                 .name(entry)
         })
         .collect::<Vec<_>>();
-    debug!("{:?} {:?}", shader_create_info[0].stage, shader_create_info[1].stage);
+    debug!(
+        "{:?} {:?}",
+        shader_create_info[0].stage, shader_create_info[1].stage
+    );
 
     let streams = streams
         .iter()
@@ -258,8 +261,10 @@ pub fn compile_raster_pipeline(
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
     let viewport = vk::Viewport::default();
-    let scissor  =vk::Rect2D::default();
-    let viewport_state = vk::PipelineViewportStateCreateInfo::default().viewports(slice::from_ref(&viewport)).scissors(slice::from_ref(&scissor));
+    let scissor = vk::Rect2D::default();
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewports(slice::from_ref(&viewport))
+        .scissors(slice::from_ref(&scissor));
 
     let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::default()
         .rasterizer_discard_enable(false)
