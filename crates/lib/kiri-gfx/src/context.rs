@@ -40,22 +40,6 @@ impl<'a> RasterizerPassBuilder<'a> {
         self.streams.push(stream);
     }
 
-    pub fn push_dynamic_data<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
-        self.context
-            .dynamic
-            .push(&self.context.renderer.device.physical_device, data)
-    }
-
-    pub fn write_dynamic_data<T: Copy>(&self, count: usize) -> Result<DynamicWriter<T>, Error> {
-        self.context
-            .dynamic
-            .write(&self.context.renderer.device.physical_device, count)
-    }
-
-    pub fn get_temprary_buffer(&self) -> BufferHandle {
-        self.context.dynamic.get_buffer_handle()
-    }
-
     pub fn get_descriptor_set(
         &mut self,
         builder: DescriptorSetBuilder,
@@ -108,6 +92,32 @@ impl<'a> RenderContext<'a> {
             trash_descriptors: Default::default(),
             backbuffer,
         }
+    }
+
+    pub fn push_dynamic_data<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
+        self.dynamic
+            .push(&self.renderer.device.physical_device, data)
+    }
+
+    pub fn write_dynamic_data<T: Copy>(&self, count: usize) -> Result<DynamicWriter<T>, Error> {
+        self.dynamic
+            .write(&self.renderer.device.physical_device, count)
+    }
+
+    pub fn get_temprary_buffer(&self) -> BufferHandle {
+        self.dynamic.get_buffer_handle()
+    }
+
+    pub fn get_descriptor_set(
+        &self,
+        builder: DescriptorSetBuilder,
+    ) -> Result<DescriptorHandle, Error> {
+        let handle = self.descriptors.write().push(
+            vk::DescriptorSet::null(),
+            builder.build(&self.renderer.device)?,
+        );
+        self.trash_descriptors.lock().push(handle);
+        Ok(handle)
     }
 
     pub fn create_rasterizer_pass(

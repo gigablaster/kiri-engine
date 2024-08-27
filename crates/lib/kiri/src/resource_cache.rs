@@ -23,16 +23,18 @@ use kiri_assets::{
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
-use kiri_gfx::{DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer};
+use kiri_gfx::{
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
+};
 use kiri_vfs::{vfs_load, AssetReference};
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 
 use crate::{
     gpu::{GpuMeshMaterial, GpuStaticVertex},
-    Bounds, ConstUniformBuffer, Error, RenderMaterialDesc, RenderMeshSurface, RenderScene,
-    StaticRenderMesh,
+    Bounds, ConstUniformBuffer, Error, MeshResolver, RenderMaterial, RenderMeshSurface,
+    RenderScene, StaticRenderMesh,
 };
 
 pub type SceneHandle = Handle<RenderScene>;
@@ -213,7 +215,7 @@ fn do_load_scene(
     let mut mesh_assets = manager.meshe_assets.write();
     let mut materials = Vec::new();
     for material in &asset.materials {
-        materials.push(RenderMaterialDesc {
+        materials.push(RenderMaterial {
             ds: manager.get_or_load_material(material)?,
             ty: material.blend.into(),
         });
@@ -241,15 +243,17 @@ fn do_load_scene(
             .map(|x| RenderMeshSurface {
                 first_index: x.first_index,
                 index_count: x.index_count,
-                material_index: x.material,
+                material: materials[x.material as usize],
             })
             .collect::<Vec<_>>();
         let mesh = StaticRenderMesh {
+            vertex_buffer: BufferPointer::new(vertices, 0),
+            index_buffer: BufferPointer::new(indices, 0),
             vertex_offset: mesh.vertex_offset, //FIXME: is it in bytes? I assume not
             surfaces,
             bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
-            position_scale: mesh.positon_scale,
-            uv_scale: mesh.uv_scale,
+            // position_scale: mesh.positon_scale,
+            // uv_scale: mesh.uv_scale,
         };
         bounds.push(mesh.bounds);
         meshes.push(mesh);
@@ -270,7 +274,6 @@ fn do_load_scene(
         vertices,
         indices,
         meshes,
-        materials,
         bounds,
         names: asset.name_to_mesh,
         parents: asset.nodes.iter().map(|x| x.parent).collect(),
@@ -371,7 +374,7 @@ const MAX_RESOURCES: usize = 0xffff;
 
 #[derive(Debug)]
 pub struct ResourceCache {
-    renderer: Arc<Renderer>,
+    pub renderer: Arc<Renderer>,
     loading_tasks: Mutex<Vec<LoadingTask>>,
     images: AssetTracker<ImageHandle>,
     scenes: AssetTracker<SceneHandle>,
@@ -417,6 +420,13 @@ impl ResourceCache {
             }
         }
     }
+
+    pub fn resolve<'a>(&'a self) -> ResourceCacheMeshResolver<'a> {
+        ResourceCacheMeshResolver {
+            static_meshes: self.meshe_assets.read(),
+            scens: self.scene_assets.read(),
+        }
+    }
 }
 
 impl Drop for ResourceCache {
@@ -435,5 +445,22 @@ impl Drop for ResourceCache {
             .write()
             .drain()
             .for_each(|(_, ds)| self.renderer.destroy_descriptor_set(ds));
+    }
+}
+
+pub struct ResourceCacheMeshResolver<'a> {
+    static_meshes: RwLockReadGuard<'a, StaticMeshPool>,
+    scens: RwLockReadGuard<'a, ScenePool>,
+}
+
+impl<'a> MeshResolver for ResourceCacheMeshResolver<'a> {
+    fn resolve_static_mesh(&self, handle: StaticMeshHandle) -> Option<&StaticRenderMesh> {
+        let (mesh, index) = self.static_meshes.get(handle).copied()?;
+        let scene = self.scens.get(mesh)?;
+        Some(&scene.meshes[index])
+    }
+
+    fn resolve_scene(&self, handle: SceneHandle) -> Option<&RenderScene> {
+        self.scens.get(handle)
     }
 }

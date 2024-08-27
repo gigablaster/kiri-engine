@@ -18,8 +18,8 @@ mod mesh;
 mod pipeline_cache;
 mod resource_cache;
 mod scene;
+mod scene_renderer;
 mod uniforms;
-// mod scene;
 
 use std::io;
 
@@ -27,8 +27,8 @@ pub use mesh::*;
 pub use pipeline_cache::*;
 pub use resource_cache::*;
 pub use scene::*;
+pub use scene_renderer::*;
 pub use uniforms::*;
-// pub use scene::*;
 
 use thiserror::Error;
 

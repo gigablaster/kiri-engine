@@ -93,20 +93,20 @@ impl DrawStreamBuilder {
     }
 
     /// Resets bind groups and dynamic offsets
-    pub fn pipeline(&mut self, pipeline: PipelineHandle) {
+    pub fn set_pipeline(&mut self, pipeline: PipelineHandle) {
         if self.current.pipeline != pipeline {
             self.mask |= PIPELINE_MASK;
             self.current.pipeline = pipeline;
             for i in 0..MAX_DESCRIPTOR_SETS {
-                self.descriptor_set(i, None);
+                self.set_descriptor(i, None);
             }
             for i in 0..MAX_DYNAMIC_OFFSETS {
-                self.dynamic_offset(i, None);
+                self.set_dynamic_offset(i, None);
             }
         }
     }
 
-    pub fn vertex_stream(&mut self, stream: usize, buffer: Option<BufferPointer>) {
+    pub fn set_vertex_buffer(&mut self, stream: usize, buffer: Option<BufferPointer>) {
         debug_assert!(stream < MAX_VERTEX_STREAMS);
         let buffer = buffer.unwrap_or_default();
         if self.current.streams[stream] != buffer {
@@ -115,14 +115,14 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn indices(&mut self, buffer: BufferPointer) {
+    pub fn set_index_buffer(&mut self, buffer: BufferPointer) {
         if self.current.indices != buffer {
             self.mask |= INDEX_STREAM_MASK;
             self.current.indices = buffer
         }
     }
 
-    pub fn descriptor_set(&mut self, slot: usize, group: Option<DescriptorHandle>) {
+    pub fn set_descriptor(&mut self, slot: usize, group: Option<DescriptorHandle>) {
         debug_assert!(slot < MAX_DESCRIPTOR_SETS);
         let group = group.unwrap_or_default();
         if self.current.bind_groups[slot] != group {
@@ -131,7 +131,7 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn dynamic_offset(&mut self, slot: usize, offset: Option<u32>) {
+    pub fn set_dynamic_offset(&mut self, slot: usize, offset: Option<u32>) {
         debug_assert!(slot < MAX_DYNAMIC_OFFSETS);
         let offset = offset.unwrap_or(u32::MAX);
         if self.current.dynamic_offsets[slot] != offset {
@@ -140,7 +140,7 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn vertex_offset(&mut self, offset: i32) {
+    pub fn set_vertex_offset(&mut self, offset: i32) {
         if self.current.vertex_offset != offset {
             self.mask |= VERTEX_OFFSET_MASK;
             self.current.vertex_offset = offset;

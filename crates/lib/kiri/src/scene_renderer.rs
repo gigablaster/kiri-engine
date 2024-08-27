@@ -1,0 +1,210 @@
+// Copyright (C) 2024 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use std::{mem, sync::Arc};
+
+use ash::vk::{self};
+use kiri_backend::{
+    DescriptorSetLayoutDesc, ImageAttachmentDesc, RenderPassLayout, SubpassLayout,
+    DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+};
+use kiri_gfx::{
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, PipelineHandle,
+    RenderContext, RenderPassHandle, RenderTarget, RenderTargetGuard, RenderTargetPool,
+};
+use lazy_static::lazy_static;
+
+use crate::{
+    gpu::{GpuInstanceData, GpuStaticVertex, RenderPassGpuData},
+    Error, PipelineCache, RasterPipelineDesc, ResourceCache, Scene, SceneCuller,
+};
+
+lazy_static! {
+    static ref RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
+        DescriptorSetLayoutDesc::default().slot(0, "pass", vk::DescriptorType::UNIFORM_BUFFER, 1);
+    static ref INSTANCE_DATA_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
+        DescriptorSetLayoutDesc::default().slot(
+            0,
+            "instance",
+            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            1
+        );
+}
+
+#[derive(Debug)]
+pub struct SceneRemderer {
+    target_pool: RenderTargetPool,
+    resources: Arc<ResourceCache>,
+    pipelines: Arc<PipelineCache>,
+    main_pass: RenderPassHandle,
+}
+
+struct NullCuller {}
+
+impl SceneCuller for NullCuller {
+    fn cull(&self, bounds: crate::Bounds) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Camera {
+    pub view: glam::Mat4,
+    pub projection: glam::Mat4,
+}
+
+const DRAWS_PER_STREAM: usize = 256;
+
+#[derive(Debug, Clone, Copy)]
+struct RenderOp {
+    pipeline: PipelineHandle,
+    model: glam::Mat4,
+    vertex_buffer: BufferPointer,
+    index_buffer: BufferPointer,
+    material: DescriptorHandle,
+    first_index: u32,
+    index_count: u32,
+    vertex_offset: i32,
+}
+
+impl SceneRemderer {
+    pub fn new(
+        resource_cache: &Arc<ResourceCache>,
+        pipeline_cache: &Arc<PipelineCache>,
+    ) -> Result<Self, Error> {
+        let renderer = &resource_cache.renderer;
+        let layout = RenderPassLayout {
+            color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
+            depth: Some(
+                ImageAttachmentDesc::new(vk::Format::D24_UNORM_S8_UINT)
+                    .clear_input()
+                    .discard(),
+            ),
+            subpasses: &[SubpassLayout {
+                depth_write: true,
+                depth_read: false,
+                color_writes: &[0],
+                color_reads: &[],
+            }],
+        };
+        Ok(Self {
+            target_pool: RenderTargetPool::new(renderer),
+            resources: resource_cache.clone(),
+            pipelines: pipeline_cache.clone(),
+            main_pass: renderer.create_render_pass(layout)?,
+        })
+    }
+
+    pub fn render<'a>(
+        &'a self,
+        scene: &Scene,
+        camera: Camera,
+        context: &RenderContext,
+    ) -> Result<RenderTargetGuard<'a>, Error> {
+        puffin::profile_function!();
+        let resolver = self.resources.resolve();
+        let color_target = self.target_pool.get(
+            vk::Format::A2R10G10B10_UNORM_PACK32,
+            context.backbuffer.desc.dims,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+        )?;
+        let depth_target = self.target_pool.get(
+            vk::Format::D24_UNORM_S8_UINT,
+            context.backbuffer.desc.dims,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        )?;
+        let pass_data = context.push_dynamic_data(&[RenderPassGpuData {
+            view: camera.view,
+            projection: camera.projection,
+            view_projection: camera.view * camera.projection,
+            eye_position: camera.view.transform_point3(glam::Vec3::default()),
+        }])?;
+        let pass_ds = context.get_descriptor_set(
+            DescriptorSetBuilder::new(
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                &RENDER_PASS_DESCRIPTOR_LAYOUT,
+            )
+            .bind_uniform_buffer(0, pass_data),
+        )?;
+        let instance_ds = context.get_descriptor_set(
+            DescriptorSetBuilder::new(
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                &INSTANCE_DATA_DESCRIPTOR_LAYOUT,
+            )
+            .bind_dynamic_storage_buffer(
+                0,
+                context.get_temprary_buffer(),
+                (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
+            ),
+        )?;
+        let visible = scene.cull(NullCuller {}, &resolver);
+        let mut pass = context.create_rasterizer_pass(
+            "Main pass",
+            self.main_pass,
+            &[RenderTarget::new(color_target.handle).clear_color([0.2, 0.2, 0.2, 1.0])],
+            Some(RenderTarget::new(depth_target.handle).clear_depth_stencil(1.0, 0)),
+            None,
+        );
+        let pipeline = self
+            .pipelines
+            .get_or_create_raster_pipeline(RasterPipelineDesc::new::<GpuStaticVertex>(
+                "shaders/main.vert",
+                "shaders/main.frag",
+                self.main_pass,
+                0,
+            ))?;
+        let mut render_ops = Vec::new();
+        for (model, mesh) in &visible.static_meshes {
+            for surface in &mesh.surfaces {
+                render_ops.push(RenderOp {
+                    pipeline,
+                    model: (*model).into(),
+                    vertex_buffer: mesh.vertex_buffer,
+                    index_buffer: mesh.index_buffer,
+                    material: surface.material.ds,
+                    first_index: surface.first_index,
+                    index_count: surface.index_count,
+                    vertex_offset: mesh.vertex_offset as i32,
+                })
+            }
+        }
+
+        let mut index = 0;
+        while index < render_ops.len() {
+            let mut instance = 0;
+            let mut data = context.write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)?;
+            let mut stream = DrawStreamBuilder::new(0);
+
+            while instance < DRAWS_PER_STREAM && index < render_ops.len() {
+                let op = &render_ops[index];
+                data.push(GpuInstanceData { model: op.model })?;
+                stream.set_pipeline(op.pipeline);
+                stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
+                stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
+                stream.set_vertex_buffer(0, Some(op.vertex_buffer));
+                stream.set_index_buffer(op.index_buffer);
+                stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
+                stream.set_dynamic_offset(0, Some(data.offset as _));
+                stream.set_vertex_offset(op.vertex_offset);
+                stream.draw(op.first_index, op.index_count, instance as _, 1);
+                instance += 1;
+                index += 1;
+            }
+            pass.draw(stream.build());
+        }
+        Ok(color_target)
+    }
+}

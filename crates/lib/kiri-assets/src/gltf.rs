@@ -52,11 +52,11 @@ impl GltfSceneSource {
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 pub struct StaticMeshVertex {
-    pub position: [u16; 3],
-    pub normal: [u16; 2],
-    pub tangent: [u16; 2],
-    pub uv1: [u16; 2],
-    pub uv2: [u16; 2],
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 4],
+    pub uv1: [f32; 2],
+    pub uv2: [f32; 2],
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable, PartialEq, Eq, Hash)]
@@ -187,8 +187,8 @@ pub struct MeshSurfaceAsset {
 pub struct StaticMeshAsset {
     pub vertex_offset: u32,
     pub surfaces: Vec<MeshSurfaceAsset>,
-    pub positon_scale: f32,
-    pub uv_scale: [f32; 2],
+    // pub positon_scale: f32,
+    // pub uv_scale: [f32; 2],
     pub bounds: ([f32; 3], f32),
 }
 

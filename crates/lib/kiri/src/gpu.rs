@@ -13,7 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::mem;
+
+use ash::vk;
 use kiri_assets::{MeshAssetMaterial, StaticMeshVertex};
+use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
@@ -45,23 +49,62 @@ impl GpuMeshMaterial {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct GpuStaticVertex {
-    pub position: glam::U16Vec3,
-    _pad: u16,
-    pub normal: glam::U16Vec2,
-    pub tangent: glam::U16Vec2,
-    pub uv1: glam::U16Vec2,
-    pub uv2: glam::U16Vec2,
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 4],
+    pub uv1: [f32; 2],
+    // pub uv2: [f32; 2],
+}
+
+impl PipelineVertex for GpuStaticVertex {
+    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
+        &[InputVertexStreamLayout {
+            streams: &[
+                InputVertexAttrubute {
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    offset: 0,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    offset: 12,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    offset: 24,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::R32G32_SFLOAT,
+                    offset: 40,
+                },
+            ],
+            stride: mem::size_of::<GpuStaticVertex>() as u32,
+        }]
+    }
 }
 
 impl From<StaticMeshVertex> for GpuStaticVertex {
     fn from(value: StaticMeshVertex) -> Self {
         Self {
-            position: glam::U16Vec3::from_array(value.position),
-            _pad: 0,
-            normal: glam::U16Vec2::from_array(value.normal),
-            tangent: glam::U16Vec2::from_array(value.tangent),
-            uv1: glam::U16Vec2::from_array(value.uv1),
-            uv2: glam::U16Vec2::from_array(value.uv2),
+            position: value.position,
+            normal: value.normal,
+            tangent: value.tangent,
+            uv1: value.uv1,
+            // uv2: glam::U16Vec2::from_array(value.uv2),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct RenderPassGpuData {
+    pub view: glam::Mat4,
+    pub projection: glam::Mat4,
+    pub view_projection: glam::Mat4,
+    pub eye_position: glam::Vec3,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct GpuInstanceData {
+    pub model: glam::Mat4,
 }

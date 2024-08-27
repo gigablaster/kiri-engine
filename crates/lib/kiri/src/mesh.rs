@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use kiri_assets::{MeshMaterialBlend, NodeIndex};
-use kiri_gfx::{BufferHandle, DescriptorHandle, ImageHandle};
+use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
 
 use crate::{Bounds, StaticMeshHandle};
 
@@ -24,7 +24,7 @@ use crate::{Bounds, StaticMeshHandle};
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
-    pub material_index: u32,
+    pub material: RenderMaterial,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,7 +45,7 @@ pub enum RenderMaterialType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RenderMaterialDesc {
+pub struct RenderMaterial {
     pub ds: DescriptorHandle,
     pub ty: RenderMaterialType,
 }
@@ -62,11 +62,13 @@ impl From<MeshMaterialBlend> for RenderMaterialType {
 
 #[derive(Debug, Default)]
 pub struct StaticRenderMesh {
+    pub vertex_buffer: BufferPointer,
+    pub index_buffer: BufferPointer,
     pub vertex_offset: u32,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: Bounds,
-    pub position_scale: f32,
-    pub uv_scale: [f32; 2],
+    // pub position_scale: f32,
+    // pub uv_scale: [f32; 2],
 }
 
 #[derive(Debug, Default)]
@@ -74,7 +76,6 @@ pub struct RenderScene {
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
-    pub materials: Vec<RenderMaterialDesc>,
     pub bounds: Vec<Bounds>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
