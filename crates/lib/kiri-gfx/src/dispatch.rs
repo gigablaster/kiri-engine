@@ -18,8 +18,8 @@ use ash::vk::{self};
 use kiri_backend::{Image, ImageAttachment, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
 
 use crate::{
-    BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DrawStream, DynamicGpuMemory,
-    Error, ImageHandle, ImagePool, PipelineHandle, PipelinePool, RenderPassHandle, RenderPassPool,
+    BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DrawStream, Error, ImageHandle,
+    ImagePool, PipelineHandle, PipelinePool, RenderPassHandle, RenderPassPool,
 };
 
 #[derive(Debug)]
@@ -171,11 +171,11 @@ impl PassDispatcher for RasterizerPassDispatcher {
         let clear_values = self
             .color_targets
             .iter()
-            .map(|x| x.clear.unwrap_or(vk::ClearValue::default()))
+            .map(|x| x.clear.unwrap_or_default())
             .chain(
                 self.depth_target
                     .iter()
-                    .map(|x| x.clear.unwrap_or(vk::ClearValue::default())),
+                    .map(|x| x.clear.unwrap_or_default()),
             )
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
         let begine_info = vk::RenderPassBeginInfo::default()

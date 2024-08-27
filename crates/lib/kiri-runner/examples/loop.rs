@@ -3,7 +3,7 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use ash::vk;
-use kiri::ResourceCache;
+use kiri::{ResourceCache, ResourceLoader};
 use kiri_backend::{ImageAttachmentDesc, RenderPassLayout, SubpassLayout};
 use kiri_gfx::{
     ImageHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool, Renderer,
@@ -30,8 +30,8 @@ impl Error for LoopError {}
 impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let cache = ResourceCache::new(renderer)?;
-        // cache.get_or_load_scene("PBR/gun.gltf")?;
-        // cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
+        cache.get_or_load_scene("PBR/gun.gltf")?;
+        cache.get_or_load_scene("ABeautifulGame/ABeautifulGame.gltf")?;
         let layout = RenderPassLayout {
             color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
             depth: None,

@@ -14,11 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{
-    mem::{self},
-    ptr::NonNull,
-    sync::Arc,
-};
+use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk::{self};
 use bevy_tasks::ComputeTaskPool;
@@ -337,7 +333,7 @@ impl Renderer {
         drop(dynamic_memory);
 
         // Generate render streams
-        let context = RenderContext::new(self, &dynamic, &self.descriptors, &target.image);
+        let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
         let image = render(&context)?;
 
         // Prepare
@@ -377,7 +373,7 @@ impl Renderer {
             empty_descriptor_set,
         };
         for pass in passes {
-            self.device.begin_label(command_buffer, &pass.name());
+            self.device.begin_label(command_buffer, pass.name());
             pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
             self.device.end_labe(command_buffer);
         }

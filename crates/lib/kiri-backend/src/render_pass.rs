@@ -360,8 +360,8 @@ fn build_dependencies(layout: RenderPassLayout) -> Vec<vk::SubpassDependency> {
     let mut state = layout
         .color
         .iter()
-        .map(|x| ResourceState::new(x))
-        .chain(layout.depth.iter().map(|x| ResourceState::new(x)))
+        .map(ResourceState::new)
+        .chain(layout.depth.iter().map(ResourceState::new))
         .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
     let depth_index = state.len() - 1;
     let mut dependencies = Vec::new();

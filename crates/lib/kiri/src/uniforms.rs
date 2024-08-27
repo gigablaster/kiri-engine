@@ -15,7 +15,7 @@
 
 use std::{mem, sync::Arc};
 
-use kiri_backend::{BufferCreateDesc, GpuAllocator};
+use kiri_backend::BufferCreateDesc;
 use kiri_common::BumpAllocator;
 use kiri_gfx::{BufferHandle, BufferPointer, BufferSlice, Renderer};
 

@@ -104,7 +104,7 @@ impl PipelineCache {
         let mut programs = self.programs.lock();
         let key = ProgramKey(vertex_shader.into(), fragment_shader.into());
         if let Some(program) = programs.get(&key) {
-            Ok(program.clone())
+            Ok(*program)
         } else {
             let vertex_shader = self.get_or_load_shader(vertex_shader, ShaderType::Vertex)?;
             let fragment_shader = self.get_or_load_shader(fragment_shader, ShaderType::Fragment)?;

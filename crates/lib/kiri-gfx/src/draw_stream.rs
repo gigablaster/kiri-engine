@@ -15,10 +15,7 @@
 
 use std::io::{self, Cursor, Read};
 
-use crate::{
-    BufferPointer, BufferPool, DescriptorHandle, DescriptorPool, Error, PipelineHandle,
-    PipelinePool, RenderResourceResolver,
-};
+use crate::{BufferPointer, DescriptorHandle, Error, PipelineHandle, RenderResourceResolver};
 use arrayvec::ArrayVec;
 use ash::vk::{self, Rect2D};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};

@@ -19,7 +19,6 @@ use std::{
     mem,
     path::Path,
     slice,
-    sync::Arc,
 };
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
@@ -175,13 +174,14 @@ impl<'a> InputVertexStreamLayout<'a> {
     }
 }
 
-pub fn compile_raster_pipeline<'a>(
+#[allow(clippy::too_many_arguments)]
+pub fn compile_raster_pipeline(
     device: &RenderDevice,
     cache: vk::PipelineCache,
     program: &Program,
     render_pass: &RenderPass,
     subpass: u32,
-    streams: &[InputVertexStreamLayout<'a>],
+    streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
 ) -> Result<vk::Pipeline, Error> {

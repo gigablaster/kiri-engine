@@ -74,7 +74,7 @@ impl<'a> RasterizerPassBuilder<'a> {
             .lock()
             .append(&mut self.descriptor_sets);
         Box::new(RasterizerPassDispatcher::new(
-            &self.name,
+            self.name,
             self.render_pass,
             &self.color_targets,
             self.depth_target,
