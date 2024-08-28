@@ -34,7 +34,7 @@ struct DrawState {
     vertex_offset: i32,
     streams: [BufferPointer; MAX_VERTEX_STREAMS],
     indices: BufferPointer,
-    bind_groups: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
+    descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
 }
 
@@ -121,12 +121,12 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn set_descriptor(&mut self, slot: usize, group: Option<DescriptorHandle>) {
+    pub fn set_descriptor(&mut self, slot: usize, set: Option<DescriptorHandle>) {
         debug_assert!(slot < MAX_DESCRIPTOR_SETS);
-        let group = group.unwrap_or_default();
-        if self.current.bind_groups[slot] != group {
+        let set = set.unwrap_or_default();
+        if self.current.descriptors[slot] != set {
             self.mask |= DESCRIPTOR_SET_MASK << slot;
-            self.current.bind_groups[slot] = group;
+            self.current.descriptors[slot] = set;
         }
     }
 
@@ -134,7 +134,6 @@ impl DrawStreamBuilder {
         debug_assert!(slot < MAX_DYNAMIC_OFFSETS);
         let offset = offset.unwrap_or(u32::MAX);
         if self.current.dynamic_offsets[slot] != offset {
-            // debug!("Set offset {} -> {}", slot, offset);
             self.mask |= DYNAMIC_OFFSET_MASK << slot;
             self.current.dynamic_offsets[slot] = offset;
         }
@@ -187,13 +186,12 @@ impl DrawStreamBuilder {
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                 self.stream
-                    .write_u64::<NativeEndian>(self.current.bind_groups[i].into())
+                    .write_u64::<NativeEndian>(self.current.descriptors[i].into())
                     .unwrap();
             }
         }
         for i in 0..MAX_DYNAMIC_OFFSETS {
             if self.mask & (DYNAMIC_OFFSET_MASK << i) == (DYNAMIC_OFFSET_MASK << i) {
-                // debug!("Wrte offset {} -> {}", i, self.current.dynamic_offsets[i]);
                 self.stream
                     .write_u32::<NativeEndian>(self.current.dynamic_offsets[i])
                     .unwrap();
@@ -224,6 +222,7 @@ impl DrawStreamBuilder {
                 .write_i32::<NativeEndian>(self.current.vertex_offset)
                 .unwrap();
         }
+        self.mask = 0;
         self.commands += 1;
     }
 }
@@ -239,7 +238,7 @@ impl Default for DrawState {
             vertex_offset: 0,
             streams: Default::default(),
             indices: Default::default(),
-            bind_groups: Default::default(),
+            descriptors: Default::default(),
             dynamic_offsets: [u32::MAX, u32::MAX],
         }
     }
@@ -355,7 +354,6 @@ impl DrawStream {
             {
                 if mask & (DYNAMIC_OFFSET_MASK << i) == DYNAMIC_OFFSET_MASK << i {
                     let offset = reader.read_u32::<NativeEndian>().unwrap();
-                    // debug!("Read offset {} -> {}",i, offset );
                     *target = offset;
                     dynamic_offset_changed = true;
                 }
