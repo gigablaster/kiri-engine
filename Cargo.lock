@@ -991,9 +991,9 @@ dependencies = [
 
 [[package]]
 name = "intel_tex_2"
-version = "0.4.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd699c0e6adcac28c06db24a220c834c8ec811e0d2d80f0261bb14e01737b4dc"
+checksum = "410e8e64fd296f11254dba8fccdc2ed35d8df41592fa96785ffc9877b6a9aaa5"
 dependencies = [
  "ispc_rt",
 ]

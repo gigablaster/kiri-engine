@@ -21,7 +21,8 @@ use kiri_backend::{
     DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle, PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool
+    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder,
+    ImageHandle, PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool,
 };
 use lazy_static::lazy_static;
 
@@ -59,6 +60,7 @@ impl SceneCuller for NullCuller {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct Camera {
     pub view: glam::Mat4,
     pub projection: glam::Mat4,
@@ -108,6 +110,29 @@ impl Ord for RenderOp {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+
+pub struct DirectionalLight {
+    pub direction: glam::Vec3A,
+    pub color: glam::Vec3A,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+
+pub struct HemisphericalAmbient {
+    pub top: glam::Vec3A,
+    pub middle: glam::Vec3A,
+    pub bottom: glam::Vec3A,
+}
+
+pub struct RenderEnviroment {
+    pub camera: Camera,
+    pub lights: [DirectionalLight; 3],
+    pub ambient: HemisphericalAmbient,
+}
+
 impl SceneRenderer {
     pub fn new(
         resource_cache: &Arc<ResourceCache>,
@@ -139,7 +164,7 @@ impl SceneRenderer {
     pub fn render(
         &self,
         scene: &Scene,
-        camera: Camera,
+        env: RenderEnviroment,
         context: &RenderContext,
     ) -> Result<ImageHandle, Error> {
         puffin::profile_function!();
@@ -157,10 +182,12 @@ impl SceneRenderer {
                 | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
         )?;
         let pass_data = context.push_dynamic_data(&[RenderPassGpuData {
-            view: camera.view,
-            projection: camera.projection,
-            view_projection: camera.view * camera.projection,
-            eye_position: camera.view.transform_point3(glam::Vec3::default()),
+            view: env.camera.view,
+            projection: env.camera.projection,
+            view_projection: env.camera.projection * env.camera.view,
+            eye_position: env.camera.view.transform_point3(glam::Vec3::default()),
+            lights: env.lights,
+            ambient: env.ambient,
         }])?;
         let pass_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(

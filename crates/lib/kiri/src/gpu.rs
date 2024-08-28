@@ -19,6 +19,8 @@ use ash::vk;
 use kiri_assets::{MaterialData, MeshAssetMaterial, StaticMeshVertex};
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
 
+use crate::{DirectionalLight, HemisphericalAmbient};
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct GpuMeshMaterial {
@@ -109,16 +111,18 @@ impl From<StaticMeshVertex> for GpuStaticVertex {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct RenderPassGpuData {
     pub view: glam::Mat4,
     pub projection: glam::Mat4,
     pub view_projection: glam::Mat4,
     pub eye_position: glam::Vec3,
+    pub lights: [DirectionalLight; 3],
+    pub ambient: HemisphericalAmbient,
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct GpuInstanceData {
     pub model: glam::Mat4,
 }
