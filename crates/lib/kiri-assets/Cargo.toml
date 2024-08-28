@@ -20,7 +20,7 @@ image = { version = "0.25.2", default-features = false, features = [
     "hdr",
 ] }
 
-intel_tex_2 = "0.4.0"
+intel_tex_2 = "0.3.0"
 normalize-path = "0.2.1"
 numquant = "0.2.0"
 mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [

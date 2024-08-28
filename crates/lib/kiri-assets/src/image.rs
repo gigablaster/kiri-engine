@@ -185,7 +185,7 @@ fn block_compress(image: ImageBuffer<image::Rgba<u8>, Vec<u8>>, bc: BcMode) -> V
     let mut compressed_bytes = vec![0u8; block_count as usize * block_bytes];
     match bc {
         BcMode::Bc5 => {
-            let surface = intel_tex_2::RgSurface {
+            let surface = intel_tex_2::RgbaSurface {
                 width: image.width(),
                 height: image.height(),
                 stride: image.width() * 4,
