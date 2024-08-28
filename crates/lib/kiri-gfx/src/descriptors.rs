@@ -88,10 +88,11 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_image(
         mut self,
-        slot: u32,
+        slot: BindingSlot,
         image: ImageHandle,
         aspect: vk::ImageAspectFlags,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = slot.resolve(&self.layout)?;
         self.images.push(Binding {
             slot,
             element: 0,
@@ -102,10 +103,11 @@ impl<'a> DescriptorSetBuilder<'a> {
                 view: vk::ImageView::null(),
             },
         });
-        self
+        Ok(self)
     }
 
-    pub fn bind_uniform_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
+    pub fn bind_uniform_buffer(mut self, slot: BindingSlot, buffer: BufferSlice) -> Result<Self, Error> {
+        let slot = slot.resolve(&self.layout)?;
         self.unifom_buffers.push(Binding {
             slot,
             element: 0,
@@ -116,10 +118,11 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: buffer.size,
             },
         });
-        self
+        Ok(self)
     }
 
-    pub fn bind_storage_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
+    pub fn bind_storage_buffer(mut self, slot: BindingSlot, buffer: BufferSlice) ->Result<Self, Error> {
+        let slot = slot.resolve(&self.layout)?;
         self.storage_buffers.push(Binding {
             slot,
             element: 0,
@@ -130,37 +133,39 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: buffer.size,
             },
         });
-        self
+        Ok(self)
     }
 
     pub fn bind_dynamic_uniform_buffer(
         mut self,
-        slot: u32,
+        slot: BindingSlot,
         handle: BufferHandle,
         size: u64,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = slot.resolve(&self.layout)?;
         self.dynamic_uniform_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData { handle, size },
         });
-        self
+        Ok(self)
     }
 
     pub fn bind_dynamic_storage_buffer(
         mut self,
-        slot: u32,
+        slot: BindingSlot,
         handle: BufferHandle,
         size: u64,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = slot.resolve(&self.layout)?;
         self.dynamic_storage_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData { handle, size },
         });
-        self
+        Ok(self)
     }
 
     pub(super) fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
@@ -173,5 +178,43 @@ impl<'a> DescriptorSetBuilder<'a> {
             dynamic_uniform_buffers: self.dynamic_uniform_buffers,
             dynamic_storage_buffers: self.dynamic_storage_buffers,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BindingSlot<'a> {
+    Index(u32),
+    Name(&'a str),
+}
+
+impl<'a> BindingSlot<'a> {
+    pub fn resolve(self, layout: &DescriptorSetLayoutDesc) -> Result<u32, Error> {
+        match self {
+            BindingSlot::Index(index) => {
+                if !layout.has_slot(index) {
+                    Err(Error::InvalidDescriptorSlotIndex(index))
+                } else {
+                    Ok(index)
+                }
+            }
+            BindingSlot::Name(name) => layout
+                .get_slot_by_name(name)
+                .ok_or(Error::InvalidDescriptorSlotName(name.to_owned())),
+        }
+    }
+}
+
+pub trait SkipMissingSlots {
+    fn skip_missing_losts(self) -> Result<(), Error>;
+}
+
+impl SkipMissingSlots for Result<(), Error> {
+    fn skip_missing_losts(self)  -> Result<(), Error>{
+        match  self {
+            Ok(_) => Ok(()),
+            Err(Error::InvalidDescriptorSlotIndex(_)) => Ok(()),
+            Err(Error::InvalidDescriptorSlotName(_)) => Ok(()),
+            Err(err) => Err(err)
+        }
     }
 }

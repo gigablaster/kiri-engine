@@ -144,6 +144,10 @@ impl DescriptorSetLayoutDesc {
         )
     }
 
+    pub fn has_slot(&self, index: u32) -> bool {
+        self.layout.iter().any(|(x, _)| *x == index)
+    }
+
     pub fn get_desc(&self, slot: u32) -> Option<&DescriptorSetDesc> {
         self.layout
             .iter()
@@ -160,6 +164,10 @@ impl DescriptorSetLayoutDesc {
         });
         normalized.layout.sort_by(|a, b| a.0.cmp(&b.0));
         normalized
+    }
+
+    pub fn get_layout(&self) -> &[(u32, DescriptorSetDesc)] {
+        &self.layout
     }
 }
 

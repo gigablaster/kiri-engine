@@ -25,9 +25,9 @@ pub enum Error {
     #[error("Backend error {0}")]
     BackendError(#[from] kiri_backend::Error),
     #[error("Slot with name {0} not found")]
-    SlotWithNameNotFound(String),
+    InvalidDescriptorSlotName(String),
     #[error("Slot with index {0} not found")]
-    SlotWithIndexNotFound(usize),
+    InvalidDescriptorSlotIndex(u32),
     #[error("Image is too big")]
     ImageTooBig,
     #[error("Out of dynamic memory")]

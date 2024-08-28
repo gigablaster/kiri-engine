@@ -24,7 +24,8 @@ use kiri_assets::{
 use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
+    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle,
+    ImageUploadData, Renderer,
 };
 use kiri_vfs::{vfs_load, AssetReference};
 use lazy_static::lazy_static;
@@ -72,20 +73,6 @@ lazy_static! {
             .slot(5, "emissive", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1);
 }
 
-// pub trait ResourceLoader {
-//     fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error>;
-//     fn get_or_load_material(&self, material: &MeshAssetMaterial)
-//         -> Result<DescriptorHandle, Error>;
-//     fn get_or_load_scene(&self, name: &str) -> Result<SceneHandle, Error>;
-// }
-
-// impl ResourceLoader for Arc<ResourceCache> {
-//     fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
-//         let source = ImageAssetSource::new(name).ty(ty);
-//         self.images
-//             .get_or_load(source, |source| load_image_impl(self, source))
-//     }
-
 /// Keeps normalized asset name -> asset + ref count.
 ///
 /// T must be a handle
@@ -124,7 +111,7 @@ pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: 
     // First, attempt to load compiled asset
     let reference = source.reference();
     if let Ok(reader) = vfs_load(reference) {
-        debug!("Loading asset: {:?}", reference);
+        debug!("Loading asset: {:?}", source);
         Ok(load_asset(reader)?)
     } else {
         // There's no compiled asset, so compile it in runtime
@@ -282,6 +269,7 @@ impl ResourceCache {
     pub fn get_or_load_material(
         &self,
         material: &MeshAssetMaterial,
+        layout: &DescriptorSetLayoutDesc,
     ) -> Result<DescriptorHandle, Error> {
         let materials = self.materials.upgradable_read();
         if let Some(material) = materials.get(material) {
@@ -292,73 +280,42 @@ impl ResourceCache {
                 Ok(*material)
             } else {
                 // Get all images
-
-                let base_color = if let Some(source) = material
-                    .get_map("base_color")
-                    .cloned()
-                    .unwrap_or_default()
-                    .get_image()
-                {
-                    self.get_or_load_image(&source.path, source.ty)?
-                } else {
-                    self.dummy_color_image
-                };
-                let normals = if let Some(source) = material
-                    .get_map("normal")
-                    .cloned()
-                    .unwrap_or_default()
-                    .get_image()
-                {
-                    self.get_or_load_image(&source.path, source.ty)?
-                } else {
-                    self.dummy_normal_image
-                };
-                let metallic_roughness = if let Some(source) = material
-                    .get_map("metallic_roughness")
-                    .cloned()
-                    .unwrap_or_default()
-                    .get_image()
-                {
-                    self.get_or_load_image(&source.path, source.ty)?
-                } else {
-                    self.dummy_occlusion_metallic_roughness
-                };
-                let occlusion = if let Some(source) = material
-                    .get_map("occlusion")
-                    .cloned()
-                    .unwrap_or_default()
-                    .get_image()
-                {
-                    self.get_or_load_image(&source.path, source.ty)?
-                } else {
-                    self.dummy_occlusion_metallic_roughness
-                };
-                let emissive = if let Some(source) = material
-                    .get_map("emissive")
-                    .cloned()
-                    .unwrap_or_default()
-                    .get_image()
-                {
-                    self.get_or_load_image(&source.path, source.ty)?
-                } else {
-                    self.dummy_emissive_image
-                };
+                let mut images = HashMap::new();
+                for (_, info) in layout.get_layout().iter() {
+                    if info.ty == vk::DescriptorType::SAMPLED_IMAGE
+                        || info.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                    {
+                        if let Some(source) = material
+                            .get_map(&info.name)
+                            .cloned()
+                            .unwrap_or_default()
+                            .get_image()
+                        {
+                            images.insert(
+                                info.name.clone(),
+                                self.get_or_load_image(&source.path, source.ty)?,
+                            );
+                        } else {
+                            images.insert(info.name.to_owned(), self.dummy_color_image);
+                        }
+                    }
+                }
 
                 // Allocate and copy uniform data
-                let builder = DescriptorSetBuilder::new(
+                let mut builder = DescriptorSetBuilder::new(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
                     &MATERIAL_DESCRIPTOR_LAYOUT,
                 )
                 .bind_uniform_buffer(
-                    0,
+                    BindingSlot::Name("material"),
                     self.material_uniforms
                         .push(GpuMeshMaterial::new(material))?,
-                )
-                .bind_image(1, base_color, vk::ImageAspectFlags::COLOR)
-                .bind_image(2, normals, vk::ImageAspectFlags::COLOR)
-                .bind_image(3, metallic_roughness, vk::ImageAspectFlags::COLOR)
-                .bind_image(4, occlusion, vk::ImageAspectFlags::COLOR)
-                .bind_image(5, emissive, vk::ImageAspectFlags::COLOR);
+                )?;
+                for (slot, image) in images {
+                    builder = builder
+                        .bind_image(BindingSlot::Name(&slot), image, vk::ImageAspectFlags::COLOR)
+                        .unwrap();
+                }
                 let descriptor_set = self.renderer.create_descriptor_set(builder)?;
                 materials.insert(material.clone(), descriptor_set);
                 Ok(descriptor_set)
@@ -384,7 +341,7 @@ impl ResourceCache {
         let mut materials = Vec::new();
         for material in &asset.materials {
             materials.push(RenderMaterial {
-                ds: self.get_or_load_material(material)?,
+                ds: self.get_or_load_material(material, &MATERIAL_DESCRIPTOR_LAYOUT)?,
                 ty: material.blend.into(),
             });
         }

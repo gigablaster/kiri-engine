@@ -21,8 +21,7 @@ use kiri_backend::{
     DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle,
-    PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool,
+    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle, PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool
 };
 use lazy_static::lazy_static;
 
@@ -168,7 +167,7 @@ impl SceneRenderer {
                 vk::ShaderStageFlags::ALL_GRAPHICS,
                 &RENDER_PASS_DESCRIPTOR_LAYOUT,
             )
-            .bind_uniform_buffer(0, pass_data),
+            .bind_uniform_buffer(BindingSlot::Index(0), pass_data)?,
         )?;
         let instance_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
@@ -176,10 +175,10 @@ impl SceneRenderer {
                 &INSTANCE_DATA_DESCRIPTOR_LAYOUT,
             )
             .bind_dynamic_storage_buffer(
-                0,
+                BindingSlot::Index(0),
                 context.get_temprary_buffer(),
                 (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
-            ),
+            )?,
         )?;
         let visible = scene.cull(NullCuller {}, &resolver);
         let mut pass = context.create_rasterizer_pass(
