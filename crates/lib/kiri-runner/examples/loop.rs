@@ -64,7 +64,6 @@ impl GameClient<LoopError> for Loop {
     }
 
     fn update(&mut self, time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
-        self.resources.tick().unwrap();
         self.scene
             .update_node_transform(self.root, Affine3A::from_rotation_y(self.time * 0.5));
         self.time += time.delta_time;

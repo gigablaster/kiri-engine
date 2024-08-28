@@ -335,19 +335,17 @@ impl Renderer {
         let mut dynamic_memory = self.dynamic_memory.lock();
         dynamic_memory.recycle();
         let dynamic = dynamic_memory.get(self)?;
-        let mut staging = self.staging.lock();
 
         // Generate render streams
         let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
         let image = render(&context);
 
         // Prepare
-
+        let staging_wait = self.staging.lock().upload()?;
         self.compile_pipelines()?;
         let images = self.images.write();
         let buffers = self.buffers.write();
         let pipelines = self.pipelines.write();
-        let staging_wait = staging.upload()?;
 
         self.update_descriptors(&frame, &images, &buffers)?;
 
