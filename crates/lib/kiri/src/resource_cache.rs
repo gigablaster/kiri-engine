@@ -157,7 +157,10 @@ pub struct ResourceCache {
     mesh_assets: RwLock<StaticMeshPool>,
     material_uniforms: ConstUniformBuffer,
     materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
-    dummy_image: ImageHandle,
+    dummy_color_image: ImageHandle,
+    dummy_emissive_image: ImageHandle,
+    dummy_normal_image: ImageHandle,
+    dummy_occlusion_metallic_roughness: ImageHandle,
 }
 
 impl ResourceCache {
@@ -171,10 +174,28 @@ impl ResourceCache {
             images: Default::default(),
             materials: Default::default(),
             material_uniforms: ConstUniformBuffer::new(renderer, MATERIAL_BUFFER_SIZE)?,
-            dummy_image: renderer.create_image(
-                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy image"),
+            dummy_color_image: renderer.create_image(
+                ImageCreateDesc::texture(vk::Format::R8G8B8A8_SRGB, [1, 1]).name("Dummy color"),
                 Some(&[ImageUploadData {
                     data: &[127, 127, 127, 255],
+                }]),
+            )?,
+            dummy_emissive_image: renderer.create_image(
+                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy emissive"),
+                Some(&[ImageUploadData {
+                    data: &[0, 0, 0, 255],
+                }]),
+            )?,
+            dummy_occlusion_metallic_roughness: renderer.create_image(
+                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy ORM"),
+                Some(&[ImageUploadData {
+                    data: &[0, 255, 0, 255],
+                }]),
+            )?,
+            dummy_normal_image: renderer.create_image(
+                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy emissive"),
+                Some(&[ImageUploadData {
+                    data: &[0, 0, 255, 255],
                 }]),
             )?,
             scenes: Default::default(),
@@ -280,7 +301,7 @@ impl ResourceCache {
                 {
                     self.get_or_load_image(&source.path, source.ty)?
                 } else {
-                    self.dummy_image
+                    self.dummy_color_image
                 };
                 let normals = if let Some(source) = material
                     .get_map("normal")
@@ -290,7 +311,7 @@ impl ResourceCache {
                 {
                     self.get_or_load_image(&source.path, source.ty)?
                 } else {
-                    self.dummy_image
+                    self.dummy_normal_image
                 };
                 let metallic_roughness = if let Some(source) = material
                     .get_map("metallic_roughness")
@@ -300,7 +321,7 @@ impl ResourceCache {
                 {
                     self.get_or_load_image(&source.path, source.ty)?
                 } else {
-                    self.dummy_image
+                    self.dummy_occlusion_metallic_roughness
                 };
                 let occlusion = if let Some(source) = material
                     .get_map("occlusion")
@@ -310,7 +331,7 @@ impl ResourceCache {
                 {
                     self.get_or_load_image(&source.path, source.ty)?
                 } else {
-                    self.dummy_image
+                    self.dummy_occlusion_metallic_roughness
                 };
                 let emissive = if let Some(source) = material
                     .get_map("emissive")
@@ -320,7 +341,7 @@ impl ResourceCache {
                 {
                     self.get_or_load_image(&source.path, source.ty)?
                 } else {
-                    self.dummy_image
+                    self.dummy_emissive_image
                 };
 
                 // Allocate and copy uniform data
@@ -481,7 +502,7 @@ impl ResourceCache {
 
 impl Drop for ResourceCache {
     fn drop(&mut self) {
-        self.renderer.destroy_image(self.dummy_image);
+        self.renderer.destroy_image(self.dummy_color_image);
         self.images
             .assets
             .write()
