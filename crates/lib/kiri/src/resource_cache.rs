@@ -19,8 +19,7 @@ use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     get_compiled_asset_path, load_asset, save_asset, Asset, AssetSource, GltfSceneSource,
-    ImageAsset, ImageAssetType, ImageSource, ImportAsset, ImportMode, MeshAssetMaterial,
-    SceneAsset,
+    ImageAsset, ImageAssetType, ImageSource, ImportAsset, MeshAssetMaterial, SceneAsset,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
@@ -130,7 +129,7 @@ pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: 
     } else {
         // There's no compiled asset, so compile it in runtime
         warn!("Compile asset: {:?}", source);
-        let asset = source.import(ImportMode::Runtime)?;
+        let asset = source.import()?;
         if let Err(err) = try_save_asset(reference, &asset) {
             warn!("Failed to save compiled asset to cache: {}", err);
         }

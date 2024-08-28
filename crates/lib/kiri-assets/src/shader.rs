@@ -26,7 +26,6 @@ use speedy::{Readable, Writable};
 
 use crate::{
     get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error, ImportAsset,
-    ImportMode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
@@ -159,7 +158,7 @@ impl Asset for ShaderAsset {
 }
 
 impl ImportAsset<ShaderAsset> for ShaderAssetSource {
-    fn import(&self, _mode: ImportMode) -> Result<ShaderAsset, Error> {
+    fn import(&self) -> Result<ShaderAsset, Error> {
         let code = shader_prepper::process_file(
             &self.path,
             &mut ShaderIncludeProvider::default(),

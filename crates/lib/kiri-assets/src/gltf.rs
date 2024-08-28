@@ -25,7 +25,7 @@ use uuid::uuid;
 
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetReference,
-    AssetSource, Error, ImageAssetType, ImageSource, ImportAsset, ImportMode, MeshAssetBuilder,
+    AssetSource, Error, ImageAssetType, ImageSource, ImportAsset, MeshAssetBuilder,
     MeshSurfaceBuilder,
 };
 
@@ -267,7 +267,6 @@ struct GltfProcessingContext<'a> {
     pub vertices: Vec<StaticMeshVertex>,
     pub indices: Vec<u16>,
     pub materials: Vec<MeshAssetMaterial>,
-    pub mode: ImportMode,
 }
 
 struct NodeProcessingContext<'a> {
@@ -422,7 +421,7 @@ fn process_mesh(
         if let Some(uvs) = reader.read_tex_coords(1) {
             surface.push_uv2(&uvs.into_f32().collect::<Vec<_>>());
         }
-        builder.push(surface, context.mode == ImportMode::Compile);
+        builder.push(surface);
     }
     Ok(builder.build(
         &mut context.vertices,
@@ -520,7 +519,7 @@ fn import_scenes<'a>(
 }
 
 impl ImportAsset<SceneAsset> for GltfSceneSource {
-    fn import(&self, mode: ImportMode) -> Result<SceneAsset, Error> {
+    fn import(&self) -> Result<SceneAsset, Error> {
         let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
         let base_path = get_relative_asset_path(&self.0)?
@@ -536,7 +535,6 @@ impl ImportAsset<SceneAsset> for GltfSceneSource {
                 materials: Default::default(),
                 base_path: &base_path,
                 buffers,
-                mode,
             },
             document,
         )

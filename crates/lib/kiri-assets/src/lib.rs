@@ -102,14 +102,8 @@ pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     asset.serialize(w)
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum ImportMode {
-    Runtime,
-    Compile,
-}
-
 pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
-    fn import(&self, mode: ImportMode) -> Result<T, Error>;
+    fn import(&self) -> Result<T, Error>;
 }
 
 use std::{
