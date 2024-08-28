@@ -14,7 +14,7 @@ use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_compiled_asset_path, save_asset, Asset, AssetReference, AssetSource, Error,
-    GltfSceneSource, ImageAsset, ImageAssetSource, ImportAsset, ImportMode, ShaderAsset,
+    GltfSceneSource, ImageAsset, ImageSource, ImportAsset, ImportMode, ShaderAsset,
     ShaderAssetSource,
 };
 use kiri_vfs::{PackageBuilder, ROOT_SOURCE_ASSETS_PATH};
@@ -23,7 +23,7 @@ use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
 struct ContentProcessor {
-    images: Mutex<HashSet<ImageAssetSource>>,
+    images: Mutex<HashSet<ImageSource>>,
     scenes: Mutex<HashSet<GltfSceneSource>>,
     shaders: Mutex<HashSet<ShaderAssetSource>>,
     packer: Mutex<Box<dyn Packer>>,
@@ -34,7 +34,7 @@ unsafe impl Sync for ContentProcessor {}
 
 trait Packer: Send + Sync {
     fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool;
-    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()>;
+    fn save_asset(&mut self, reference: AssetReference, data: &[u8]) -> io::Result<()>;
     fn finish(&mut self) -> io::Result<()>;
 }
 
@@ -58,7 +58,7 @@ impl Packer for ArchivePacker {
         true
     }
 
-    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
+    fn save_asset(&mut self, reference: AssetReference, data: &[u8]) -> io::Result<()> {
         self.packer.pack(reference, data)
     }
 
@@ -70,15 +70,15 @@ impl Packer for ArchivePacker {
 impl Packer for LocalCachePacker {
     fn asset_need_rebuild(&self, asset: &dyn AssetSource) -> bool {
         let reference = asset.reference();
-        if let Some(last_update) = get_compiled_asset_change_time(&reference) {
+        if let Some(last_update) = get_compiled_asset_change_time(reference) {
             asset.changed(last_update)
         } else {
             true
         }
     }
 
-    fn save_asset(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
-        let path = get_compiled_asset_path(reference.compiled().as_path())?;
+    fn save_asset(&mut self, reference: AssetReference, data: &[u8]) -> io::Result<()> {
+        let path = get_compiled_asset_path(reference)?;
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -92,9 +92,8 @@ impl Packer for LocalCachePacker {
     }
 }
 
-fn get_compiled_asset_change_time(reference: &AssetReference) -> Option<SystemTime> {
-    let reference = reference.compiled();
-    let path = get_compiled_asset_path(reference.as_path()).ok()?;
+fn get_compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
+    let path = get_compiled_asset_path(reference).ok()?;
     if path.exists() {
         if let Ok(metadata) = fs::metadata(path) {
             if let Ok(modified) = metadata.modified() {
@@ -134,24 +133,17 @@ impl ContentProcessor {
     }
 
     fn build_scene_impl(&self, scene: GltfSceneSource) -> Result<(), Error> {
-        let mut asset = scene.import(ImportMode::Compile)?;
+        let asset = scene.import(ImportMode::Compile)?;
         let mut images = self.images.lock();
-        asset
-            .collect_dependencies()
-            .iter()
-            .for_each(|(reference, ty)| {
-                images.insert(ImageAssetSource {
-                    path: reference.to_string(),
-                    ty: *ty,
-                });
-            });
-        asset.compiled();
-        Ok(self.write_asset(&scene.reference(), asset)?)
+        asset.collect_dependencies().iter().for_each(|source| {
+            images.insert(source.clone());
+        });
+        Ok(self.write_asset(scene.reference(), asset)?)
     }
 
-    async fn build_image(&self, image: ImageAssetSource) {
+    async fn build_image(&self, image: ImageSource) {
         info!("Building image {:?}", image);
-        if let Err(err) = self.build_asset::<ImageAsset, ImageAssetSource>(image.clone()) {
+        if let Err(err) = self.build_asset::<ImageAsset, ImageSource>(image.clone()) {
             error!("Failed to build image {:?}: {}", image, err);
         }
     }
@@ -195,13 +187,13 @@ impl ContentProcessor {
         &self,
         source: U,
     ) -> Result<(), Error> {
-        self.write_asset(&source.reference(), source.import(ImportMode::Compile)?)?;
+        self.write_asset(source.reference(), source.import(ImportMode::Compile)?)?;
         Ok(())
     }
 
-    fn write_asset<T: Asset>(&self, reference: &AssetReference, asset: T) -> io::Result<()> {
+    fn write_asset<T: Asset>(&self, reference: AssetReference, asset: T) -> io::Result<()> {
         let mut cursor = Cursor::new(Vec::new());
-        save_asset(&mut cursor, asset)?;
+        save_asset(&mut cursor, &asset)?;
         self.packer
             .lock()
             .save_asset(reference, &cursor.into_inner())?;

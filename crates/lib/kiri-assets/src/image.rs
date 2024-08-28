@@ -82,16 +82,16 @@ impl ImageAssetType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ImageAssetSource {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
+pub struct ImageSource {
     pub path: String,
     pub ty: ImageAssetType,
 }
 
-impl ImageAssetSource {
-    pub fn new(path: &str) -> Self {
+impl ImageSource {
+    pub fn new<S: AsRef<str>>(path: S) -> Self {
         Self {
-            path: path.to_owned(),
+            path: path.as_ref().to_owned(),
             ty: ImageAssetType::Srgba,
         }
     }
@@ -102,9 +102,9 @@ impl ImageAssetSource {
     }
 }
 
-impl AssetSource for ImageAssetSource {
+impl AssetSource for ImageSource {
     fn reference(&self) -> crate::AssetReference {
-        AssetReference::new(&self.path)
+        AssetReference::new(self)
     }
 
     fn changed(&self, last_update: SystemTime) -> bool {
@@ -124,7 +124,7 @@ impl Asset for ImageAsset {
     }
 }
 
-impl ImportAsset<ImageAsset> for ImageAssetSource {
+impl ImportAsset<ImageAsset> for ImageSource {
     fn import(&self, mode: ImportMode) -> Result<ImageAsset, Error> {
         // Load image data
         let data = read_to_end(get_absolute_asset_path(&self.path)?)?;

@@ -66,7 +66,7 @@ impl ShaderAssetSource {
 
 impl AssetSource for ShaderAssetSource {
     fn reference(&self) -> AssetReference {
-        AssetReference::new(&self.path)
+        AssetReference::new(self)
     }
 
     fn changed(&self, last_update: std::time::SystemTime) -> bool {

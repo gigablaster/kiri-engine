@@ -13,13 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, mem, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, fs::File, hash::Hash, io, mem, sync::Arc};
 
 use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
-    load_asset, Asset, AssetSource, GltfSceneSource, ImageAsset, ImageAssetSource, ImageAssetType,
-    ImportAsset, ImportMode, MeshAssetMaterial, SceneAsset,
+    get_compiled_asset_path, load_asset, save_asset, Asset, AssetSource, GltfSceneSource,
+    ImageAsset, ImageAssetType, ImageSource, ImportAsset, ImportMode, MeshAssetMaterial,
+    SceneAsset,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
@@ -96,13 +97,13 @@ struct AssetTracker<T: Copy + Hash + Eq> {
 
 impl<T: Copy + Hash + Eq> AssetTracker<T> {
     /// Return asset if exists and increase ref count
-    fn get_or_load<U: AssetSource, LOAD: FnOnce(U) -> Result<T, Error>>(
+    fn get_or_load<U: AssetSource, LOAD: FnOnce(&U) -> Result<T, Error>>(
         &self,
-        source: U,
+        source: &U,
         load: LOAD,
     ) -> Result<T, Error> {
         let assets = self.assets.upgradable_read();
-        let key = source.reference().normalized();
+        let key = source.reference();
         if let Some(asset) = assets.get(&key) {
             Ok(*asset)
         } else {
@@ -111,7 +112,7 @@ impl<T: Copy + Hash + Eq> AssetTracker<T> {
                 Ok(*asset)
             } else {
                 let asset = load(source)?;
-                assets.insert(key.clone(), asset);
+                assets.insert(key, asset);
                 Ok(asset)
             }
         }
@@ -123,14 +124,22 @@ pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: 
 ) -> Result<U, Error> {
     // First, attempt to load compiled asset
     let reference = source.reference();
-    if let Ok(reader) = vfs_load(&reference.compiled()) {
+    if let Ok(reader) = vfs_load(reference) {
         debug!("Loading asset: {:?}", reference);
         Ok(load_asset(reader)?)
     } else {
         // There's no compiled asset, so compile it in runtime
         warn!("Compile asset: {:?}", source);
-        Ok(source.import(ImportMode::Runtime)?)
+        let asset = source.import(ImportMode::Runtime)?;
+        if let Err(err) = try_save_asset(reference, &asset) {
+            warn!("Failed to save compiled asset to cache: {}", err);
+        }
+        Ok(asset)
     }
+}
+
+fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
+    save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
 }
 
 const MATERIAL_BUFFER_SIZE: u64 = 2 * 1024 * 1024;
@@ -217,12 +226,12 @@ impl ResourceCache {
     }
 
     pub fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
-        let source = ImageAssetSource::new(name).ty(ty);
+        let source = ImageSource::new(name).ty(ty);
         self.images
-            .get_or_load(source, |source| self.load_image_impl(source))
+            .get_or_load(&source, |source| self.load_image_impl(source))
     }
 
-    fn load_image_impl(&self, source: ImageAssetSource) -> Result<ImageHandle, Error> {
+    fn load_image_impl(&self, source: &ImageSource) -> Result<ImageHandle, Error> {
         let handle = self.renderer.create_image(
             ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1])
                 .name(&format!("{} - DUMMY", source.reference())),
@@ -232,7 +241,7 @@ impl ResourceCache {
         )?;
         self.image_loading_tasks
             .lock()
-            .push(IoTaskPool::get().spawn(Self::load_image(handle, source)));
+            .push(IoTaskPool::get().spawn(Self::load_image(handle, source.clone())));
         Ok(handle)
     }
 
@@ -264,29 +273,53 @@ impl ResourceCache {
             } else {
                 // Get all images
 
-                let base_color = if let Some((name, ty)) = material.base_color.get_image() {
-                    self.get_or_load_image(name.as_str(), ty)?
+                let base_color = if let Some(source) = material
+                    .get_map("base_color")
+                    .cloned()
+                    .unwrap_or_default()
+                    .get_image()
+                {
+                    self.get_or_load_image(&source.path, source.ty)?
                 } else {
                     self.dummy_image
                 };
-                let normals = if let Some((name, ty)) = material.normals.get_image() {
-                    self.get_or_load_image(name.as_str(), ty)?
+                let normals = if let Some(source) = material
+                    .get_map("normal")
+                    .cloned()
+                    .unwrap_or_default()
+                    .get_image()
+                {
+                    self.get_or_load_image(&source.path, source.ty)?
                 } else {
                     self.dummy_image
                 };
-                let metallic_roughness =
-                    if let Some((name, ty)) = material.metallic_roughness.get_image() {
-                        self.get_or_load_image(name.as_str(), ty)?
-                    } else {
-                        self.dummy_image
-                    };
-                let occlusion = if let Some((name, ty)) = material.occlusion.get_image() {
-                    self.get_or_load_image(name.as_str(), ty)?
+                let metallic_roughness = if let Some(source) = material
+                    .get_map("metallic_roughness")
+                    .cloned()
+                    .unwrap_or_default()
+                    .get_image()
+                {
+                    self.get_or_load_image(&source.path, source.ty)?
                 } else {
                     self.dummy_image
                 };
-                let emissive = if let Some((name, ty)) = material.emissive.get_image() {
-                    self.get_or_load_image(name.as_str(), ty)?
+                let occlusion = if let Some(source) = material
+                    .get_map("occlusion")
+                    .cloned()
+                    .unwrap_or_default()
+                    .get_image()
+                {
+                    self.get_or_load_image(&source.path, source.ty)?
+                } else {
+                    self.dummy_image
+                };
+                let emissive = if let Some(source) = material
+                    .get_map("emissive")
+                    .cloned()
+                    .unwrap_or_default()
+                    .get_image()
+                {
+                    self.get_or_load_image(&source.path, source.ty)?
                 } else {
                     self.dummy_image
                 };
@@ -316,14 +349,14 @@ impl ResourceCache {
     pub fn get_or_load_scene(&self, name: &str) -> Result<SceneHandle, Error> {
         let source = GltfSceneSource::new(name);
         self.scenes
-            .get_or_load(source, |source| self.load_scene_impl(source))
+            .get_or_load(&source, |source| self.load_scene_impl(source))
     }
 
-    fn load_scene_impl(&self, source: GltfSceneSource) -> Result<SceneHandle, Error> {
+    fn load_scene_impl(&self, source: &GltfSceneSource) -> Result<SceneHandle, Error> {
         let handle = self.scene_assets.write().push(RenderScene::default());
         self.scene_loading_tasks
             .lock()
-            .push(IoTaskPool::get().spawn(Self::load_scene(handle, source)));
+            .push(IoTaskPool::get().spawn(Self::load_scene(handle, source.clone())));
         Ok(handle)
     }
 
@@ -434,7 +467,7 @@ impl ResourceCache {
 
     async fn load_image(
         handle: ImageHandle,
-        source: ImageAssetSource,
+        source: ImageSource,
     ) -> Result<(ImageHandle, ImageAsset), Error> {
         Ok((handle, load_or_compile_asset(&source)?))
     }

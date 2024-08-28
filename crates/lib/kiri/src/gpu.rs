@@ -16,7 +16,7 @@
 use std::mem;
 
 use ash::vk;
-use kiri_assets::{MeshAssetMaterial, StaticMeshVertex};
+use kiri_assets::{MaterialData, MeshAssetMaterial, StaticMeshVertex};
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
 
 #[derive(Debug, Clone, Copy)]
@@ -32,12 +32,26 @@ pub struct GpuMeshMaterial {
 
 impl GpuMeshMaterial {
     pub fn new(value: &MeshAssetMaterial) -> Self {
-        let [_, roughness, metallic, _] = value.metallic_roughness.get_color();
+        let [_, roughness, metallic, _] = value
+            .maps
+            .get("metallic_roughness")
+            .unwrap_or(&MaterialData::color([0.0, 1.0, 0.0, 1.0]))
+            .get_color();
         let alpha_cutoff = value.blend.get_alpha_cut();
         let emissive_power = value.get_emissive_power();
         Self {
-            base_color: value.base_color.get_color().into(),
-            emissive_color: value.emissive.get_color().into(),
+            base_color: value
+                .maps
+                .get("base_color")
+                .unwrap_or(&MaterialData::color([0.5, 0.5, 0.5, 1.0]))
+                .get_color()
+                .into(),
+            emissive_color: value
+                .maps
+                .get("emissive")
+                .unwrap_or(&MaterialData::color([0.0, 0.0, 0.0, 0.0]))
+                .get_color()
+                .into(),
             metallic,
             roughness,
             alpha_cutoff,

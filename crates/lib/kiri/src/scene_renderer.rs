@@ -137,8 +137,8 @@ impl SceneRenderer {
         })
     }
 
-    pub fn render<'a>(
-        &'a self,
+    pub fn render(
+        &self,
         scene: &Scene,
         camera: Camera,
         context: &RenderContext,
@@ -192,8 +192,8 @@ impl SceneRenderer {
         let pipeline = self
             .pipelines
             .get_or_create_raster_pipeline(RasterPipelineDesc::new::<GpuStaticVertex>(
-                "shaders/main_vs.glsl",
-                "shaders/main_ps.glsl",
+                "shaders/main.vert",
+                "shaders/main.frag",
                 self.main_pass,
                 0,
             ))?;

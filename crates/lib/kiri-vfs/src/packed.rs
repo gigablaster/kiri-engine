@@ -97,8 +97,7 @@ impl PackageBuilder {
         })
     }
 
-    pub fn pack(&mut self, reference: &AssetReference, data: &[u8]) -> io::Result<()> {
-        let reference = reference.compiled();
+    pub fn pack(&mut self, reference: AssetReference, data: &[u8]) -> io::Result<()> {
         let offset = self.align_file()?;
         if data.len() <= (DATA_ALIGMENT as usize) {
             self.file.write_all(data)?;
@@ -160,8 +159,7 @@ impl PackedArchive {
 }
 
 impl Archive for PackedArchive {
-    fn load(&self, reference: &AssetReference) -> io::Result<Box<dyn Read>> {
-        let reference = reference.compiled();
+    fn load(&self, reference: AssetReference) -> io::Result<Box<dyn Read>> {
         let header = self.directory.assets.get(&reference).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Asset {} not found", reference),
@@ -178,11 +176,7 @@ impl Archive for PackedArchive {
         }
     }
 
-    fn save(&self, _reference: &AssetReference) -> io::Result<Box<dyn io::Write>> {
-        Err(io::Error::other("Can't write to packed archive."))
-    }
-
-    fn exist(&self, reference: &AssetReference) -> bool {
-        self.directory.assets.contains_key(reference)
+    fn exist(&self, reference: AssetReference) -> bool {
+        self.directory.assets.contains_key(&reference)
     }
 }

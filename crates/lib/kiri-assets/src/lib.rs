@@ -96,7 +96,7 @@ pub fn load_asset<T: Asset, R: Read>(r: R) -> io::Result<T> {
     T::deserialize(&mut reader)
 }
 
-pub fn save_asset<T: Asset, W: Write>(w: W, asset: T) -> io::Result<()> {
+pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     let mut w = w;
     AssetHeader::new::<T>().write_to_stream(&mut w)?;
     asset.serialize(w)
@@ -159,10 +159,10 @@ pub fn get_absolute_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     Ok(root.join(get_relative_asset_path(path.as_ref())?))
 }
 
-pub fn get_compiled_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+pub fn get_compiled_asset_path(reference: AssetReference) -> io::Result<PathBuf> {
     let root = path::absolute(env::current_dir()?.join(ROOT_COMPILED_ASSETS_PATH))?;
 
-    Ok(root.join(get_relative_asset_path(path.as_ref())?))
+    Ok(root.join(get_relative_asset_path(format!("{}.asset", reference))?))
 }
 
 pub(crate) fn is_asset_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {

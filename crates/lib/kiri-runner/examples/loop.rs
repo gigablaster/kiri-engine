@@ -78,8 +78,7 @@ impl GameClient<LoopError> for Loop {
             view: Mat4::look_at_lh(vec3(0.0, 0.5, 1.5), Vec3::Y * 0.25, Vec3::NEG_Y),
             projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.001, 10.0),
         };
-        let target = self.render.render(&self.scene, camera, context).unwrap();
-        target
+        self.render.render(&self.scene, camera, context).unwrap()
     }
 
     fn swapchain_created(&mut self) -> Result<(), GameError<LoopError>> {
