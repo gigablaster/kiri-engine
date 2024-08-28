@@ -21,8 +21,8 @@ use kiri_backend::{
     DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, PipelineHandle,
-    RenderContext, RenderPassHandle, RenderTarget, RenderTargetGuard, RenderTargetPool,
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle,
+    PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool,
 };
 use lazy_static::lazy_static;
 
@@ -142,15 +142,16 @@ impl SceneRenderer {
         scene: &Scene,
         camera: Camera,
         context: &RenderContext,
-    ) -> Result<RenderTargetGuard<'a>, Error> {
+    ) -> Result<ImageHandle, Error> {
         puffin::profile_function!();
+        self.target_pool.recycle();
         let resolver = self.resources.resolve();
-        let color_target = self.target_pool.get(
+        let color_target = self.target_pool.get_image(
             vk::Format::A2R10G10B10_UNORM_PACK32,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
         )?;
-        let depth_target = self.target_pool.get(
+        let depth_target = self.target_pool.get_transient_image(
             vk::Format::D24_UNORM_S8_UINT,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
@@ -184,7 +185,7 @@ impl SceneRenderer {
         let mut pass = context.create_rasterizer_pass(
             "Main pass",
             self.main_pass,
-            &[RenderTarget::new(color_target.handle).clear_color([0.0, 0.0, 0.0, 1.0])],
+            &[RenderTarget::new(color_target).clear_color([0.0, 0.0, 0.0, 1.0])],
             Some(RenderTarget::new(depth_target.handle).clear_depth_stencil(1.0, 0)),
             None,
         );
