@@ -23,7 +23,7 @@ use std::{
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
-use log::{debug, info, warn};
+use log::{info, warn};
 
 use crate::{Error, Program, RenderDevice, RenderPass};
 
@@ -216,10 +216,6 @@ pub fn compile_raster_pipeline(
                 .name(entry)
         })
         .collect::<Vec<_>>();
-    debug!(
-        "{:?} {:?}",
-        shader_create_info[0].stage, shader_create_info[1].stage
-    );
 
     let streams = streams
         .iter()

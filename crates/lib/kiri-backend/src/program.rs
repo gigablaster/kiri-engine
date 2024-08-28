@@ -23,7 +23,6 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
 use kiri_common::TempList;
-use log::debug;
 use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
 use crate::{DescriptorCount, Error, SamplerDesc};
@@ -218,7 +217,6 @@ impl Program {
         for (_, info) in &desc {
             layouts.push(device.get_or_create_layout(stages, info)?);
         }
-        debug!("{:?} - {:?}", stages, desc);
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
         Ok(Self {
