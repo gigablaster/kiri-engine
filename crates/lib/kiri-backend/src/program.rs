@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CString, sync::Arc};
+use std::{ffi::CString, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
@@ -89,6 +89,11 @@ pub struct DescriptorSetLayoutDesc<'a> {
     pub update_after_bind: bool,
 }
 
+pub const EMPTY_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[],
+    update_after_bind: false,
+};
+
 impl<'a> DescriptorSetLayoutDesc<'a> {
     pub fn get_descriptor_count(&self) -> DescriptorSetCount {
         let mut count = DescriptorSetCount::default();
@@ -124,7 +129,7 @@ impl<'a> DescriptorSetLayoutDesc<'a> {
     }
 
     pub fn get_layout(&self) -> &[(u32, DescriptorSetDesc)] {
-        &self.layout
+        self.layout
     }
 }
 
@@ -157,7 +162,7 @@ impl Program {
         }
         let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
         for info in layout {
-            layouts.push(device.get_or_create_layout(stages, info)?);
+            layouts.push(device.get_or_create_layout(stages, *info)?);
         }
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
@@ -190,7 +195,7 @@ impl Program {
 pub(super) fn create_descriptor_layout(
     device: &RenderDevice,
     stage: vk::ShaderStageFlags,
-    layout: &DescriptorSetLayoutDesc,
+    layout: DescriptorSetLayoutDesc,
 ) -> Result<vk::DescriptorSetLayout, Error> {
     let samplers = TempList::new();
     let bindings = layout
@@ -206,7 +211,7 @@ pub(super) fn create_descriptor_layout(
                 || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
             {
                 binding = binding.immutable_samplers(samplers.add(vec![
-                    device.sampler(get_sampler_desc(&data.name)).unwrap();
+                    device.sampler(get_sampler_desc(data.name)).unwrap();
                     data.count as _
                 ]));
             }

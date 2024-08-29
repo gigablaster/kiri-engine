@@ -471,18 +471,18 @@ impl RenderDevice {
     pub fn get_or_create_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        desc: &DescriptorSetLayoutDesc<'static>,
+        desc: DescriptorSetLayoutDesc<'static>,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let layouts = self.layouts.upgradable_read();
-        if let Some(layout) = layouts.get(desc) {
+        if let Some(layout) = layouts.get(&desc) {
             Ok(*layout)
         } else {
             let mut layouts = RwLockUpgradableReadGuard::upgrade(layouts);
-            if let Some(layout) = layouts.get(desc) {
+            if let Some(layout) = layouts.get(&desc) {
                 Ok(*layout)
             } else {
                 let layout = create_descriptor_layout(self, stage, desc)?;
-                layouts.insert(*desc, layout);
+                layouts.insert(desc, layout);
                 Ok(layout)
             }
         }

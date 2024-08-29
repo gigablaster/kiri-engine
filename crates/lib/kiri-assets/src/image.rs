@@ -55,49 +55,63 @@ impl<C: Context> Writable<C> for ImageAsset {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ImageAssetType {
-    Srgba,
     Rgba,
     Rg,
 }
 
-impl ImageAssetType {
-    pub fn srgb(self) -> bool {
-        self == Self::Srgba
-    }
-
-    pub fn uncompressed_format(self) -> vk::Format {
-        match self {
-            ImageAssetType::Srgba => vk::Format::R8G8B8A8_SRGB,
-            _ => vk::Format::R8G8B8A8_UNORM,
-        }
-    }
-
-    pub fn compressed_format(self) -> vk::Format {
-        match self {
-            ImageAssetType::Srgba => vk::Format::BC7_SRGB_BLOCK,
-            ImageAssetType::Rg => vk::Format::BC5_UNORM_BLOCK,
-            _ => vk::Format::BC7_UNORM_BLOCK,
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
+pub enum ImageData {
+    Path(String),
+    Color([u8; 4]),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
 pub struct ImageSource {
-    pub path: String,
+    pub data: ImageData,
     pub ty: ImageAssetType,
+    pub srgb: bool,
 }
 
 impl ImageSource {
-    pub fn new<S: AsRef<str>>(path: S) -> Self {
+    pub fn path<S: AsRef<str>>(path: S) -> Self {
         Self {
-            path: path.as_ref().to_owned(),
-            ty: ImageAssetType::Srgba,
+            data: ImageData::Path(path.as_ref().to_owned()),
+            ty: ImageAssetType::Rgba,
+            srgb: false,
+        }
+    }
+
+    pub fn color(color: [u8; 4]) -> Self {
+        Self {
+            data: ImageData::Color(color),
+            ty: ImageAssetType::Rgba,
+            srgb: false,
         }
     }
 
     pub fn ty(mut self, value: ImageAssetType) -> Self {
         self.ty = value;
         self
+    }
+
+    pub fn srgb(mut self, value: bool) -> Self {
+        self.srgb = value;
+        self
+    }
+
+    pub fn compressed_format(&self) -> vk::Format {
+        match self.ty {
+            ImageAssetType::Rgba if self.srgb => vk::Format::BC7_SRGB_BLOCK,
+            ImageAssetType::Rgba => vk::Format::BC7_UNORM_BLOCK,
+            ImageAssetType::Rg => vk::Format::BC5_UNORM_BLOCK,
+        }
+    }
+
+    pub fn uncompressed_format(&self) -> vk::Format {
+        match self.ty {
+            ImageAssetType::Rgba if self.srgb => vk::Format::A8B8G8R8_SRGB_PACK32,
+            _ => vk::Format::A8B8G8R8_UNORM_PACK32,
+        }
     }
 }
 
@@ -107,7 +121,10 @@ impl AssetSource for ImageSource {
     }
 
     fn changed(&self, last_update: SystemTime) -> bool {
-        is_asset_changed(&self.path, last_update)
+        match &self.data {
+            ImageData::Path(path) => is_asset_changed(path, last_update),
+            ImageData::Color(_) => false,
+        }
     }
 }
 
@@ -126,7 +143,16 @@ impl Asset for ImageAsset {
 impl ImportAsset<ImageAsset> for ImageSource {
     fn import(&self) -> Result<ImageAsset, Error> {
         // Load image data
-        let data = read_to_end(get_absolute_asset_path(&self.path)?)?;
+        let data = match &self.data {
+            ImageData::Path(path) => read_to_end(get_absolute_asset_path(path)?)?,
+            ImageData::Color(data) => {
+                return Ok(ImageAsset {
+                    format: self.uncompressed_format(),
+                    dims: [1, 1],
+                    mips: vec![data.to_vec()],
+                })
+            }
+        };
         // Load image
         let mut image =
             image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
@@ -148,14 +174,14 @@ impl ImportAsset<ImageAsset> for ImageSource {
                 image = image.resize(current_dims[0], current_dims[1], FilterType::Lanczos3);
             }
             Ok(ImageAsset {
-                format: self.ty.compressed_format(),
+                format: self.compressed_format(),
                 dims,
                 mips,
             })
         } else {
             // Uncompressed image with single mip
             Ok(ImageAsset {
-                format: self.ty.uncompressed_format(),
+                format: self.uncompressed_format(),
                 dims,
                 mips: vec![image.to_rgba8().into_raw()],
             })

@@ -16,7 +16,7 @@
 use std::mem;
 
 use ash::vk;
-use kiri_assets::{MaterialData, MeshAssetMaterial, StaticMeshVertex};
+use kiri_assets::StaticMeshVertex;
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
 
 use crate::{DirectionalLight, HemisphericalAmbient};
@@ -24,42 +24,8 @@ use crate::{DirectionalLight, HemisphericalAmbient};
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct GpuMeshMaterial {
-    pub base_color: glam::Vec4,
-    pub emissive_color: glam::Vec4,
-    pub metallic: f32,
-    pub roughness: f32,
     pub alpha_cutoff: f32,
     pub emissive_power: f32,
-}
-
-impl GpuMeshMaterial {
-    pub fn new(value: &MeshAssetMaterial) -> Self {
-        let [_, roughness, metallic, _] = value
-            .maps
-            .get("metallic_roughness")
-            .unwrap_or(&MaterialData::color([0.0, 1.0, 0.0, 1.0]))
-            .get_color();
-        let alpha_cutoff = value.blend.get_alpha_cut();
-        let emissive_power = value.get_emissive_power();
-        Self {
-            base_color: value
-                .maps
-                .get("base_color")
-                .unwrap_or(&MaterialData::color([0.5, 0.5, 0.5, 1.0]))
-                .get_color()
-                .into(),
-            emissive_color: value
-                .maps
-                .get("emissive")
-                .unwrap_or(&MaterialData::color([0.0, 0.0, 0.0, 0.0]))
-                .get_color()
-                .into(),
-            metallic,
-            roughness,
-            alpha_cutoff,
-            emissive_power,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

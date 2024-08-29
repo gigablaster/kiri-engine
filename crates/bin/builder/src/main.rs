@@ -14,7 +14,8 @@ use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_compiled_asset_path, save_asset, Asset, AssetReference, AssetSource, Error,
-    GltfSceneSource, ImageAsset, ImageSource, ImportAsset, ShaderAsset, ShaderAssetSource,
+    GltfSceneSource, ImageAsset, ImageData, ImageSource, ImportAsset, ShaderAsset,
+    ShaderAssetSource,
 };
 use kiri_vfs::{PackageBuilder, ROOT_SOURCE_ASSETS_PATH};
 use log::{error, info};
@@ -134,9 +135,16 @@ impl ContentProcessor {
     fn build_scene_impl(&self, scene: GltfSceneSource) -> Result<(), Error> {
         let asset = scene.import()?;
         let mut images = self.images.lock();
-        asset.collect_dependencies().iter().for_each(|source| {
-            images.insert(source.clone());
-        });
+        asset
+            .collect_dependencies()
+            .iter()
+            .cloned()
+            .for_each(|source| {
+                // Don't export self-contained images
+                if let ImageData::Path(_) = source.data {
+                    images.insert(source.clone());
+                }
+            });
         Ok(self.write_asset(scene.reference(), asset)?)
     }
 

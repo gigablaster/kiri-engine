@@ -57,118 +57,70 @@ pub struct StaticMeshVertex {
     pub uv2: [f32; 2],
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Readable, Writable, PartialEq)]
 pub enum MeshMaterialBlend {
     Opaque,
     AlphaBlend,
-    AlphaTest(u16), // Normalized
+    AlphaTest(f32), // Normalized
 }
+
+impl Hash for MeshMaterialBlend {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            MeshMaterialBlend::Opaque => state.write_u8(1),
+            MeshMaterialBlend::AlphaBlend => state.write_u8(2),
+            MeshMaterialBlend::AlphaTest(value) => {
+                state.write_u8(3);
+                state.write_u32((value * 1000.0) as _)
+            }
+        }
+    }
+}
+
+impl Eq for MeshMaterialBlend {}
 
 impl MeshMaterialBlend {
     pub fn get_alpha_cut(&self) -> f32 {
         if let Self::AlphaTest(value) = self {
-            (*value as f32) / (u16::MAX as f32)
+            *value
         } else {
             0.0
         }
     }
 }
 
-#[derive(Debug, Clone, Readable, Writable, PartialEq, Eq, Hash)]
-pub enum MaterialData {
-    Image(ImageSource, [u8; 4]),
-    Color([u8; 4]),
-}
-
-impl Default for MaterialData {
-    fn default() -> Self {
-        Self::Color([0, 0, 0, 0])
-    }
-}
-
-impl MaterialData {
-    fn collect_images(&self, images: &mut HashSet<ImageSource>) {
-        if let Self::Image(source, _) = self {
-            images.insert(source.clone());
-        }
-    }
-
-    pub fn get_color(&self) -> [f32; 4] {
-        let values = match self {
-            MaterialData::Image(_, color) => color,
-            MaterialData::Color(color) => color,
-        };
-        [
-            (values[0] as f32) / (u8::MAX as f32),
-            (values[1] as f32) / (u8::MAX as f32),
-            (values[2] as f32) / (u8::MAX as f32),
-            (values[3] as f32) / (u8::MAX as f32),
-        ]
-    }
-
-    pub fn get_image(&self) -> Option<ImageSource> {
-        if let Self::Image(source, _) = self {
-            Some(source.clone())
-        } else {
-            None
-        }
-    }
-}
-
-impl MaterialData {
-    pub fn image(image: &ImageSource, color: [f32; 4]) -> Self {
-        Self::Image(
-            image.clone(),
-            [
-                (color[0].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-                (color[1].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-                (color[2].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-                (color[3].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-            ],
-        )
-    }
-
-    pub fn color(color: [f32; 4]) -> Self {
-        Self::Color([
-            (color[0].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-            (color[1].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-            (color[2].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-            (color[3].clamp(0.0, 1.0) * u8::MAX as f32) as u8,
-        ])
-    }
-}
-
-#[derive(Debug, Clone, Readable, Writable, PartialEq, Eq)]
+#[derive(Debug, Clone, Readable, Writable, PartialEq)]
 pub struct MeshAssetMaterial {
-    pub maps: HashMap<String, MaterialData>,
-    pub emissive_power: u32, // Value * 1000
+    pub base_color: ImageSource,
+    pub normals: ImageSource,
+    pub metallic_roughness: ImageSource,
+    pub occlusion: ImageSource,
+    pub emissive: ImageSource,
+    pub emissive_power: f32, // Value * 1000
     pub blend: MeshMaterialBlend,
 }
 
 impl Hash for MeshAssetMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.maps.iter().for_each(|(name, data)| {
-            name.hash(state);
-            data.hash(state);
-        });
-        self.emissive_power.hash(state);
+        self.base_color.hash(state);
+        self.normals.hash(state);
+        self.metallic_roughness.hash(state);
+        self.occlusion.hash(state);
+        self.emissive.hash(state);
+        ((self.emissive_power * 1000.0) as u64).hash(state);
         self.blend.hash(state);
     }
 }
 
+impl Eq for MeshAssetMaterial {}
+
 impl MeshAssetMaterial {
-    fn collect_images(&self, images: &mut HashSet<ImageSource>) {
-        self.maps
-            .iter()
-            .for_each(|(_, material)| material.collect_images(images));
-    }
-
-    pub fn get_emissive_power(&self) -> f32 {
-        (self.emissive_power as f32) / 1000.0
-    }
-
-    pub fn get_map<S: AsRef<str>>(&self, name: S) -> Option<&MaterialData> {
-        self.maps.get(name.as_ref())
+    fn collect_images<'a>(&'a self, images: &mut HashSet<&'a ImageSource>) {
+        images.insert(&self.base_color);
+        images.insert(&self.normals);
+        images.insert(&self.metallic_roughness);
+        images.insert(&self.occlusion);
+        images.insert(&self.emissive);
     }
 }
 
@@ -241,7 +193,7 @@ pub struct SceneAsset {
 }
 
 impl SceneAsset {
-    pub fn collect_dependencies(&self) -> HashSet<ImageSource> {
+    pub fn collect_dependencies(&self) -> HashSet<&ImageSource> {
         let mut result = HashSet::new();
         for material in &self.materials {
             material.collect_images(&mut result);
@@ -284,13 +236,14 @@ fn process_texture(
     context: &GltfProcessingContext,
     texture: &gltf::texture::Texture,
     ty: ImageAssetType,
-    color: [f32; 4],
-) -> MaterialData {
+    srgb: bool,
+) -> ImageSource {
     match texture.source().source() {
-        gltf::image::Source::Uri { uri, .. } => MaterialData::image(
-            &ImageSource::new(format!("{}/{}", context.base_path, uri)).ty(ty),
-            color,
-        ),
+        gltf::image::Source::Uri { uri, .. } => {
+            ImageSource::path(&format!("{}/{}", context.base_path, uri))
+                .ty(ty)
+                .srgb(srgb)
+        }
         _ => panic!(),
     }
 }
@@ -298,89 +251,73 @@ fn process_texture(
 fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
     match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => MeshMaterialBlend::Opaque,
-        gltf::material::AlphaMode::Mask => MeshMaterialBlend::AlphaTest(
-            (material.alpha_cutoff().unwrap_or(0.0).clamp(0.0, 1.0) * u16::MAX as f32) as u16,
-        ),
+        gltf::material::AlphaMode::Mask => {
+            MeshMaterialBlend::AlphaTest(material.alpha_cutoff().unwrap_or(0.0).clamp(0.0, 1.0))
+        }
         gltf::material::AlphaMode::Blend => MeshMaterialBlend::AlphaBlend,
     }
+}
+
+fn color(color: [f32; 4]) -> [u8; 4] {
+    [
+        (color[0].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[1].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[2].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[3].clamp(0.0, 1.0) * 255.0) as u8,
+    ]
 }
 
 fn process_material(
     context: &GltfProcessingContext,
     material: gltf::Material,
 ) -> MeshAssetMaterial {
-    let mut maps = HashMap::new();
     let base_color = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
-        process_texture(
-            context,
-            &texture.texture(),
-            ImageAssetType::Srgba,
-            material.pbr_metallic_roughness().base_color_factor(),
-        )
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba, true)
     } else {
-        MaterialData::color(material.pbr_metallic_roughness().base_color_factor())
+        ImageSource::color(color(material.pbr_metallic_roughness().base_color_factor()))
     };
-    maps.insert("base_color", base_color);
     let metallic_roughness = if let Some(texture) = material
         .pbr_metallic_roughness()
         .metallic_roughness_texture()
     {
-        process_texture(
-            context,
-            &texture.texture(),
-            ImageAssetType::Rgba,
-            [0.0, 0.0, 0.0, 0.0],
-        )
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
     } else {
-        MaterialData::color([
+        ImageSource::color(color([
             0.0,
             material.pbr_metallic_roughness().roughness_factor(),
             material.pbr_metallic_roughness().metallic_factor(),
             1.0,
-        ])
+        ]))
     };
-    maps.insert("metallic_roughness", metallic_roughness);
-    if let Some(texture) = material.normal_texture() {
-        maps.insert(
-            "normal",
-            process_texture(
-                context,
-                &texture.texture(),
-                ImageAssetType::Rg,
-                [0.0, 0.0, 0.0, 0.0],
-            ),
-        );
+    let normals = if let Some(texture) = material.normal_texture() {
+        process_texture(context, &texture.texture(), ImageAssetType::Rg, false)
+    } else {
+        ImageSource::color([127, 127, 255, 255])
     };
-    if let Some(texture) = material.occlusion_texture() {
-        maps.insert(
-            "occlusion",
-            process_texture(
-                context,
-                &texture.texture(),
-                ImageAssetType::Rgba,
-                [1.0, 1.0, 1.0, 1.0],
-            ),
-        );
-    }
+    let occlusion = if let Some(texture) = material.occlusion_texture() {
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
+    } else {
+        ImageSource::color([0, 0, 0, 0])
+    };
     let emissive_color = material.emissive_factor();
-    if let Some(texture) = material.emissive_texture() {
-        maps.insert(
-            "emissive",
-            process_texture(
-                context,
-                &texture.texture(),
-                ImageAssetType::Rgba,
-                [emissive_color[0], emissive_color[1], emissive_color[2], 1.0],
-            ),
-        );
+    let emissive = if let Some(texture) = material.emissive_texture() {
+        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
+    } else {
+        ImageSource::color(color([
+            emissive_color[0],
+            emissive_color[1],
+            emissive_color[2],
+            1.0,
+        ]))
     };
     MeshAssetMaterial {
-        maps: maps
-            .into_iter()
-            .map(|(name, data)| (name.to_owned(), data))
-            .collect(),
-        emissive_power: (material.emissive_strength().unwrap_or(0.0) * 1000.0) as u32,
+        emissive_power: material.emissive_strength().unwrap_or(0.0),
         blend: process_blend(&material),
+        base_color,
+        normals,
+        metallic_roughness,
+        occlusion,
+        emissive,
     }
 }
 

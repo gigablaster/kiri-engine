@@ -346,7 +346,7 @@ impl Renderer {
             &self.device.raw,
             self.device.get_or_create_layout(
                 vk::ShaderStageFlags::ALL_GRAPHICS,
-                &DescriptorSetLayoutDesc::default(),
+                DescriptorSetLayoutDesc::default(),
             )?,
             DescriptorSetCount::default(),
         )?;

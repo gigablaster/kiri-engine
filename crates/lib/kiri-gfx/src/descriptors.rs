@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use kiri_backend::{DescriptorSetCount, DescriptorSetLayoutDesc, Program, RenderDevice};
+use kiri_backend::{DescriptorSetCount, DescriptorSetLayoutDesc, RenderDevice};
 
 use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
 
@@ -59,7 +59,7 @@ pub(super) struct DescriptorSetData {
 
 #[derive(Debug)]
 pub struct DescriptorSetBuilder {
-    layout: &'static DescriptorSetLayoutDesc<'static>,
+    layout: DescriptorSetLayoutDesc<'static>,
     stages: vk::ShaderStageFlags,
     images: Vec<Binding<ImageBindingData>>,
     unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
@@ -69,7 +69,7 @@ pub struct DescriptorSetBuilder {
 }
 
 impl DescriptorSetBuilder {
-    pub fn new(stages: vk::ShaderStageFlags, layout: &'static DescriptorSetLayoutDesc) -> Self {
+    pub fn new(stages: vk::ShaderStageFlags, layout: DescriptorSetLayoutDesc<'static>) -> Self {
         let count = layout.get_descriptor_count();
         Self {
             layout,

@@ -39,7 +39,7 @@ pub struct RenderPassLayout<'a> {
 impl<'a> RenderPassLayout<'a> {
     fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
         let mut info =
-            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&self.color);
+            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(self.color);
         if let Some(depth) = self.depth {
             info = info.depth_attachment_format(depth);
         }

@@ -19,16 +19,14 @@ use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     get_compiled_asset_path, load_asset, save_asset, Asset, AssetSource, GltfSceneSource,
-    ImageAsset, ImageAssetType, ImageSource, ImportAsset, MeshAssetMaterial, SceneAsset,
+    ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, SceneAsset,
 };
-use kiri_backend::{BufferCreateDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
+use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
-    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle,
-    ImageUploadData, Renderer,
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
 use kiri_vfs::{vfs_load, AssetReference};
-use lazy_static::lazy_static;
 use log::{debug, warn};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 
@@ -47,31 +45,59 @@ type StaticMeshPool = Pool<(SceneHandle, usize)>;
 type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset), Error>>;
 type SceneLoadingTask = Task<Result<(SceneHandle, SceneAsset), Error>>;
 
-lazy_static! {
-    static ref MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
-        DescriptorSetLayoutDesc::default()
-            .slot(0, "material", vk::DescriptorType::UNIFORM_BUFFER, 1)
-            .slot(
-                1,
-                "base_color",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(2, "normal", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1)
-            .slot(
-                3,
-                "metallic_roughness",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(
-                4,
-                "occlusion",
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                1
-            )
-            .slot(5, "emissive", vk::DescriptorType::COMBINED_IMAGE_SAMPLER, 1);
-}
+pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[
+        (
+            0,
+            DescriptorSetDesc {
+                name: "data",
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count: 1,
+            },
+        ),
+        (
+            1,
+            DescriptorSetDesc {
+                name: "base_color",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            2,
+            DescriptorSetDesc {
+                name: "normals",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            3,
+            DescriptorSetDesc {
+                name: "metallic_roughness",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            4,
+            DescriptorSetDesc {
+                name: "occlusion",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            5,
+            DescriptorSetDesc {
+                name: "emissive",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+    ],
+    update_after_bind: false,
+};
 
 /// Keeps normalized asset name -> asset + ref count.
 ///
@@ -144,10 +170,6 @@ pub struct ResourceCache {
     mesh_assets: RwLock<StaticMeshPool>,
     material_uniforms: ConstUniformBuffer,
     materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
-    dummy_color_image: ImageHandle,
-    dummy_emissive_image: ImageHandle,
-    dummy_normal_image: ImageHandle,
-    dummy_occlusion_metallic_roughness: ImageHandle,
 }
 
 impl ResourceCache {
@@ -161,30 +183,6 @@ impl ResourceCache {
             images: Default::default(),
             materials: Default::default(),
             material_uniforms: ConstUniformBuffer::new(renderer, MATERIAL_BUFFER_SIZE)?,
-            dummy_color_image: renderer.create_image(
-                ImageCreateDesc::texture(vk::Format::R8G8B8A8_SRGB, [1, 1]).name("Dummy color"),
-                Some(&[ImageUploadData {
-                    data: &[127, 127, 127, 255],
-                }]),
-            )?,
-            dummy_emissive_image: renderer.create_image(
-                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy emissive"),
-                Some(&[ImageUploadData {
-                    data: &[0, 0, 0, 255],
-                }]),
-            )?,
-            dummy_occlusion_metallic_roughness: renderer.create_image(
-                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy ORM"),
-                Some(&[ImageUploadData {
-                    data: &[0, 255, 0, 255],
-                }]),
-            )?,
-            dummy_normal_image: renderer.create_image(
-                ImageCreateDesc::texture(vk::Format::R8G8B8A8_UNORM, [1, 1]).name("Dummy emissive"),
-                Some(&[ImageUploadData {
-                    data: &[0, 0, 255, 255],
-                }]),
-            )?,
             scenes: Default::default(),
             scene_assets: RwLock::new(ScenePool::new(MAX_RESOURCES)),
             mesh_assets: RwLock::new(StaticMeshPool::new(MAX_RESOURCES)),
@@ -232,23 +230,43 @@ impl ResourceCache {
         }
     }
 
-    pub fn get_or_load_image(&self, name: &str, ty: ImageAssetType) -> Result<ImageHandle, Error> {
-        let source = ImageSource::new(name).ty(ty);
-        self.images
-            .get_or_load(&source, |source| self.load_image_impl(source))
+    pub fn get_or_load_image(
+        &self,
+        source: &ImageSource,
+        default_color: [u8; 4],
+    ) -> Result<ImageHandle, Error> {
+        let source = source.clone();
+        self.images.get_or_load(&source, |source| {
+            self.load_image_impl(source, default_color)
+        })
     }
 
-    fn load_image_impl(&self, source: &ImageSource) -> Result<ImageHandle, Error> {
-        let handle = self.renderer.create_image(
-            ImageCreateDesc::texture(source.ty.uncompressed_format(), [1, 1])
-                .name(&format!("{} - DUMMY", source.reference())),
-            Some(&[ImageUploadData {
-                data: &[128, 128, 128, 255],
-            }]),
-        )?;
-        self.image_loading_tasks
-            .lock()
-            .push(IoTaskPool::get().spawn(Self::load_image(handle, source.clone())));
+    fn load_image_impl(
+        &self,
+        source: &ImageSource,
+        default_color: [u8; 4],
+    ) -> Result<ImageHandle, Error> {
+        let handle = match &source.data {
+            kiri_assets::ImageData::Path(_) => {
+                let handle = self.renderer.create_image(
+                    ImageCreateDesc::texture(source.uncompressed_format(), [1, 1])
+                        .name(&format!("{:?} - DUMMY", source)),
+                    Some(&[ImageUploadData {
+                        data: &default_color,
+                    }]),
+                )?;
+                self.image_loading_tasks
+                    .lock()
+                    .push(IoTaskPool::get().spawn(Self::load_image(handle, source.clone())));
+                handle
+            }
+            kiri_assets::ImageData::Color(color) => self.renderer.create_image(
+                ImageCreateDesc::texture(source.uncompressed_format(), [1, 1])
+                    .name(&format!("{:?}", source)),
+                Some(&[ImageUploadData { data: color }]),
+            )?,
+        };
+
         Ok(handle)
     }
 
@@ -269,7 +287,6 @@ impl ResourceCache {
     pub fn get_or_load_material(
         &self,
         material: &MeshAssetMaterial,
-        layout: &DescriptorSetLayoutDesc,
     ) -> Result<DescriptorHandle, Error> {
         let materials = self.materials.upgradable_read();
         if let Some(material) = materials.get(material) {
@@ -280,42 +297,44 @@ impl ResourceCache {
                 Ok(*material)
             } else {
                 // Get all images
-                let mut images = HashMap::new();
-                for (_, info) in layout.get_layout().iter() {
-                    if info.ty == vk::DescriptorType::SAMPLED_IMAGE
-                        || info.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-                    {
-                        if let Some(source) = material
-                            .get_map(&info.name)
-                            .cloned()
-                            .unwrap_or_default()
-                            .get_image()
-                        {
-                            images.insert(
-                                info.name.clone(),
-                                self.get_or_load_image(&source.path, source.ty)?,
-                            );
-                        } else {
-                            images.insert(info.name.to_owned(), self.dummy_color_image);
-                        }
-                    }
-                }
 
                 // Allocate and copy uniform data
-                let mut builder = DescriptorSetBuilder::new(
+                let builder = DescriptorSetBuilder::new(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
-                    &MATERIAL_DESCRIPTOR_LAYOUT,
+                    MATERIAL_DESCRIPTOR_LAYOUT,
                 )
                 .bind_uniform_buffer(
-                    BindingSlot::Name("material"),
-                    self.material_uniforms
-                        .push(GpuMeshMaterial::new(material))?,
-                )?;
-                for (slot, image) in images {
-                    builder = builder
-                        .bind_image(BindingSlot::Name(&slot), image, vk::ImageAspectFlags::COLOR)
-                        .unwrap();
-                }
+                    0,
+                    self.material_uniforms.push(GpuMeshMaterial {
+                        alpha_cutoff: material.blend.get_alpha_cut(),
+                        emissive_power: material.emissive_power,
+                    })?,
+                )
+                .bind_image(
+                    1,
+                    self.get_or_load_image(&material.base_color, [127, 127, 127, 255])?,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .bind_image(
+                    2,
+                    self.get_or_load_image(&material.normals, [127, 127, 255, 255])?,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .bind_image(
+                    3,
+                    self.get_or_load_image(&material.metallic_roughness, [0, 255, 0, 255])?,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .bind_image(
+                    4,
+                    self.get_or_load_image(&material.occlusion, [0, 0, 0, 0])?,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .bind_image(
+                    5,
+                    self.get_or_load_image(&material.emissive, [0, 0, 0, 0])?,
+                    vk::ImageAspectFlags::COLOR,
+                );
                 let descriptor_set = self.renderer.create_descriptor_set(builder)?;
                 materials.insert(material.clone(), descriptor_set);
                 Ok(descriptor_set)
@@ -341,7 +360,7 @@ impl ResourceCache {
         let mut materials = Vec::new();
         for material in &asset.materials {
             materials.push(RenderMaterial {
-                ds: self.get_or_load_material(material, &MATERIAL_DESCRIPTOR_LAYOUT)?,
+                ds: self.get_or_load_material(material)?,
                 ty: material.blend.into(),
             });
         }
@@ -459,7 +478,6 @@ impl ResourceCache {
 
 impl Drop for ResourceCache {
     fn drop(&mut self) {
-        self.renderer.destroy_image(self.dummy_color_image);
         self.images
             .assets
             .write()

@@ -15,33 +15,44 @@
 
 use std::{cmp::Ordering, mem, sync::Arc};
 
-use ash::vk::{self};
-use kiri_backend::{
-    DescriptorSetLayoutDesc, RenderPassLayout, DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT,
-    PASS_BINDING_SLOT,
-};
-use kiri_gfx::{
-    BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder,
-    ImageHandle, PipelineHandle, RenderContext, RenderTarget, RenderTargetPool,
-};
-use lazy_static::lazy_static;
-
 use crate::{
     gpu::{GpuInstanceData, GpuStaticVertex, RenderPassGpuData},
     Error, PipelineCache, RasterPipelineDesc, ResourceCache, Scene, SceneCuller,
+    MATERIAL_DESCRIPTOR_LAYOUT,
+};
+use ash::vk::{self};
+use kiri_backend::{
+    DescriptorSetDesc, DescriptorSetLayoutDesc, RenderPassLayout, DYNAMIC_BINDING_SLOT,
+    EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+};
+use kiri_gfx::{
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle,
+    PipelineHandle, RenderContext, RenderTarget, RenderTargetPool,
 };
 
-lazy_static! {
-    static ref RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
-        DescriptorSetLayoutDesc::default().slot(0, "pass", vk::DescriptorType::UNIFORM_BUFFER, 1);
-    static ref INSTANCE_DATA_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc =
-        DescriptorSetLayoutDesc::default().slot(
-            0,
-            "instance",
-            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-            1
-        );
-}
+const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorSetDesc {
+            name: "per_pass",
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            count: 1,
+        },
+    )],
+    update_after_bind: false,
+};
+
+const INSTANCE_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorSetDesc {
+            name: "instance",
+            ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            count: 1,
+        },
+    )],
+    update_after_bind: false,
+};
 
 const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
@@ -181,20 +192,20 @@ impl SceneRenderer {
         let pass_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
                 vk::ShaderStageFlags::ALL_GRAPHICS,
-                &RENDER_PASS_DESCRIPTOR_LAYOUT,
+                RENDER_PASS_DESCRIPTOR_LAYOUT,
             )
-            .bind_uniform_buffer(BindingSlot::Index(0), pass_data)?,
+            .bind_uniform_buffer(0, pass_data),
         )?;
         let instance_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
                 vk::ShaderStageFlags::ALL_GRAPHICS,
-                &INSTANCE_DATA_DESCRIPTOR_LAYOUT,
+                INSTANCE_DESCRIPTOR_LAYOUT,
             )
             .bind_dynamic_storage_buffer(
-                BindingSlot::Index(0),
+                0,
                 context.get_temprary_buffer(),
                 (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
-            )?,
+            ),
         )?;
         let visible = scene.cull(NullCuller {}, &resolver);
         let mut pass = context.create_rasterizer_pass(
@@ -216,6 +227,12 @@ impl SceneRenderer {
                 "shaders/main.vert",
                 "shaders/main.frag",
                 &PASS_LAYOUT,
+                &[
+                    RENDER_PASS_DESCRIPTOR_LAYOUT,
+                    EMPTY_DESCRIPTOR_LAYOUT,
+                    MATERIAL_DESCRIPTOR_LAYOUT,
+                    INSTANCE_DESCRIPTOR_LAYOUT,
+                ],
             ))?;
         let mut render_ops = Vec::new();
         for (model, mesh) in &visible.static_meshes {
