@@ -42,8 +42,8 @@ pub type StaticMeshHandle = Handle<(SceneHandle, usize)>;
 type ScenePool = Pool<RenderScene>;
 type StaticMeshPool = Pool<(SceneHandle, usize)>;
 
-type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset), Error>>;
-type SceneLoadingTask = Task<Result<(SceneHandle, SceneAsset), Error>>;
+type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset, ImageSource), Error>>;
+type SceneLoadingTask = Task<Result<(SceneHandle, SceneAsset, GltfSceneSource), Error>>;
 
 pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
@@ -191,16 +191,14 @@ impl ResourceCache {
     }
 
     pub fn tick(&self) -> Result<(), Error> {
-        // let mut finished_images = Vec::new();
-        // let mut finished_scenes = Vec::new();
         {
             let mut loading = self.scene_loading_tasks.lock();
             let mut i = 0;
             while i < loading.len() {
                 if loading[i].is_finished() {
                     let task = loading.remove(i);
-                    let (handle, asset) = block_on(task)?;
-                    self.process_scene(handle, asset)?;
+                    let (handle, asset, source) = block_on(task)?;
+                    self.process_scene(handle, asset, source)?;
                 } else {
                     i += 1;
                 }
@@ -212,8 +210,8 @@ impl ResourceCache {
             while i < loading.len() {
                 if loading[i].is_finished() {
                     let task = loading.remove(i);
-                    let (handle, asset) = block_on(task)?;
-                    self.process_image(handle, asset)?;
+                    let (handle, asset, source) = block_on(task)?;
+                    self.process_image(handle, asset, source)?;
                 } else {
                     i += 1;
                 }
@@ -270,7 +268,12 @@ impl ResourceCache {
         Ok(handle)
     }
 
-    fn process_image(&self, handle: ImageHandle, asset: ImageAsset) -> Result<(), Error> {
+    fn process_image(
+        &self,
+        handle: ImageHandle,
+        asset: ImageAsset,
+        source: ImageSource,
+    ) -> Result<(), Error> {
         let upload = asset
             .mips
             .iter()
@@ -278,7 +281,9 @@ impl ResourceCache {
             .collect::<Vec<_>>();
         self.renderer.update_image(
             handle,
-            ImageCreateDesc::texture(asset.format, asset.dims).mip_levels(asset.mips.len() as _),
+            ImageCreateDesc::texture(asset.format, asset.dims)
+                .mip_levels(asset.mips.len() as _)
+                .name(&format!("{:?}", source)),
             Some(&upload),
         )?;
         Ok(())
@@ -356,7 +361,12 @@ impl ResourceCache {
         Ok(handle)
     }
 
-    fn process_scene(&self, handle: SceneHandle, asset: SceneAsset) -> Result<(), Error> {
+    fn process_scene(
+        &self,
+        handle: SceneHandle,
+        asset: SceneAsset,
+        source: GltfSceneSource,
+    ) -> Result<(), Error> {
         let mut materials = Vec::new();
         for material in &asset.materials {
             materials.push(RenderMaterial {
@@ -370,12 +380,14 @@ impl ResourceCache {
         let vertices = self.renderer.create_buffer(
             BufferCreateDesc::gpu((mem::size_of::<GpuStaticVertex>() * vertex_data.len()) as _)
                 .veretex_buffer()
-                .transfer_destination(),
+                .transfer_destination()
+                .name(&format!("{:?} - VB", source)),
         )?;
         let indices = self.renderer.create_buffer(
             BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
                 .index_buffer()
-                .transfer_destination(),
+                .transfer_destination()
+                .name(&format!("{:?} - IB", source)),
         )?;
         self.renderer
             .upload_buffer(BufferPointer::new(vertices, 0), &vertex_data)?;
@@ -464,15 +476,15 @@ impl ResourceCache {
     async fn load_image(
         handle: ImageHandle,
         source: ImageSource,
-    ) -> Result<(ImageHandle, ImageAsset), Error> {
-        Ok((handle, load_or_compile_asset(&source)?))
+    ) -> Result<(ImageHandle, ImageAsset, ImageSource), Error> {
+        Ok((handle, load_or_compile_asset(&source)?, source))
     }
 
     async fn load_scene(
         handle: SceneHandle,
         source: GltfSceneSource,
-    ) -> Result<(SceneHandle, SceneAsset), Error> {
-        Ok((handle, load_or_compile_asset(&source)?))
+    ) -> Result<(SceneHandle, SceneAsset, GltfSceneSource), Error> {
+        Ok((handle, load_or_compile_asset(&source)?, source))
     }
 }
 
