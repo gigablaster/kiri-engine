@@ -148,6 +148,8 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                 }
                 WindowEvent::Resized(_) => inner.swapchain = None,
                 WindowEvent::RedrawRequested => {
+                    puffin::profile_scope!("Main");
+                    puffin::GlobalProfiler::lock().new_frame();
                     let dims = [
                         inner.window.inner_size().width,
                         inner.window.inner_size().height,

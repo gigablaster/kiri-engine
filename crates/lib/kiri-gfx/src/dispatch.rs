@@ -190,6 +190,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
         command_buffer: vk::CommandBuffer,
         resolver: &RenderResourceResolver,
     ) -> Result<(), Error> {
+        puffin::profile_function!();
         let mut color_attachments = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for color in &self.color_targets {
             color_attachments.push(color.build(

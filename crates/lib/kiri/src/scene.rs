@@ -214,6 +214,7 @@ impl Scene {
         culler: T,
         resolver: &'a U,
     ) -> CullResult<'a> {
+        puffin::profile_function!();
         assert!(
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
             "Scene must be updated before culling"

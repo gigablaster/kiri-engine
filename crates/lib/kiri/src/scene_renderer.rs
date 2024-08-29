@@ -235,46 +235,55 @@ impl SceneRenderer {
                 ],
             ))?;
         let mut render_ops = Vec::new();
-        for (model, mesh) in &visible.static_meshes {
-            for surface in &mesh.surfaces {
-                render_ops.push(RenderOp {
-                    pipeline,
-                    model: (*model).into(),
-                    vertex_buffer: mesh.vertex_buffer,
-                    index_buffer: mesh.index_buffer,
-                    material: surface.material.ds,
-                    first_index: surface.first_index,
-                    index_count: surface.index_count,
-                })
+        {
+            puffin::profile_scope!("Generate renderops");
+            for (model, mesh) in &visible.static_meshes {
+                for surface in &mesh.surfaces {
+                    render_ops.push(RenderOp {
+                        pipeline,
+                        model: (*model).into(),
+                        vertex_buffer: mesh.vertex_buffer,
+                        index_buffer: mesh.index_buffer,
+                        material: surface.material.ds,
+                        first_index: surface.first_index,
+                        index_count: surface.index_count,
+                    })
+                }
             }
         }
-        render_ops.sort();
-
-        let mut index = 0;
-        while index < render_ops.len() {
-            let mut instance = 0;
-            let mut data = context.write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)?;
-            let mut stream = DrawStreamBuilder::default();
-
-            while instance < DRAWS_PER_STREAM && index < render_ops.len() {
-                let op = &render_ops[index];
-                // debug!("{:?}", op.model.to_scale_rotation_translation());
-                data.write(GpuInstanceData { model: op.model })?;
-                stream.set_pipeline(op.pipeline);
-                stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
-                stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
-                stream.set_vertex_buffer(0, Some(op.vertex_buffer));
-                stream.set_index_buffer(op.index_buffer);
-                stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
-                stream.set_dynamic_offset(0, Some(data.offset as _));
-                stream.draw(op.first_index, op.index_count, instance as _, 1);
-                instance += 1;
-                index += 1;
-            }
-            pass.draw(stream.build());
+        {
+            puffin::profile_scope!("Sorting renderops");
+            render_ops.sort();
         }
-        // self.target_pool.insert_barriers(context);
-        context.submit(pass.build());
+        {
+            puffin::profile_scope!("Generate draw streams");
+            let mut index = 0;
+            while index < render_ops.len() {
+                let mut instance = 0;
+                let mut data = context.write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)?;
+                let mut stream = DrawStreamBuilder::default();
+
+                while instance < DRAWS_PER_STREAM && index < render_ops.len() {
+                    let op = &render_ops[index];
+                    // debug!("{:?}", op.model.to_scale_rotation_translation());
+                    data.write(GpuInstanceData { model: op.model })?;
+                    stream.set_pipeline(op.pipeline);
+                    stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
+                    stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
+                    stream.set_vertex_buffer(0, Some(op.vertex_buffer));
+                    stream.set_index_buffer(op.index_buffer);
+                    stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
+                    stream.set_dynamic_offset(0, Some(data.offset as _));
+                    stream.draw(op.first_index, op.index_count, instance as _, 1);
+                    instance += 1;
+                    index += 1;
+                }
+                pass.draw(stream.build());
+            }
+            // self.target_pool.insert_barriers(context);
+            context.submit(pass.build());
+        }
+
         Ok(color_target)
     }
 

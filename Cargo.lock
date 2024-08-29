@@ -1160,6 +1160,7 @@ dependencies = [
  "kiri-common",
  "kiri-gfx",
  "log",
+ "puffin",
  "raw-window-handle",
  "simple_logger",
  "thiserror",

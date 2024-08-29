@@ -16,6 +16,7 @@ raw-window-handle = "0.6.2"
 log = "0.4.22"
 bevy_tasks = { version = "0.14.0", features = ["multi_threaded"] }
 winit = "0.30.5"
+puffin = "0.19.0"
 
 [dev-dependencies]
 simple_logger = "5.0.0"

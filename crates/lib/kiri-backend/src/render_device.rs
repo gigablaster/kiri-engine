@@ -297,6 +297,7 @@ impl RenderDevice {
         puffin::profile_function!();
         let mut frame = self.frames[0].lock();
         {
+            puffin::profile_scope!("Waiting for frame to be finished");
             let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
             unsafe {
                 self.raw.wait_for_fences(
