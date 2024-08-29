@@ -42,8 +42,6 @@ pub enum Error {
     NoSuitableMemoryType,
     #[error("Sampler not found: {0:?}")]
     SamplerNotFound(SamplerDesc),
-    #[error("Shader reflection error: {0}")]
-    ShaderReflectionError(rspirv_reflect::ReflectError),
     #[error("Wrong memory type")]
     WrongMemoryType,
     #[error("Memory mapping failed")]
@@ -97,11 +95,5 @@ impl From<ash::LoadingError> for Error {
 impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     fn from(value: (Vec<vk::Pipeline>, vk::Result)) -> Self {
         value.1.into()
-    }
-}
-
-impl From<rspirv_reflect::ReflectError> for Error {
-    fn from(value: rspirv_reflect::ReflectError) -> Self {
-        Self::ShaderReflectionError(value)
     }
 }

@@ -13,19 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    ffi::CString,
-    sync::Arc,
-};
+use std::{collections::HashMap, ffi::CString, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
 use kiri_common::TempList;
-use rspirv_reflect::{BindingCount, DescriptorInfo, Reflection};
 
-use crate::{DescriptorCount, Error, SamplerDesc};
+use crate::{DescriptorSetCount, Error, SamplerDesc};
 
 use super::RenderDevice;
 
@@ -81,37 +76,23 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-type ReflectedDescriptorSetDesc = HashMap<u32, (String, vk::DescriptorType, u32)>;
-type ReflectedDescriptorSetLayoutDesc = HashMap<u32, ReflectedDescriptorSetDesc>;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DescriptorSetDesc {
-    pub name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorSetDesc<'a> {
+    pub name: &'a str,
     pub ty: vk::DescriptorType,
     pub count: u32,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct DescriptorSetLayoutDesc {
-    layout: Vec<(u32, DescriptorSetDesc)>,
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorSetLayoutDesc<'a> {
+    pub layout: &'a [(u32, DescriptorSetDesc<'a>)],
+    pub update_after_bind: bool,
 }
 
-impl DescriptorSetLayoutDesc {
-    pub fn slot(mut self, slot: u32, name: &str, ty: vk::DescriptorType, count: u32) -> Self {
-        self.layout.push((
-            slot,
-            DescriptorSetDesc {
-                name: name.to_owned(),
-                ty,
-                count,
-            },
-        ));
-        self
-    }
-
-    pub fn get_descriptor_count(&self) -> DescriptorCount {
-        let mut count = DescriptorCount::default();
-        for (_, data) in &self.layout {
+impl<'a> DescriptorSetLayoutDesc<'a> {
+    pub fn get_descriptor_count(&self) -> DescriptorSetCount {
+        let mut count = DescriptorSetCount::default();
+        for (_, data) in self.layout {
             match data.ty {
                 vk::DescriptorType::SAMPLED_IMAGE => count.sampled_images += data.count,
                 vk::DescriptorType::UNIFORM_BUFFER => count.unifroms_buffers += data.count,
@@ -132,18 +113,6 @@ impl DescriptorSetLayoutDesc {
         count
     }
 
-    pub fn get_slot_by_name(&self, name: &str) -> Option<u32> {
-        self.layout.iter().find_map(
-            |(slot, data)| {
-                if name == data.name {
-                    Some(*slot)
-                } else {
-                    None
-                }
-            },
-        )
-    }
-
     pub fn has_slot(&self, index: u32) -> bool {
         self.layout.iter().any(|(x, _)| *x == index)
     }
@@ -154,39 +123,8 @@ impl DescriptorSetLayoutDesc {
             .find_map(|(x, data)| if slot == *x { Some(data) } else { None })
     }
 
-    /// Remove names and sort by slot.
-    ///
-    /// This way same layouts but woth different slot names will be seen as same.
-    pub(super) fn normalize(&self) -> DescriptorSetLayoutDesc {
-        let mut normalized = self.clone();
-        normalized.layout.iter_mut().for_each(|x| {
-            x.1.name = Default::default();
-        });
-        normalized.layout.sort_by(|a, b| a.0.cmp(&b.0));
-        normalized
-    }
-
     pub fn get_layout(&self) -> &[(u32, DescriptorSetDesc)] {
         &self.layout
-    }
-}
-
-impl From<ReflectedDescriptorSetDesc> for DescriptorSetLayoutDesc {
-    fn from(value: ReflectedDescriptorSetDesc) -> Self {
-        let layout = value
-            .into_iter()
-            .map(|(slot, data)| {
-                (
-                    slot,
-                    DescriptorSetDesc {
-                        name: data.0,
-                        ty: data.1,
-                        count: data.2,
-                    },
-                )
-            })
-            .collect();
-        DescriptorSetLayoutDesc { layout }
     }
 }
 
@@ -198,31 +136,27 @@ pub struct Program {
     pub stages: vk::ShaderStageFlags,
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
     pub pipeline_layout: vk::PipelineLayout,
-    pub layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
-    pub desc: ArrayVec<DescriptorSetLayoutDesc, MAX_DESCRIPTOR_SETS>,
+    pub descriptor_layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
+    pub layout: &'static [DescriptorSetLayoutDesc<'static>],
 }
 
 impl Program {
-    pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
+    pub fn new(
+        device: &Arc<RenderDevice>,
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
+        shaders: &[ShaderDesc],
+    ) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
-        let mut layouts = Vec::new();
         for shader in shaders {
-            let descriptor_layout = Self::reflect(shader.code)?;
-            layouts.push(descriptor_layout);
             stages |= shader.stage;
         }
-        let mut desc = merge_reflected_layouts(layouts.iter())
-            .into_iter()
-            .map(|(slot, data)| (slot, data.into()))
-            .collect::<Vec<_>>();
-        desc.sort_by(|a, b| a.0.cmp(&b.0));
         let mut modules = ArrayVec::<_, MAX_SHADERS>::new();
         for shader in shaders {
             stages |= shader.stage;
             modules.push(Self::create_shader(&device.raw, shader, shader.entry)?);
         }
         let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
-        for (_, info) in &desc {
+        for info in layout {
             layouts.push(device.get_or_create_layout(stages, info)?);
         }
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
@@ -232,8 +166,8 @@ impl Program {
             stages,
             shaders: modules,
             pipeline_layout,
-            layouts,
-            desc: desc.into_iter().map(|x| x.1).collect(),
+            descriptor_layouts: layouts,
+            layout,
         })
     }
 
@@ -250,63 +184,6 @@ impl Program {
             desc.stage,
             CString::new(entry).unwrap(),
         ))
-    }
-
-    fn reflect(code: &[u8]) -> Result<ReflectedDescriptorSetLayoutDesc, Error> {
-        let reflection = Reflection::new_from_spirv(code)?;
-        let descriptor_sets = reflection.get_descriptor_sets()?;
-        let mut layout = ReflectedDescriptorSetLayoutDesc::default();
-        for (index, set) in descriptor_sets.into_iter() {
-            layout.insert(
-                index,
-                Self::reflect_descriptor(set, index == DYNAMIC_BINDING_SLOT as u32)?,
-            );
-        }
-        Ok(layout)
-    }
-
-    fn reflect_descriptor(
-        value: BTreeMap<u32, DescriptorInfo>,
-        dynamic: bool,
-    ) -> Result<ReflectedDescriptorSetDesc, Error> {
-        let mut result = ReflectedDescriptorSetDesc::new();
-        for (index, info) in value.into_iter() {
-            let ty = match info.ty {
-                rspirv_reflect::DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
-                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => vk::DescriptorType::SAMPLED_IMAGE,
-
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
-                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
-                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                }
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
-                    vk::DescriptorType::STORAGE_BUFFER
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
-                    vk::DescriptorType::UNIFORM_BUFFER
-                }
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                }
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                }
-                rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-                }
-                rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
-                _ => panic!("Not supported {}", info.ty.0),
-            };
-            let count = match info.binding_count {
-                BindingCount::One => 1,
-                BindingCount::StaticSized(count) => count as u32,
-                BindingCount::Unbounded => panic!("Unbounded descriptors aren't supported"),
-            };
-            result.insert(index, (info.name, ty, count));
-        }
-        Ok(result)
     }
 }
 
@@ -386,77 +263,5 @@ impl Drop for Program {
                 .raw
                 .destroy_pipeline_layout(self.pipeline_layout, None)
         };
-    }
-}
-
-fn merge_reflected_layouts<'a>(
-    layouts: impl Iterator<Item = &'a ReflectedDescriptorSetLayoutDesc>,
-) -> ReflectedDescriptorSetLayoutDesc {
-    let mut result = ReflectedDescriptorSetLayoutDesc::new();
-    layouts.for_each(|x| merge_reflected_layout_set(&mut result, x));
-    for i in 0..MAX_DESCRIPTOR_SETS {
-        result.entry(i as u32).or_default();
-    }
-    result
-}
-
-fn merge_reflected_layout_set(
-    target: &mut ReflectedDescriptorSetLayoutDesc,
-    next: &ReflectedDescriptorSetLayoutDesc,
-) {
-    next.iter().for_each(|(index, set)| {
-        target
-            .entry(*index)
-            .and_modify(|existing| {
-                set.iter().for_each(|(index, set)| {
-                    existing.insert(*index, set.clone());
-                })
-            })
-            .or_insert(set.clone());
-    });
-}
-
-#[cfg(test)]
-mod test {
-    use ash::vk;
-
-    use crate::program::merge_reflected_layouts;
-
-    use super::{ReflectedDescriptorSetDesc, ReflectedDescriptorSetLayoutDesc};
-
-    #[test]
-    fn merge_refected_layouts() {
-        let mut set1 = ReflectedDescriptorSetDesc::new();
-        set1.insert(0, ("shared1".into(), vk::DescriptorType::SAMPLED_IMAGE, 1));
-        set1.insert(1, ("shared2".into(), vk::DescriptorType::UNIFORM_BUFFER, 1));
-        let mut set2 = ReflectedDescriptorSetDesc::new();
-        set2.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
-        let mut set3 = ReflectedDescriptorSetDesc::new();
-        set3.insert(
-            1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
-        );
-
-        let mut combined = ReflectedDescriptorSetDesc::new();
-        combined.insert(0, ("set_a".into(), vk::DescriptorType::STORAGE_BUFFER, 1));
-        combined.insert(
-            1,
-            ("set_b".into(), vk::DescriptorType::STORAGE_TEXEL_BUFFER, 1),
-        );
-
-        let mut a = ReflectedDescriptorSetLayoutDesc::new();
-        a.insert(0, set1.clone());
-        a.insert(2, set2);
-        // a.insert(0, )
-        let mut b = ReflectedDescriptorSetLayoutDesc::new();
-        b.insert(0, set1.clone());
-        b.insert(2, set3);
-        let merged = merge_reflected_layouts([a, b].iter());
-        let rset1 = merged.get(&0).unwrap();
-        let rset2 = merged.get(&2).unwrap();
-        assert!(merged.get(&1).unwrap().is_empty());
-        assert!(merged.get(&3).unwrap().is_empty());
-        assert_eq!(rset1, &set1);
-        assert_eq!(rset2, &combined);
     }
 }

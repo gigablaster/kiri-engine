@@ -31,7 +31,7 @@ use super::DropList;
 const DESCRIPTORS_PER_PAGE: u32 = 64;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorCount {
+pub struct DescriptorSetCount {
     pub sampled_images: u32,
     pub storage_buffers: u32,
     pub unifroms_buffers: u32,
@@ -53,7 +53,7 @@ unsafe impl Sync for DescriptorAllocator {}
 
 #[derive(Debug, Default)]
 struct DescriptorAllocatorPool {
-    pools: HashMap<DescriptorCount, Vec<Arc<DescriptorAllocator>>>,
+    pools: HashMap<DescriptorSetCount, Vec<Arc<DescriptorAllocator>>>,
 }
 
 #[derive(Debug, Default)]
@@ -213,7 +213,7 @@ impl Frame {
         &self,
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<vk::DescriptorSet, Error> {
         let mut context = DescriptorAllocatorContext {
             device,
@@ -224,7 +224,7 @@ impl Frame {
 }
 
 impl DescriptorAllocator {
-    pub fn new(device: &ash::Device, count: DescriptorCount, sets: u32) -> Result<Self, Error> {
+    pub fn new(device: &ash::Device, count: DescriptorSetCount, sets: u32) -> Result<Self, Error> {
         let mut sizes = Vec::with_capacity(7);
         if count.sampled_images > 0 {
             sizes.push(vk::DescriptorPoolSize {
@@ -321,7 +321,7 @@ impl DescriptorAllocatorPool {
     pub fn get_pool(
         &mut self,
         device: &ash::Device,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<Arc<DescriptorAllocator>, Error> {
         let pool = self.pools.entry(count).or_default();
         let allocator = if let Some(allocator) = pool.iter().find(|x| !x.is_empty()) {
@@ -357,7 +357,7 @@ impl<'a> DescriptorAllocatorContext<'a> {
     pub fn allocate(
         &mut self,
         layout: vk::DescriptorSetLayout,
-        count: DescriptorCount,
+        count: DescriptorSetCount,
     ) -> Result<vk::DescriptorSet, Error> {
         loop {
             if let Some(descriptor_set) = self

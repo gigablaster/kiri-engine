@@ -19,7 +19,7 @@ use std::{ptr::NonNull, sync::Arc};
 use ash::vk::{self};
 use bevy_tasks::ComputeTaskPool;
 use kiri_backend::{
-    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
+    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetCount,
     DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
     Program, RasterPipelineCreateDesc, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
 };
@@ -288,8 +288,12 @@ impl Renderer {
         self.programs.write().push(program)
     }
 
-    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let program = Program::new(&self.device, shaders)?;
+    pub fn create_program(
+        &self,
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
+        shaders: &[ShaderDesc],
+    ) -> Result<ProgramHandle, Error> {
+        let program = Program::new(&self.device, layout, shaders)?;
         Ok(self.import_program(program))
     }
 
@@ -344,7 +348,7 @@ impl Renderer {
                 vk::ShaderStageFlags::ALL_GRAPHICS,
                 &DescriptorSetLayoutDesc::default(),
             )?,
-            DescriptorCount::default(),
+            DescriptorSetCount::default(),
         )?;
         let resolver = RenderResourceResolver {
             buffers: &buffers,
