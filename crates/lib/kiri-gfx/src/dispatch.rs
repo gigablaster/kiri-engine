@@ -231,6 +231,25 @@ impl PassDispatcher for RasterizerPassDispatcher {
                             layer_count: vk::REMAINING_ARRAY_LAYERS,
                         }),
                 )
+            } else {
+                // Write-write barrier
+                barriers.push(
+                    vk::ImageMemoryBarrier2::default()
+                        .image(resolver.resolve_image(target.image)?.raw)
+                        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                        .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: vk::REMAINING_MIP_LEVELS,
+                            base_array_layer: 0,
+                            layer_count: vk::REMAINING_ARRAY_LAYERS,
+                        }),
+                )
             }
         }
         if let Some(target) = &self.depth_target {
@@ -247,6 +266,26 @@ impl PassDispatcher for RasterizerPassDispatcher {
                         .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                         .src_stage_mask(vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS)
                         .dst_stage_mask(vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::DEPTH
+                                | vk::ImageAspectFlags::STENCIL,
+                            base_mip_level: 0,
+                            level_count: vk::REMAINING_MIP_LEVELS,
+                            base_array_layer: 0,
+                            layer_count: vk::REMAINING_ARRAY_LAYERS,
+                        }),
+                )
+            } else {
+                // Write-write barrier
+                barriers.push(
+                    vk::ImageMemoryBarrier2::default()
+                        .image(resolver.resolve_image(target.image)?.raw)
+                        .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
+                        .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                        .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .src_stage_mask(vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS)
+                        .dst_stage_mask(vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS)
                         .subresource_range(vk::ImageSubresourceRange {
                             aspect_mask: vk::ImageAspectFlags::DEPTH
                                 | vk::ImageAspectFlags::STENCIL,
@@ -303,7 +342,6 @@ impl PassDispatcher for RasterizerPassDispatcher {
         }
         unsafe { device.cmd_end_rendering(command_buffer) };
 
-        // TODO: barriers after, if final layout != attachment
         // From attachments to final layouts
         let mut barriers = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for target in &self.color_targets {
