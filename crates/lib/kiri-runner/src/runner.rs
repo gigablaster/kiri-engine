@@ -163,7 +163,7 @@ impl<E: Error, G: GameClient<E>> ApplicationHandler for GameApp<E, G> {
                         if inner.swapchain.is_none() {
                             inner.swapchain =
                                 Some(Swapchain::new(&inner.device, &inner.surface, dims).unwrap());
-                            inner.renderer.invalidate_fbos();
+                            // inner.renderer.invalidate_fbos();
                             game.swapchain_created().unwrap();
                         }
                         let swapchain = inner.swapchain.as_ref().unwrap();

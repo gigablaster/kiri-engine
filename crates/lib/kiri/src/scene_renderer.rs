@@ -17,12 +17,12 @@ use std::{cmp::Ordering, mem, sync::Arc};
 
 use ash::vk::{self};
 use kiri_backend::{
-    DescriptorSetLayoutDesc, ImageAttachmentDesc, RenderPassLayout, SubpassLayout,
-    DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+    DescriptorSetLayoutDesc, RenderPassLayout, DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT,
+    PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     BindingSlot, BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder,
-    ImageHandle, PipelineHandle, RenderContext, RenderPassHandle, RenderTarget, RenderTargetPool,
+    ImageHandle, PipelineHandle, RenderContext, RenderTarget, RenderTargetPool,
 };
 use lazy_static::lazy_static;
 
@@ -43,12 +43,16 @@ lazy_static! {
         );
 }
 
+const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
 #[derive(Debug)]
 pub struct SceneRenderer {
     target_pool: RenderTargetPool,
     resources: Arc<ResourceCache>,
     pipelines: Arc<PipelineCache>,
-    main_pass: RenderPassHandle,
 }
 
 struct NullCuller {}
@@ -139,25 +143,10 @@ impl SceneRenderer {
         pipeline_cache: &Arc<PipelineCache>,
     ) -> Result<Self, Error> {
         let renderer = &resource_cache.renderer;
-        let layout = RenderPassLayout {
-            color: &[ImageAttachmentDesc::new(vk::Format::A2R10G10B10_UNORM_PACK32).clear_input()],
-            depth: Some(
-                ImageAttachmentDesc::new(vk::Format::D24_UNORM_S8_UINT)
-                    .clear_input()
-                    .discard(),
-            ),
-            subpasses: &[SubpassLayout {
-                depth_write: true,
-                depth_read: false,
-                color_writes: &[0],
-                color_reads: &[],
-            }],
-        };
         Ok(Self {
             target_pool: RenderTargetPool::new(renderer),
             resources: resource_cache.clone(),
             pipelines: pipeline_cache.clone(),
-            main_pass: renderer.create_render_pass(layout)?,
         })
     }
 
@@ -210,9 +199,15 @@ impl SceneRenderer {
         let visible = scene.cull(NullCuller {}, &resolver);
         let mut pass = context.create_rasterizer_pass(
             "Main pass",
-            self.main_pass,
-            &[RenderTarget::new(color_target).clear_color([0.0, 0.0, 0.0, 1.0])],
-            Some(RenderTarget::new(depth_target.handle).clear_depth_stencil(1.0, 0)),
+            &[RenderTarget::new(color_target)
+                .clear_color([0.0, 0.0, 0.0, 1.0])
+                .initial_layout(vk::ImageLayout::UNDEFINED)],
+            Some(
+                RenderTarget::new(depth_target.handle)
+                    .clear_depth_stencil(1.0, 0)
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .discard(),
+            ),
             None,
         );
         let pipeline = self
@@ -220,8 +215,7 @@ impl SceneRenderer {
             .get_or_create_raster_pipeline(RasterPipelineDesc::new::<GpuStaticVertex>(
                 "shaders/main.vert",
                 "shaders/main.frag",
-                self.main_pass,
-                0,
+                &PASS_LAYOUT,
             ))?;
         let mut render_ops = Vec::new();
         for (model, mesh) in &visible.static_meshes {
@@ -243,7 +237,7 @@ impl SceneRenderer {
         while index < render_ops.len() {
             let mut instance = 0;
             let mut data = context.write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)?;
-            let mut stream = DrawStreamBuilder::new(0);
+            let mut stream = DrawStreamBuilder::default();
 
             while instance < DRAWS_PER_STREAM && index < render_ops.len() {
                 let op = &render_ops[index];
@@ -262,7 +256,7 @@ impl SceneRenderer {
             }
             pass.draw(stream.build());
         }
-        self.target_pool.insert_barriers(context);
+        // self.target_pool.insert_barriers(context);
         context.submit(pass.build());
         Ok(color_target)
     }

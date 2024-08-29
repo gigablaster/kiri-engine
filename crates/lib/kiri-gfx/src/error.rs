@@ -16,9 +16,7 @@
 use ash::vk;
 use thiserror::Error;
 
-use crate::{
-    BufferHandle, DescriptorHandle, ImageHandle, PipelineHandle, ProgramHandle, RenderPassHandle,
-};
+use crate::{BufferHandle, DescriptorHandle, ImageHandle, PipelineHandle, ProgramHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -44,8 +42,6 @@ pub enum Error {
     InvalidDescriptorHandle(DescriptorHandle),
     #[error("Invalid program handle {0}")]
     InvalidProgramHandle(ProgramHandle),
-    #[error("Invalid render pass handle {0}")]
-    InvalidRenderPassHandle(RenderPassHandle),
 }
 
 impl From<vk::Result> for Error {

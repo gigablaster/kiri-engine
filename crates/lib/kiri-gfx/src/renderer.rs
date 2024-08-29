@@ -21,11 +21,9 @@ use bevy_tasks::ComputeTaskPool;
 use kiri_backend::{
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorCount,
     DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout,
-    Program, RasterPipelineCreateDesc, RenderDevice, RenderPass, RenderPassLayout, ShaderDesc,
-    Swapchain,
+    Program, RasterPipelineCreateDesc, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
 };
 use kiri_common::{Handle, HotColdPool, Pool, TempList};
-use log::debug;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -37,7 +35,6 @@ pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-pub type RenderPassHandle = Handle<RenderPass>;
 pub type ProgramHandle = Handle<Program>;
 
 pub(super) type ImagePool = Pool<Image>;
@@ -45,7 +42,6 @@ pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
 pub(super) type PipelinePool =
     HotColdPool<(vk::Pipeline, vk::PipelineLayout), PipelineCompilationData>;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
-pub(super) type RenderPassPool = Pool<RenderPass>;
 pub(super) type ProgramPool = Pool<Program>;
 
 pub enum FrameState {
@@ -110,8 +106,7 @@ impl From<BufferSlice> for BufferPointer {
 #[derive(Debug)]
 pub(super) struct PipelineCompilationData {
     program: ProgramHandle,
-    render_pass: RenderPassHandle,
-    subpass: u32,
+    render_pass: &'static RenderPassLayout<'static>,
     streams: &'static [InputVertexStreamLayout<'static>],
     specialization: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
@@ -125,7 +120,6 @@ pub struct Renderer {
     buffers: RwLock<BufferPool>,
     pipelines: RwLock<PipelinePool>,
     descriptors: RwLock<DescriptorPool>,
-    render_passes: RwLock<RenderPassPool>,
     programs: RwLock<ProgramPool>,
     staging: Mutex<Staging>,
     pipelines_to_compile: Mutex<Vec<PipelineHandle>>,
@@ -136,7 +130,6 @@ unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
 const MAX_RESOURCE_COUNT: usize = 0xffff;
-const MAX_RENDER_PASSES: usize = 1024;
 const MAX_PIPELINES: usize = 8192;
 const MAX_PROGRAMS: usize = 1024;
 const MAX_DESCRIPTORS: usize = 8192;
@@ -150,7 +143,6 @@ impl Renderer {
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             pipelines: RwLock::new(PipelinePool::new(MAX_PIPELINES)),
             descriptors: RwLock::new(DescriptorPool::new(MAX_DESCRIPTORS)),
-            render_passes: RwLock::new(RenderPassPool::new(MAX_RENDER_PASSES)),
             programs: RwLock::new(ProgramPool::new(MAX_PROGRAMS)),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
@@ -251,8 +243,7 @@ impl Renderer {
     pub fn create_pipeline(
         &self,
         program: ProgramHandle,
-        render_pass: RenderPassHandle,
-        subpass: u32,
+        render_pass: &'static RenderPassLayout<'static>,
         streams: &'static [InputVertexStreamLayout<'static>],
         specialization: &[(u32, u32)],
         desc: RasterPipelineCreateDesc,
@@ -260,7 +251,6 @@ impl Renderer {
         let data = PipelineCompilationData {
             program,
             render_pass,
-            subpass,
             streams,
             specialization: specialization.to_vec(),
             desc,
@@ -292,19 +282,6 @@ impl Renderer {
 
     pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
         self.descriptors.write().remove(handle);
-    }
-
-    pub fn import_render_pass(&self, pass: RenderPass) -> RenderPassHandle {
-        self.render_passes.write().push(pass)
-    }
-
-    pub fn create_render_pass(&self, layout: RenderPassLayout) -> Result<RenderPassHandle, Error> {
-        let render_pass = RenderPass::new(&self.device, layout)?;
-        Ok(self.import_render_pass(render_pass))
-    }
-
-    pub fn destory_render_pass(&self, handle: RenderPassHandle) {
-        self.render_passes.write().remove(handle);
     }
 
     pub fn import_program(&self, program: Program) -> ProgramHandle {
@@ -369,12 +346,10 @@ impl Renderer {
             )?,
             DescriptorCount::default(),
         )?;
-        let render_passes = self.render_passes.read();
         let resolver = RenderResourceResolver {
             buffers: &buffers,
             images: &images,
             descriptors: &descriptors,
-            render_passes: &render_passes,
             pipelines: &pipelines,
             empty_descriptor_set,
         };
@@ -417,16 +392,14 @@ impl Renderer {
     fn compile_pipelines(&self) -> Result<(), Error> {
         puffin::profile_function!();
         let programs = self.programs.read();
-        let render_passes = self.render_passes.read();
         let mut pipelines = self.pipelines.write();
         let mut result = ComputeTaskPool::get().scope(|s| {
             for handle in self.pipelines_to_compile.lock().drain(..) {
-                s.spawn(self.compile_pipeline(handle, &pipelines, &programs, &render_passes));
+                s.spawn(self.compile_pipeline(handle, &pipelines, &programs));
             }
         });
         for it in result.drain(..) {
             let (handle, data) = it?;
-            debug!("Compile pipeline {} -> {:?}", handle, data);
             pipelines.replace(handle, data);
         }
         Ok(())
@@ -437,7 +410,6 @@ impl Renderer {
         handle: PipelineHandle,
         pipelines: &PipelinePool,
         programs: &ProgramPool,
-        render_passes: &RenderPassPool,
     ) -> Result<(PipelineHandle, (vk::Pipeline, vk::PipelineLayout)), Error> {
         puffin::profile_function!();
         let data = pipelines
@@ -446,9 +418,6 @@ impl Renderer {
         let program = programs
             .get(data.program)
             .ok_or(Error::InvalidProgramHandle(data.program))?;
-        let render_pass = render_passes
-            .get(data.render_pass)
-            .ok_or(Error::InvalidRenderPassHandle(data.render_pass))?;
         Ok((
             handle,
             (
@@ -456,8 +425,7 @@ impl Renderer {
                     &self.device,
                     vk::PipelineCache::null(),
                     program,
-                    render_pass,
-                    data.subpass,
+                    data.render_pass,
                     data.streams,
                     &data.specialization,
                     data.desc,
@@ -612,13 +580,6 @@ impl Renderer {
                 .filter(|x| x.data.handle == image)
                 .for_each(|x| x.data.view = vk::ImageView::null());
         })
-    }
-
-    pub fn invalidate_fbos(&self) {
-        self.render_passes
-            .write()
-            .iter()
-            .for_each(|x| x.clear_fbos());
     }
 }
 

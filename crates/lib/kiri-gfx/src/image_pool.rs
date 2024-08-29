@@ -13,9 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{ImageHandle, PassDispatcher, RenderContext, Renderer};
+use crate::{ImageHandle, Renderer};
 use ash::vk::{self, ImageUsageFlags};
 use kiri_backend::ImageCreateDesc;
 use log::debug;
@@ -154,39 +154,6 @@ impl RenderTargetPool {
         });
     }
 
-    /// Inserts necessary barriers
-    ///
-    /// Should be called before any pass that used allocated render targets.
-    pub fn insert_barriers(&self, context: &RenderContext) {
-        let images: Vec<_> = mem::take(&mut self.images_to_transition.lock());
-        let color = images
-            .iter()
-            .copied()
-            .filter_map(|(image, usage)| {
-                if usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT) {
-                    Some(image)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        let depth = images
-            .iter()
-            .copied()
-            .filter_map(|(image, usage)| {
-                if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
-                    Some(image)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        context.submit(Box::new(TempRenderTargetsBarrierDispatcher {
-            color,
-            depth,
-        }))
-    }
-
     /// Returns used image back to pool
     pub fn recycle(&self) {
         let mut pool = self.images.lock();
@@ -206,90 +173,5 @@ impl RenderTargetPool {
 impl<'a> Drop for TransientImageGuard<'a> {
     fn drop(&mut self) {
         self.pool.return_transient_image(self.handle, self.key);
-    }
-}
-
-struct TempRenderTargetsBarrierDispatcher {
-    color: Vec<ImageHandle>,
-    depth: Vec<ImageHandle>,
-}
-
-impl PassDispatcher for TempRenderTargetsBarrierDispatcher {
-    fn name(&self) -> &str {
-        "Barriers for temporary render targets"
-    }
-
-    fn dispatch(
-        &self,
-        device: &ash::Device,
-        command_buffer: vk::CommandBuffer,
-        resolver: &crate::RenderResourceResolver,
-    ) -> Result<(), Error> {
-        let mut color_barriers = Vec::with_capacity(self.color.len());
-        for image in self.color.iter().copied() {
-            if let Ok(image) = resolver.resolve_image(image) {
-                color_barriers.push(
-                    vk::ImageMemoryBarrier::default()
-                        .image(image.raw)
-                        .src_access_mask(vk::AccessFlags::SHADER_READ)
-                        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR, // fixme
-                            base_mip_level: 0,
-                            level_count: vk::REMAINING_MIP_LEVELS,
-                            base_array_layer: 0,
-                            layer_count: vk::REMAINING_ARRAY_LAYERS,
-                        }),
-                )
-            }
-        }
-        let mut depth_barriers = Vec::with_capacity(self.depth.len());
-        for image in self.depth.iter().copied() {
-            if let Ok(image) = resolver.resolve_image(image) {
-                depth_barriers.push(
-                    vk::ImageMemoryBarrier::default()
-                        .image(image.raw)
-                        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ)
-                        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::DEPTH
-                                | vk::ImageAspectFlags::STENCIL,
-                            base_mip_level: 0,
-                            level_count: vk::REMAINING_MIP_LEVELS,
-                            base_array_layer: 0,
-                            layer_count: vk::REMAINING_ARRAY_LAYERS,
-                        }),
-                )
-            }
-        }
-        unsafe {
-            if !color_barriers.is_empty() {
-                device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    vk::DependencyFlags::BY_REGION,
-                    &[],
-                    &[],
-                    &color_barriers,
-                )
-            }
-            if !depth_barriers.is_empty() {
-                device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-                    vk::DependencyFlags::BY_REGION,
-                    &[],
-                    &[],
-                    &depth_barriers,
-                )
-            }
-        }
-        Ok(())
     }
 }

@@ -20,13 +20,12 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, DynamicWriter, Error, PassDispatcher, RasterizerPassDispatcher,
-    RenderPassHandle, RenderTarget, Renderer,
+    DynamicGpuMemory, DynamicWriter, Error, PassDispatcher, RasterizerPassDispatcher, RenderTarget,
+    Renderer,
 };
 
 pub struct RasterizerPassBuilder<'a> {
     context: &'a RenderContext<'a>,
-    render_pass: RenderPassHandle,
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     streams: Vec<DrawStream>,
@@ -59,7 +58,6 @@ impl<'a> RasterizerPassBuilder<'a> {
             .append(&mut self.descriptor_sets);
         Box::new(RasterizerPassDispatcher::new(
             self.name,
-            self.render_pass,
             &self.color_targets,
             self.depth_target,
             self.streams,
@@ -123,14 +121,12 @@ impl<'a> RenderContext<'a> {
     pub fn create_rasterizer_pass(
         &'a self,
         name: &'a str,
-        render_pass: RenderPassHandle,
         color: &[RenderTarget],
         depth: Option<RenderTarget>,
         area: Option<Rect2D>,
     ) -> RasterizerPassBuilder {
         RasterizerPassBuilder {
             context: self,
-            render_pass,
             color_targets: color
                 .iter()
                 .copied()

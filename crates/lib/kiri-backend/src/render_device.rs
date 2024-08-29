@@ -109,11 +109,17 @@ impl RenderDevice {
         let mut buffer_device_address =
             vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
         let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
+        let mut dynamic_rendering =
+            vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
+        let mut synchornization2 =
+            vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
 
         let mut features = vk::PhysicalDeviceFeatures2::default()
             .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
             .push_next(&mut buffer_device_address)
-            .push_next(&mut maintenance4);
+            .push_next(&mut maintenance4)
+            .push_next(&mut dynamic_rendering)
+            .push_next(&mut synchornization2);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)

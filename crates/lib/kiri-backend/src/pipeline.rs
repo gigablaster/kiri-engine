@@ -25,7 +25,27 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Program, RenderDevice, RenderPass};
+use crate::{Error, Program, RenderDevice};
+
+pub const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RenderPassLayout<'a> {
+    pub color: &'a [vk::Format],
+    pub depth: Option<vk::Format>,
+}
+
+impl<'a> RenderPassLayout<'a> {
+    fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
+        let mut info =
+            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&self.color);
+        if let Some(depth) = self.depth {
+            info = info.depth_attachment_format(depth);
+        }
+        info
+    }
+}
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PipelineBlendDesc {
@@ -179,8 +199,7 @@ pub fn compile_raster_pipeline(
     device: &RenderDevice,
     cache: vk::PipelineCache,
     program: &Program,
-    render_pass: &RenderPass,
-    subpass: u32,
+    pass_layout: &RenderPassLayout,
     streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
@@ -308,6 +327,8 @@ pub fn compile_raster_pipeline(
 
     let tesslation_state = vk::PipelineTessellationStateCreateInfo::default();
 
+    let mut rendering_info = pass_layout.build();
+
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&shader_create_info)
         .vertex_input_state(&vertex_input)
@@ -320,8 +341,7 @@ pub fn compile_raster_pipeline(
         .dynamic_state(&dynamic_state_create_info)
         .tessellation_state(&tesslation_state)
         .layout(program.pipeline_layout)
-        .render_pass(render_pass.raw)
-        .subpass(subpass);
+        .push_next(&mut rendering_info);
 
     let pipeline = unsafe {
         device

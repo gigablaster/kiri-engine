@@ -38,9 +38,8 @@ struct DrawState {
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DrawStreamBuilder {
-    subpass: u32,
     current: DrawState,
     mask: u16,
     stream: Cursor<Vec<u8>>,
@@ -51,7 +50,6 @@ pub struct DrawStreamBuilder {
 pub struct DrawStream {
     stream: Vec<u8>,
     commands: usize,
-    pub subpass: u32,
 }
 
 const PIPELINE_MASK: u16 = 1 << 0;
@@ -66,21 +64,10 @@ const INSTANCE_COUNT_MASK: u16 = FIRST_INSTANCE_MASK << 1;
 const VERTEX_OFFSET_MASK: u16 = INSTANCE_COUNT_MASK << 1;
 
 impl DrawStreamBuilder {
-    pub fn new(subpass: u32) -> Self {
-        Self {
-            subpass,
-            current: Default::default(),
-            mask: Default::default(),
-            stream: Default::default(),
-            commands: Default::default(),
-        }
-    }
-
     pub fn build(self) -> DrawStream {
         DrawStream {
             stream: self.stream.into_inner(),
             commands: self.commands,
-            subpass: self.subpass,
         }
     }
 

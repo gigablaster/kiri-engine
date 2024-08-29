@@ -15,10 +15,13 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use ash::vk::RenderPass;
 use bytes::Bytes;
 use kiri_assets::{ShaderAssetSource, ShaderType};
-use kiri_backend::{InputVertexStreamLayout, PipelineVertex, RasterPipelineCreateDesc, ShaderDesc};
-use kiri_gfx::{PipelineHandle, ProgramHandle, RenderPassHandle, Renderer};
+use kiri_backend::{
+    InputVertexStreamLayout, PipelineVertex, RasterPipelineCreateDesc, RenderPassLayout, ShaderDesc,
+};
+use kiri_gfx::{PipelineHandle, ProgramHandle, Renderer};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{load_or_compile_asset, Error};
@@ -27,8 +30,7 @@ use crate::{load_or_compile_asset, Error};
 pub struct RasterPipelineDesc {
     pub vertex_shader: String,
     pub fragment_shader: String,
-    pub render_pass: RenderPassHandle,
-    pub subpass: u32,
+    pub render_pass: &'static RenderPassLayout<'static>,
     pub input_layout: &'static [InputVertexStreamLayout<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
@@ -38,14 +40,12 @@ impl RasterPipelineDesc {
     pub fn new<T: PipelineVertex>(
         vertex_shader: &str,
         fragment_shader: &str,
-        render_pass: RenderPassHandle,
-        subpass: u32,
+        render_pass: &'static RenderPassLayout<'static>,
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
             fragment_shader: fragment_shader.into(),
             render_pass,
-            subpass,
             input_layout: T::layout(),
             specialization: Default::default(),
             desc: Default::default(),
@@ -134,7 +134,6 @@ impl PipelineCache {
                 let pipeline = self.renderer.create_pipeline(
                     program,
                     desc.render_pass,
-                    desc.subpass,
                     desc.input_layout,
                     &desc.specialization,
                     desc.desc,
