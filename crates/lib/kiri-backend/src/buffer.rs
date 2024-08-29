@@ -35,6 +35,7 @@ pub struct Buffer {
     pub raw: vk::Buffer,
     pub desc: BufferDesc,
     pub mapping: Option<NonNull<u8>>,
+    pub device_address: Option<vk::DeviceAddress>,
     memory: Option<GpuMemoryBlock>,
 }
 
@@ -124,6 +125,11 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
+    pub fn device_address(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR;
+        self
+    }
+
     pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
         self.usage = usage;
         self
@@ -182,6 +188,18 @@ impl Buffer {
         } else {
             None
         };
+        let device_address = if desc
+            .usage
+            .contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR)
+        {
+            Some(unsafe {
+                device.raw.get_buffer_device_address(
+                    &vk::BufferDeviceAddressInfo::default().buffer(buffer),
+                )
+            })
+        } else {
+            None
+        };
         Ok(Self {
             device: device.clone(),
             raw: buffer,
@@ -190,6 +208,7 @@ impl Buffer {
                 usage: desc.usage,
             },
             mapping,
+            device_address,
             memory: Some(memory),
         })
     }

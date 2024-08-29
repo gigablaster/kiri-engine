@@ -77,6 +77,7 @@ impl RenderDevice {
             ash::khr::maintenance1::NAME,
             ash::khr::maintenance2::NAME,
             ash::khr::maintenance3::NAME,
+            ash::khr::maintenance4::NAME,
         ];
 
         for ext in device_extension_names.iter() {
@@ -105,8 +106,15 @@ impl RenderDevice {
             .queue_family_index(universal_queue_family.index)
             .queue_priorities(&queue_priorities)];
 
+        let mut buffer_device_address =
+            vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default().maintenance4(true);
+
         let mut features = vk::PhysicalDeviceFeatures2::default()
-            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true));
+            .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
+            .push_next(&mut buffer_device_address)
+            .push_next(&mut maintenance4);
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
             .enabled_extension_names(&device_extension_names)
