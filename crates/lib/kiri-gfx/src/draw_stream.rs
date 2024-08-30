@@ -97,6 +97,7 @@ impl DrawStreamBuilder {
         if self.current.streams[stream] != buffer {
             self.mask |= VERTEX_STREAM_MASK << stream;
             self.current.streams[stream] = buffer;
+            self.set_vertex_offset(0);
         }
     }
 
