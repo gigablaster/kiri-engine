@@ -159,7 +159,7 @@ impl Asset for ShaderAsset {
 
 impl ImportAsset<ShaderAsset> for ShaderAssetSource {
     fn import(&self) -> Result<ShaderAsset, Error> {
-        let mut child = Command::new("glslc")
+        let child = Command::new("glslc")
             .arg(self.ty.target())
             .arg("--target-env=vulkan1.3")
             .arg("-I")

@@ -176,6 +176,14 @@ pub trait PipelineVertex {
     fn layout() -> &'static [InputVertexStreamLayout<'static>];
 }
 
+const EMPTY_STREAM_LAYOUT: [InputVertexStreamLayout; 0] = [];
+
+impl PipelineVertex for () {
+    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
+        &EMPTY_STREAM_LAYOUT
+    }
+}
+
 impl<'a> InputVertexStreamLayout<'a> {
     fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let attributes = self
