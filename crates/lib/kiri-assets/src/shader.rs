@@ -20,7 +20,7 @@ use std::{
 };
 
 use ash::vk;
-use kiri_vfs::AssetReference;
+use kiri_vfs::{AssetReference, ROOT_SOURCE_ASSETS_PATH};
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
@@ -159,33 +159,17 @@ impl Asset for ShaderAsset {
 
 impl ImportAsset<ShaderAsset> for ShaderAssetSource {
     fn import(&self) -> Result<ShaderAsset, Error> {
-        let code = shader_prepper::process_file(
-            &self.path,
-            &mut ShaderIncludeProvider::default(),
-            PathBuf::new(),
-        )
-        .map_err(|err| Error::ProcessingFailed(err.to_string()))?
-        .iter()
-        .map(|chunk| chunk.source.clone())
-        .collect::<Vec<_>>()
-        .concat();
-
         let mut child = Command::new("glslc")
             .arg(self.ty.target())
-            .arg("--target-env=vulkan1.1")
+            .arg("--target-env=vulkan1.3")
+            .arg("-I")
+            .arg(ROOT_SOURCE_ASSETS_PATH)
             .arg("-o")
             .arg("-")
-            .arg("-")
-            .stdin(Stdio::piped())
+            .arg(Path::new(ROOT_SOURCE_ASSETS_PATH).join(&self.path))
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
-        child
-            .stdin
-            .as_mut()
-            .unwrap()
-            .write_all(code.as_bytes())
-            .unwrap();
 
         let result = child
             .wait_with_output()
