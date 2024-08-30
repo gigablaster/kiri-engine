@@ -26,8 +26,9 @@ use kiri_backend::{
     EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
+    passes::{RasterizerPassBuilder, RenderTarget},
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle,
-    PipelineHandle, RenderContext, RenderTarget, RenderTargetPool,
+    PipelineHandle, RenderContext, RenderTargetPool,
 };
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -208,7 +209,7 @@ impl SceneRenderer {
             ),
         )?;
         let visible = scene.cull(NullCuller {}, &resolver);
-        let mut pass = context.create_rasterizer_pass(
+        let mut pass = RasterizerPassBuilder::new(
             "Main pass",
             &[RenderTarget::new(color_target)
                 .clear_color([0.0, 0.0, 0.0, 1.0])
@@ -219,7 +220,6 @@ impl SceneRenderer {
                     .initial_layout(vk::ImageLayout::UNDEFINED)
                     .discard(),
             ),
-            None,
         );
         let pipeline = self
             .pipelines

@@ -13,58 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use arrayvec::ArrayVec;
-use ash::vk::{self, Rect2D};
-use kiri_backend::{Image, MAX_COLOR_ATTACHMENTS};
+use ash::vk::{self};
+use kiri_backend::Image;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder, DrawStream,
-    DynamicGpuMemory, DynamicWriter, Error, PassDispatcher, RasterizerPassDispatcher, RenderTarget,
-    Renderer,
+    BufferHandle, BufferSlice, DescriptorHandle, DescriptorPool, DescriptorSetBuilder,
+    DynamicGpuMemory, DynamicWriter, Error, PassDispatcher, Renderer,
 };
-
-pub struct RasterizerPassBuilder<'a> {
-    context: &'a RenderContext<'a>,
-    color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    depth_target: Option<RenderTarget>,
-    streams: Vec<DrawStream>,
-    descriptor_sets: Vec<DescriptorHandle>,
-    area: Option<Rect2D>,
-    name: &'a str,
-}
-
-impl<'a> RasterizerPassBuilder<'a> {
-    pub fn draw(&mut self, stream: DrawStream) {
-        self.streams.push(stream);
-    }
-
-    pub fn get_descriptor_set(
-        &mut self,
-        builder: DescriptorSetBuilder,
-    ) -> Result<DescriptorHandle, Error> {
-        let handle = self.context.descriptors.write().push(
-            vk::DescriptorSet::null(),
-            builder.build(&self.context.renderer.device)?,
-        );
-        self.descriptor_sets.push(handle);
-        Ok(handle)
-    }
-
-    pub fn build(mut self) -> Box<dyn PassDispatcher> {
-        self.context
-            .trash_descriptors
-            .lock()
-            .append(&mut self.descriptor_sets);
-        Box::new(RasterizerPassDispatcher::new(
-            self.name,
-            &self.color_targets,
-            self.depth_target,
-            self.streams,
-            self.area,
-        ))
-    }
-}
 
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
@@ -116,27 +72,6 @@ impl<'a> RenderContext<'a> {
         );
         self.trash_descriptors.lock().push(handle);
         Ok(handle)
-    }
-
-    pub fn create_rasterizer_pass(
-        &'a self,
-        name: &'a str,
-        color: &[RenderTarget],
-        depth: Option<RenderTarget>,
-        area: Option<Rect2D>,
-    ) -> RasterizerPassBuilder {
-        RasterizerPassBuilder {
-            context: self,
-            color_targets: color
-                .iter()
-                .copied()
-                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
-            depth_target: depth,
-            streams: Default::default(),
-            descriptor_sets: Default::default(),
-            name,
-            area,
-        }
     }
 
     pub fn submit(&self, pass: Box<dyn PassDispatcher>) {
