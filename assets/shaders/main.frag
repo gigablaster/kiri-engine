@@ -31,7 +31,7 @@ void main() {
 
     vec3 Lo = vec3(0, 0, 0);
     for (int i = 0; i < 3; i++) {
-        Lo += bdrf(N, V, base_color, f0, metallic, roughness, ao, per_pass.lights[i].direction, per_pass.lights[i].color);
+        Lo += bdrf(N, V, base_color, f0, metallic, roughness, ao, vec3(1.0, -1.0, 1.0) * per_pass.lights[i].direction, per_pass.lights[i].color);
     }
     vec3 diffuse_ambient = ambient_light(N, per_pass.ambient);
     vec3 specular_ambient = ambient_light(-reflect(V, N), per_pass.ambient);

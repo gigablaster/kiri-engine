@@ -21,14 +21,15 @@ use crate::{
     MATERIAL_DESCRIPTOR_LAYOUT,
 };
 use ash::vk::{self};
+use glam::{vec4, Mat4};
 use kiri_backend::{
     DescriptorSetDesc, DescriptorSetLayoutDesc, RenderPassLayout, DYNAMIC_BINDING_SLOT,
     EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     passes::{FinalCompositionPassDispatcher, RasterizerPassBuilder, RenderTarget},
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, PipelineHandle,
-    RenderContext, RenderTargetPool,
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
+    PipelineHandle, RenderContext, RenderTargetPool,
 };
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -55,9 +56,36 @@ const INSTANCE_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutD
     update_after_bind: false,
 };
 
+const POSTPROCESS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[
+        (
+            0,
+            DescriptorSetDesc {
+                name: "main",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            1,
+            DescriptorSetDesc {
+                name: "params",
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count: 1,
+            },
+        ),
+    ],
+    update_after_bind: false,
+};
+
 const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
+    color: &[vk::Format::R16G16B16A16_SFLOAT],
     depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
+const POSTPROCESS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
+    depth: None,
 };
 
 #[derive(Debug)]
@@ -65,6 +93,8 @@ pub struct SceneRenderer {
     target_pool: RenderTargetPool,
     resources: Arc<ResourceCache>,
     pipelines: Arc<PipelineCache>,
+    main_material: PipelineHandle,
+    tonemapping: PipelineHandle,
 }
 
 struct NullCuller {}
@@ -148,6 +178,13 @@ pub struct RenderEnviroment {
     pub camera: Camera,
     pub lights: [DirectionalLight; 3],
     pub ambient: HemisphericalAmbient,
+    pub expouse: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+struct TonemappingParams {
+    pub expouse: f32,
 }
 
 impl SceneRenderer {
@@ -155,11 +192,39 @@ impl SceneRenderer {
         resource_cache: &Arc<ResourceCache>,
         pipeline_cache: &Arc<PipelineCache>,
     ) -> Result<Self, Error> {
-        let renderer = &resource_cache.renderer;
+        let renderer: &Arc<kiri_gfx::Renderer> = &resource_cache.renderer;
+        let main_material =
+            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<
+                GpuStaticVertex,
+            >(
+                "shaders/main.vert",
+                "shaders/main.frag",
+                &PASS_LAYOUT,
+                &[
+                    RENDER_PASS_DESCRIPTOR_LAYOUT,
+                    EMPTY_DESCRIPTOR_LAYOUT,
+                    MATERIAL_DESCRIPTOR_LAYOUT,
+                    INSTANCE_DESCRIPTOR_LAYOUT,
+                ],
+            ))?;
+        let tonemapping =
+            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<()>(
+                "shaders/fullscreen.vert",
+                "shaders/tonemapping.frag",
+                &POSTPROCESS_LAYOUT,
+                &[
+                    POSTPROCESS_DESCRIPTOR_LAYOUT,
+                    EMPTY_DESCRIPTOR_LAYOUT,
+                    EMPTY_DESCRIPTOR_LAYOUT,
+                    EMPTY_DESCRIPTOR_LAYOUT,
+                ],
+            ))?;
         Ok(Self {
             target_pool: RenderTargetPool::new(renderer),
             resources: resource_cache.clone(),
             pipelines: pipeline_cache.clone(),
+            main_material,
+            tonemapping,
         })
     }
 
@@ -172,9 +237,9 @@ impl SceneRenderer {
         puffin::profile_function!();
         let resolver = self.resources.resolve();
         let color_target = self.target_pool.get_image(
-            vk::Format::A2R10G10B10_UNORM_PACK32,
+            vk::Format::R16G16B16A16_SFLOAT,
             context.backbuffer.desc.dims,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
         )?;
         let depth_target = self.target_pool.get_image(
             vk::Format::D24_UNORM_S8_UINT,
@@ -182,10 +247,17 @@ impl SceneRenderer {
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
                 | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
         )?;
+        let projection = env.camera.projection
+            * Mat4::from_cols(
+                vec4(1.0, 0.0, 0.0, 0.0),
+                vec4(0.0, -1.0, 0.0, 0.0),
+                vec4(0.0, 0.0, 0.5, 0.0),
+                vec4(0.0, 0.0, 0.5, 1.0),
+            );
         let pass_data = context.push_dynamic_data(&[RenderPassGpuData {
             view: env.camera.view,
-            projection: env.camera.projection,
-            view_projection: env.camera.projection * env.camera.view,
+            projection: projection,
+            view_projection: projection * env.camera.view,
             eye_position: env.camera.view.transform_point3(glam::Vec3::default()),
             lights: env.lights,
             ambient: env.ambient,
@@ -213,7 +285,8 @@ impl SceneRenderer {
             "Main pass",
             &[RenderTarget::new(color_target.handle)
                 .clear_color([0.0, 0.0, 0.0, 1.0])
-                .initial_layout(vk::ImageLayout::UNDEFINED)],
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
             Some(
                 RenderTarget::new(depth_target.handle)
                     .clear_depth_stencil(1.0, 0)
@@ -221,26 +294,13 @@ impl SceneRenderer {
                     .discard(),
             ),
         );
-        let pipeline = self
-            .pipelines
-            .get_or_create_raster_pipeline(RasterPipelineDesc::new::<GpuStaticVertex>(
-                "shaders/main.vert",
-                "shaders/main.frag",
-                &PASS_LAYOUT,
-                &[
-                    RENDER_PASS_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    MATERIAL_DESCRIPTOR_LAYOUT,
-                    INSTANCE_DESCRIPTOR_LAYOUT,
-                ],
-            ))?;
         let mut render_ops = Vec::new();
         {
             puffin::profile_scope!("Generate renderops");
             for (model, mesh) in &visible.static_meshes {
                 for surface in &mesh.surfaces {
                     render_ops.push(RenderOp {
-                        pipeline,
+                        pipeline: self.main_material,
                         model: (*model).into(),
                         vertex_buffer: mesh.vertex_buffer,
                         index_buffer: mesh.index_buffer,
@@ -272,7 +332,7 @@ impl SceneRenderer {
                     stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
                     stream.set_vertex_buffer(0, Some(op.vertex_buffer));
-                    stream.set_index_buffer(op.index_buffer);
+                    stream.set_index_buffer(Some(op.index_buffer));
                     stream.set_vertex_offset(op.vertex_offset as _);
                     stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
                     stream.set_dynamic_offset(0, Some(data.offset as _));
@@ -282,11 +342,36 @@ impl SceneRenderer {
                 }
                 pass.draw(stream.build());
             }
-            // self.target_pool.insert_barriers(context);
             context.submit(pass.build());
-            context.submit(Box::new(FinalCompositionPassDispatcher::new(
-                color_target.handle,
-            )));
+
+            let post = self.target_pool.get_image(
+                vk::Format::A2R10G10B10_UNORM_PACK32,
+                context.backbuffer.desc.dims,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            )?;
+            let mut pass = RasterizerPassBuilder::new(
+                "test",
+                &[RenderTarget::new(post.handle).initial_layout(vk::ImageLayout::UNDEFINED)],
+                None,
+            );
+            let ds = context.get_descriptor_set(
+                DescriptorSetBuilder::new(
+                    vk::ShaderStageFlags::ALL_GRAPHICS,
+                    POSTPROCESS_DESCRIPTOR_LAYOUT,
+                )
+                .bind_image(0, color_target.handle, vk::ImageAspectFlags::COLOR)
+                .bind_uniform_buffer(
+                    1,
+                    context.push_dynamic_data(&[TonemappingParams {
+                        expouse: env.expouse,
+                    }])?,
+                ),
+            )?;
+            pass.draw(self.postprocess(self.tonemapping, ds));
+
+            context.submit(pass.build());
+
+            context.submit(Box::new(FinalCompositionPassDispatcher::new(post.handle)));
         }
 
         Ok(())
@@ -294,5 +379,13 @@ impl SceneRenderer {
 
     pub fn swapchain_changed(&self) {
         self.target_pool.purge();
+    }
+
+    fn postprocess(&self, pipeline: PipelineHandle, ds: DescriptorHandle) -> DrawStream {
+        let mut stream = DrawStreamBuilder::default();
+        stream.set_pipeline(pipeline);
+        stream.set_descriptor(0, Some(ds));
+        stream.draw(0, 3, 0, 1);
+        stream.build()
     }
 }
