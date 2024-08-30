@@ -17,19 +17,21 @@ use glam::Affine3A;
 use kiri_assets::NodeIndex;
 use kiri_common::{Handle, HotColdPool};
 
-use crate::{Bounds, RenderScene, SceneHandle, StaticMeshHandle, StaticRenderMesh};
+use crate::{Bounds, ModelHandle, RenderModel, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NodeData {
+pub enum SceneNodeData {
     Empty,
-    StaticMesh(StaticMeshHandle),
-    Scene(SceneHandle),
+    StaticMesh(ModelHandle, u32),
+    Model(ModelHandle),
 }
 
-impl NodeData {
+impl SceneNodeData {
     pub fn bounds<T: MeshResolver>(self, resolver: &T) -> Option<Bounds> {
         match self {
-            Self::StaticMesh(handle) => resolver.resolve_static_mesh(handle).map(|x| x.bounds),
+            Self::StaticMesh(handle, index) => resolver
+                .resolve_static_mesh(handle, index)
+                .map(|x| x.bounds),
             _ => None,
         }
     }
@@ -41,7 +43,7 @@ type NodePool = HotColdPool<SceneNode, NodeIndex>;
 /// Клиентские данные о ноде
 #[derive(Debug, Clone, Copy)]
 pub struct SceneNode {
-    data: NodeData,
+    data: SceneNodeData,
     parent: NodeHandle,
     transform: glam::Affine3A,
 }
@@ -56,7 +58,7 @@ const MAX_SCENE_NODES: usize = 0xfffff;
 #[derive(Debug)]
 pub struct Scene {
     nodes: NodePool,
-    data: Vec<NodeData>,
+    data: Vec<SceneNodeData>,
     parents: Vec<NodeIndex>,
     local_transforms: Vec<glam::Affine3A>,
     world_transforms: Vec<glam::Affine3A>,
@@ -68,8 +70,8 @@ pub struct Scene {
 
 /// Интерфейс для доступа к данным меша
 pub trait MeshResolver {
-    fn resolve_static_mesh(&self, handle: StaticMeshHandle) -> Option<&StaticRenderMesh>;
-    fn resolve_scene(&self, handle: SceneHandle) -> Option<&RenderScene>;
+    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh>;
+    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel>;
 }
 
 #[derive(Debug)]
@@ -97,7 +99,7 @@ impl Scene {
     pub fn add_node(
         &mut self,
         parent: NodeHandle,
-        data: NodeData,
+        data: SceneNodeData,
         transform: Affine3A,
     ) -> NodeHandle {
         let handle = self.nodes.push(
@@ -128,7 +130,7 @@ impl Scene {
         }
     }
 
-    pub fn update_node_data(&mut self, handle: NodeHandle, data: NodeData) {
+    pub fn update_node_data(&mut self, handle: NodeHandle, data: SceneNodeData) {
         if let Some(node) = self.nodes.get_mut(handle) {
             node.data = data;
             if let Some(index) = self.nodes.get_cold(handle).unwrap().index() {
@@ -224,32 +226,29 @@ impl Scene {
             .iter()
             .enumerate()
             .for_each(|(index, data)| match data {
-                NodeData::StaticMesh(handle) => {
+                SceneNodeData::StaticMesh(handle, mesh_index) => {
                     let transform = self.world_transforms[index];
                     if culler.cull(self.bounds[index].transform(transform)) {
-                        if let Some(mesh) = resolver.resolve_static_mesh(*handle) {
+                        if let Some(mesh) = resolver.resolve_static_mesh(*handle, *mesh_index) {
                             static_meshes.push((transform, mesh));
                         }
                     }
                 }
-                NodeData::Scene(handle) => {
-                    if let Some(scene) = resolver.resolve_scene(*handle) {
+                SceneNodeData::Model(handle) => {
+                    if let Some(model) = resolver.resolve_model(*handle) {
                         let parent_transform = self.world_transforms[index];
-                        scene
+                        model
                             .node_to_mesh
                             .iter()
                             .copied()
                             .for_each(|(node_index, mesh_index)| {
                                 let tranform =
-                                    parent_transform * scene.world_transforms[node_index as usize];
+                                    parent_transform * model.world_transforms[node_index as usize];
                                 if culler
-                                    .cull(scene.bounds[mesh_index as usize].transform(tranform))
+                                    .cull(model.bounds[mesh_index as usize].transform(tranform))
                                 {
-                                    if let Some(mesh) = resolver.resolve_static_mesh(
-                                        scene.mesh_handles[mesh_index as usize],
-                                    ) {
-                                        static_meshes.push((tranform, mesh));
-                                    }
+                                    static_meshes
+                                        .push((tranform, &model.meshes[mesh_index as usize]));
                                 }
                             });
                     }
@@ -268,11 +267,15 @@ mod test {
     struct DummyResolver {}
 
     impl MeshResolver for DummyResolver {
-        fn resolve_static_mesh(&self, _handle: StaticMeshHandle) -> Option<&StaticRenderMesh> {
+        fn resolve_static_mesh(
+            &self,
+            _handle: ModelHandle,
+            _index: u32,
+        ) -> Option<&StaticRenderMesh> {
             None
         }
 
-        fn resolve_scene(&self, _handle: SceneHandle) -> Option<&RenderScene> {
+        fn resolve_model(&self, _handle: ModelHandle) -> Option<&RenderModel> {
             None
         }
     }
@@ -280,20 +283,20 @@ mod test {
     #[test]
     fn build_scene() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -342,20 +345,20 @@ mod test {
     #[test]
     fn remove_node() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -396,20 +399,20 @@ mod test {
     #[test]
     fn move_node() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -463,20 +466,20 @@ mod test {
     #[test]
     fn remove_parent_node_removes_children() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
         let _handle1_1 = scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let _handle1_2 = scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -498,10 +501,10 @@ mod test {
     #[test]
     fn move_attached_objects() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), NodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
         scene.add_node(
             handle1,
-            NodeData::Empty,
+            SceneNodeData::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         scene.update(&DummyResolver::default());

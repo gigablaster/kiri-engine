@@ -30,9 +30,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GltfSceneSource(String);
+pub struct ModelSource(String);
 
-impl AssetSource for GltfSceneSource {
+impl AssetSource for ModelSource {
     fn reference(&self) -> AssetReference {
         AssetReference::new(self)
     }
@@ -42,7 +42,7 @@ impl AssetSource for GltfSceneSource {
     }
 }
 
-impl GltfSceneSource {
+impl ModelSource {
     pub fn new(path: &str) -> Self {
         Self(path.replace("\\", "/"))
     }
@@ -180,7 +180,7 @@ pub struct Node {
 }
 
 #[derive(Debug, Readable, Writable)]
-pub struct SceneAsset {
+pub struct ModelAsset {
     pub vertices: Vec<StaticMeshVertex>,
     pub indices: Vec<u16>,
     pub meshes: Vec<StaticMeshAsset>,
@@ -192,7 +192,7 @@ pub struct SceneAsset {
     pub materials: Vec<MeshAssetMaterial>,
 }
 
-impl SceneAsset {
+impl ModelAsset {
     pub fn collect_dependencies(&self) -> HashSet<&ImageSource> {
         let mut result = HashSet::new();
         for material in &self.materials {
@@ -202,7 +202,7 @@ impl SceneAsset {
     }
 }
 
-impl Asset for SceneAsset {
+impl Asset for ModelAsset {
     const TYPE: uuid::Uuid = uuid!("3d731621-54b4-40b0-a089-37667f68fe35");
     fn deserialize<R: std::io::Read>(r: R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
@@ -411,7 +411,7 @@ fn process_node(
 fn import_scene<'a>(
     context: &'a mut GltfProcessingContext<'a>,
     scene: gltf::Scene,
-) -> Result<SceneAsset, Error> {
+) -> Result<ModelAsset, Error> {
     let mut context = NodeProcessingContext {
         context,
         bone_to_mesh: Default::default(),
@@ -431,7 +431,7 @@ fn import_scene<'a>(
         )?;
     }
     Ok({
-        SceneAsset {
+        ModelAsset {
             vertices: context.context.vertices.clone(),
             indices: context.context.indices.clone(),
             meshes: context.meshes,
@@ -448,15 +448,15 @@ fn import_scene<'a>(
 fn import_scenes<'a>(
     context: &'a mut GltfProcessingContext<'a>,
     document: gltf::Document,
-) -> Result<SceneAsset, Error> {
+) -> Result<ModelAsset, Error> {
     let scene = document
         .default_scene()
         .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
     import_scene(context, scene)
 }
 
-impl ImportAsset<SceneAsset> for GltfSceneSource {
-    fn import(&self) -> Result<SceneAsset, Error> {
+impl ImportAsset<ModelAsset> for ModelSource {
+    fn import(&self) -> Result<ModelAsset, Error> {
         let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
         let base_path = get_relative_asset_path(&self.0)?

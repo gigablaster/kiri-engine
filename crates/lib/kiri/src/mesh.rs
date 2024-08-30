@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use kiri_assets::{MeshMaterialBlend, NodeIndex};
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
 
-use crate::{Bounds, StaticMeshHandle};
+use crate::Bounds;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
@@ -71,7 +71,7 @@ pub struct StaticRenderMesh {
 }
 
 #[derive(Debug, Default)]
-pub struct RenderScene {
+pub struct RenderModel {
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
@@ -81,11 +81,10 @@ pub struct RenderScene {
     pub local_transforms: Vec<glam::Affine3A>,
     pub world_transforms: Vec<glam::Affine3A>,
     pub node_to_mesh: Vec<(u32, u32)>,
-    pub mesh_handles: Vec<StaticMeshHandle>,
     pub mesh_names: Vec<String>,
 }
 
-impl RenderScene {
+impl RenderModel {
     pub(super) fn update_world_transforms(&mut self) {
         for (index, local) in self.local_transforms.iter().enumerate() {
             let parent = self.parents[index]

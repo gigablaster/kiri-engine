@@ -19,8 +19,7 @@ use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, load_asset, save_asset, Asset,
-    AssetSource, GltfSceneSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial,
-    SceneAsset,
+    AssetSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, ModelAsset, ModelSource,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
@@ -34,17 +33,15 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 use crate::{
     gpu::{GpuMeshMaterial, GpuStaticVertex},
     Bounds, ConstUniformBuffer, Error, MeshResolver, RenderMaterial, RenderMeshSurface,
-    RenderScene, StaticRenderMesh,
+    RenderModel, StaticRenderMesh,
 };
 
-pub type SceneHandle = Handle<RenderScene>;
-pub type StaticMeshHandle = Handle<(SceneHandle, usize)>;
+pub type ModelHandle = Handle<RenderModel>;
 
-type ScenePool = Pool<RenderScene>;
-type StaticMeshPool = Pool<(SceneHandle, usize)>;
+type ModelPool = Pool<RenderModel>;
 
 type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset, ImageSource), Error>>;
-type SceneLoadingTask = Task<Result<(SceneHandle, SceneAsset, GltfSceneSource), Error>>;
+type SceneLoadingTask = Task<Result<(ModelHandle, ModelAsset, ModelSource), Error>>;
 
 pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
@@ -168,10 +165,8 @@ pub struct ResourceCache {
     image_loading_tasks: Mutex<Vec<ImageLoadingTask>>,
     scene_loading_tasks: Mutex<Vec<SceneLoadingTask>>,
     images: AssetTracker<ImageHandle>,
-    scenes: AssetTracker<SceneHandle>,
-    scene_assets: RwLock<ScenePool>,
-    meshes: RwLock<HashMap<String, StaticMeshHandle>>,
-    mesh_assets: RwLock<StaticMeshPool>,
+    scenes: AssetTracker<ModelHandle>,
+    scene_assets: RwLock<ModelPool>,
     material_uniforms: ConstUniformBuffer,
     materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
 }
@@ -188,9 +183,7 @@ impl ResourceCache {
             materials: Default::default(),
             material_uniforms: ConstUniformBuffer::new(renderer, MATERIAL_BUFFER_SIZE)?,
             scenes: Default::default(),
-            scene_assets: RwLock::new(ScenePool::new(MAX_RESOURCES)),
-            mesh_assets: RwLock::new(StaticMeshPool::new(MAX_RESOURCES)),
-            meshes: Default::default(),
+            scene_assets: RwLock::new(ModelPool::new(MAX_RESOURCES)),
         }))
     }
 
@@ -227,7 +220,6 @@ impl ResourceCache {
 
     pub fn resolve(&self) -> ResourceCacheMeshResolver {
         ResourceCacheMeshResolver {
-            static_meshes: self.mesh_assets.read(),
             scens: self.scene_assets.read(),
         }
     }
@@ -351,14 +343,14 @@ impl ResourceCache {
         }
     }
 
-    pub fn get_or_load_scene(&self, name: &str) -> Result<SceneHandle, Error> {
-        let source = GltfSceneSource::new(name);
+    pub fn get_or_load_scene(&self, name: &str) -> Result<ModelHandle, Error> {
+        let source = ModelSource::new(name);
         self.scenes
             .get_or_load(&source, |source| self.load_scene_impl(source))
     }
 
-    fn load_scene_impl(&self, source: &GltfSceneSource) -> Result<SceneHandle, Error> {
-        let handle = self.scene_assets.write().push(RenderScene::default());
+    fn load_scene_impl(&self, source: &ModelSource) -> Result<ModelHandle, Error> {
+        let handle = self.scene_assets.write().push(RenderModel::default());
         self.scene_loading_tasks
             .lock()
             .push(IoTaskPool::get().spawn(Self::load_scene(handle, source.clone())));
@@ -367,9 +359,9 @@ impl ResourceCache {
 
     fn process_scene(
         &self,
-        handle: SceneHandle,
-        asset: SceneAsset,
-        source: GltfSceneSource,
+        handle: ModelHandle,
+        asset: ModelAsset,
+        source: ModelSource,
     ) -> Result<(), Error> {
         let mut materials = Vec::new();
         for material in &asset.materials {
@@ -426,19 +418,7 @@ impl ResourceCache {
             bounds.push(mesh.bounds);
             meshes.push(mesh);
         }
-        let mesh_handles = meshes
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let name = format!("{}#{}", "AAA!", asset.mesh_names[index]);
-                self.meshes
-                    .read()
-                    .get(&name)
-                    .copied()
-                    .unwrap_or_else(|| self.mesh_assets.write().push((handle, index)))
-            })
-            .collect::<Vec<_>>();
-        let mut scene = RenderScene {
+        let mut scene = RenderModel {
             vertices,
             indices,
             meshes,
@@ -462,17 +442,9 @@ impl ResourceCache {
                 .map(|_| glam::Affine3A::IDENTITY)
                 .collect(),
             node_to_mesh: asset.node_to_mesh,
-            mesh_handles: mesh_handles.clone(),
             mesh_names: asset.mesh_names,
         };
-        // debug!("Scene loaded: {:?}", source);
         scene.update_world_transforms();
-        let mut named_meshes = self.meshes.write();
-        for i in 0..scene.meshes.len() {
-            let name = format!("{}#{}", "AAAA", scene.mesh_names[i]);
-            named_meshes.insert(name, scene.mesh_handles[i]);
-        }
-        drop(named_meshes);
         self.scene_assets.write().replace(handle, scene);
         Ok(())
     }
@@ -485,9 +457,9 @@ impl ResourceCache {
     }
 
     async fn load_scene(
-        handle: SceneHandle,
-        source: GltfSceneSource,
-    ) -> Result<(SceneHandle, SceneAsset, GltfSceneSource), Error> {
+        handle: ModelHandle,
+        source: ModelSource,
+    ) -> Result<(ModelHandle, ModelAsset, ModelSource), Error> {
         Ok((handle, load_or_compile_asset(&source)?, source))
     }
 }
@@ -511,18 +483,16 @@ impl Drop for ResourceCache {
 }
 
 pub struct ResourceCacheMeshResolver<'a> {
-    static_meshes: RwLockReadGuard<'a, StaticMeshPool>,
-    scens: RwLockReadGuard<'a, ScenePool>,
+    scens: RwLockReadGuard<'a, ModelPool>,
 }
 
 impl<'a> MeshResolver for ResourceCacheMeshResolver<'a> {
-    fn resolve_static_mesh(&self, handle: StaticMeshHandle) -> Option<&StaticRenderMesh> {
-        let (mesh, index) = self.static_meshes.get(handle).copied()?;
-        let scene = self.scens.get(mesh)?;
-        Some(&scene.meshes[index])
+    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh> {
+        let scene = self.scens.get(handle)?;
+        Some(&scene.meshes[index as usize])
     }
 
-    fn resolve_scene(&self, handle: SceneHandle) -> Option<&RenderScene> {
+    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel> {
         self.scens.get(handle)
     }
 }

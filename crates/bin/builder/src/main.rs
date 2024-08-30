@@ -14,8 +14,8 @@ use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, save_asset, Asset, AssetReference,
-    AssetSource, Error, GltfSceneSource, ImageAsset, ImageData, ImageSource, ImportAsset,
-    ShaderAsset, ShaderAssetSource,
+    AssetSource, Error, ImageAsset, ImageData, ImageSource, ImportAsset, ModelSource, ShaderAsset,
+    ShaderAssetSource,
 };
 use kiri_vfs::{PackageBuilder, ROOT_SOURCE_ASSETS_PATH};
 use log::{error, info};
@@ -24,7 +24,7 @@ use parking_lot::Mutex;
 
 struct ContentProcessor {
     images: Mutex<HashSet<ImageSource>>,
-    scenes: Mutex<HashSet<GltfSceneSource>>,
+    scenes: Mutex<HashSet<ModelSource>>,
     shaders: Mutex<HashSet<ShaderAssetSource>>,
     packer: Mutex<Box<dyn Packer>>,
 }
@@ -102,7 +102,7 @@ impl ContentProcessor {
         }
     }
 
-    fn import_scene(&self, source: GltfSceneSource) {
+    fn import_scene(&self, source: ModelSource) {
         self.scenes.lock().insert(source);
     }
 
@@ -110,14 +110,14 @@ impl ContentProcessor {
         self.shaders.lock().insert(source);
     }
 
-    async fn build_scene(&self, scene: GltfSceneSource) {
+    async fn build_scene(&self, scene: ModelSource) {
         info!("Building scene {:?}", scene);
         if let Err(err) = self.build_scene_impl(scene.clone()) {
             error!("Failed to build scene {:?}: {}", scene, err);
         }
     }
 
-    fn build_scene_impl(&self, scene: GltfSceneSource) -> Result<(), Error> {
+    fn build_scene_impl(&self, scene: ModelSource) -> Result<(), Error> {
         let asset = scene.import()?;
         let mut images = self.images.lock();
         asset
@@ -210,7 +210,7 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
                 .to_owned();
             let path_str = path.to_str().unwrap().replace('\\', "/");
             if path_str.ends_with(".gltf") {
-                processor.import_scene(GltfSceneSource::new(&path_str));
+                processor.import_scene(ModelSource::new(&path_str));
             } else if path_str.ends_with(".vert") {
                 processor.import_shader(ShaderAssetSource::vertex(&path_str));
             } else if path_str.ends_with(".frag") {

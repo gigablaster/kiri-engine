@@ -39,17 +39,17 @@ impl GameClient<LoopError> for Loop {
         let mut scene = Scene::default();
         let root = scene.add_node(
             Handle::default(),
-            kiri::NodeData::Scene(test),
+            kiri::SceneNodeData::Model(test),
             glam::Affine3A::IDENTITY,
         );
         scene.add_node(
             root,
-            kiri::NodeData::Scene(test),
+            kiri::SceneNodeData::Model(test),
             Affine3A::from_translation(Vec3::new(-0.5, 0.0, 0.0)),
         );
         scene.add_node(
             root,
-            kiri::NodeData::Scene(test),
+            kiri::SceneNodeData::Model(test),
             Affine3A::from_translation(Vec3::new(0.5, 0.0, 0.0)),
         );
         let render = SceneRenderer::new(&resources, &_pipelines)?;
