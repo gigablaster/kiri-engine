@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod copy_to_backbuffer;
 mod rasterizer;
 
+pub use copy_to_backbuffer::*;
 pub use rasterizer::*;

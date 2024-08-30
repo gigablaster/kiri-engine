@@ -8,7 +8,7 @@ use kiri::{
     ResourceCache, Scene, SceneRenderer,
 };
 use kiri_common::Handle;
-use kiri_gfx::{ImageHandle, RenderContext, Renderer};
+use kiri_gfx::{RenderContext, Renderer};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
@@ -75,7 +75,7 @@ impl GameClient<LoopError> for Loop {
         Ok(GameTickState::Continue)
     }
 
-    fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) -> ImageHandle {
+    fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) {
         self.resources.tick().unwrap();
         let camera = Camera {
             view: Mat4::look_at_lh(vec3(0.0, 0.5, 1.5), Vec3::Y * 0.25, Vec3::NEG_Y),

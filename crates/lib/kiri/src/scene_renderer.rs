@@ -26,9 +26,9 @@ use kiri_backend::{
     EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    passes::{RasterizerPassBuilder, RenderTarget},
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, ImageHandle,
-    PipelineHandle, RenderContext, RenderTargetPool,
+    passes::{CopyToBackbufferPassDispatcher, RasterizerPassBuilder, RenderTarget},
+    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, PipelineHandle,
+    RenderContext, RenderTargetPool,
 };
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -167,7 +167,7 @@ impl SceneRenderer {
         scene: &Scene,
         env: RenderEnviroment,
         context: &RenderContext,
-    ) -> Result<ImageHandle, Error> {
+    ) -> Result<(), Error> {
         puffin::profile_function!();
         self.target_pool.recycle();
         let resolver = self.resources.resolve();
@@ -282,9 +282,10 @@ impl SceneRenderer {
             }
             // self.target_pool.insert_barriers(context);
             context.submit(pass.build());
+            context.submit(Box::new(CopyToBackbufferPassDispatcher::new(color_target)));
         }
 
-        Ok(color_target)
+        Ok(())
     }
 
     pub fn swapchain_changed(&self) {

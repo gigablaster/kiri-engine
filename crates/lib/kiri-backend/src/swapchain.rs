@@ -66,7 +66,6 @@ pub struct Swapchain {
     images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
     acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
-    rendering_finished_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
     pub dims: [u32; 2],
 }
@@ -76,7 +75,6 @@ pub struct SwapchainImage<'a> {
     pub image: &'a Image,
     pub image_index: u32,
     pub acquire_semaphore: vk::Semaphore,
-    pub present_finished: vk::Semaphore,
 }
 
 pub enum AcquiredSurface<'a> {
@@ -189,29 +187,20 @@ impl Swapchain {
             .collect::<ArrayVec<_, DESIRED_IMAGES_COUNT>>();
 
         let mut acquire_semaphores = ArrayVec::new();
-        let mut rendering_finished_semaphores = ArrayVec::new();
         for index in 0..desired_image_count {
             let acquire_semaphore = unsafe {
                 device
                     .raw
                     .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
             }?;
-            let rendering_finished_semaphore = unsafe {
-                device
-                    .raw
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-            }?;
             device.set_object_name(acquire_semaphore, &format!("Acquire {index}"));
-            device.set_object_name(rendering_finished_semaphore, &format!("Finished {index}"));
             acquire_semaphores.push(acquire_semaphore);
-            rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
         Ok(Self {
             device: device.clone(),
             raw: swapchain,
             images,
             acquire_semaphores,
-            rendering_finished_semaphores,
             next_semaphore: AtomicUsize::new(0),
             loader,
             dims: [surface_resolution.width, surface_resolution.height],
@@ -222,7 +211,6 @@ impl Swapchain {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];
-        let rendering_finished_semaphore = self.rendering_finished_semaphores[current_semaphore];
 
         let present_index = match unsafe {
             self.loader
@@ -254,7 +242,6 @@ impl Swapchain {
             image: &self.images[present_index as usize],
             image_index: present_index,
             acquire_semaphore,
-            present_finished: rendering_finished_semaphore,
         }))
     }
 
@@ -289,9 +276,6 @@ impl Drop for Swapchain {
             self.device.raw.device_wait_idle().unwrap();
             self.loader.destroy_swapchain(self.raw, None);
             for semaphore in &self.acquire_semaphores {
-                self.device.raw.destroy_semaphore(*semaphore, None);
-            }
-            for semaphore in &mut self.rendering_finished_semaphores {
                 self.device.raw.destroy_semaphore(*semaphore, None);
             }
         }

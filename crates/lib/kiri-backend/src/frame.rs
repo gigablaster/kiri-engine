@@ -68,7 +68,6 @@ pub struct Frame {
     drop_list: DropList,
     per_thread_pools: Mutex<HashMap<ThreadId, CommandBufferPool>>,
     descriptor_allocators: Mutex<DescriptorAllocatorPool>,
-    pub(super) present_fence: vk::Fence,
     /// Submit this fence when submit rendering
     pub render_fence: vk::Fence,
     /// Signal this semaphore when finsihed rendering
@@ -120,10 +119,6 @@ unsafe impl Sync for Frame {}
 impl Frame {
     pub(super) fn new(device: &ash::Device) -> Result<Self, Error> {
         unsafe {
-            let present_fence = device.create_fence(
-                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            )?;
             let render_fence = device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
@@ -132,7 +127,6 @@ impl Frame {
                 device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
             let drop_list = DropList::default();
             Ok(Self {
-                present_fence,
                 render_fence,
                 render_finished,
                 drop_list,
@@ -149,7 +143,7 @@ impl Frame {
     ) -> Result<(), Error> {
         self.drop_list.purge(device, allocator);
         unsafe {
-            device.reset_fences(&[self.present_fence, self.render_fence])?;
+            device.reset_fences(&[self.render_fence])?;
         }
         self.per_thread_pools
             .lock()
@@ -162,7 +156,6 @@ impl Frame {
 
     pub(super) fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
         unsafe {
-            device.destroy_fence(self.present_fence, None);
             device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.render_finished, None);
         }

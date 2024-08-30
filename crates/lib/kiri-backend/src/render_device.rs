@@ -21,9 +21,7 @@ use gpu_alloc_ash::AshMemoryDevice;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::{
-    create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryBlock, Image, Instance,
-};
+use crate::{create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryBlock, Instance};
 
 use super::{
     drop_list::DropList, frame::Frame, physical_device::PhysicalDevice, FindSuitableDevice,
@@ -300,11 +298,8 @@ impl RenderDevice {
             puffin::profile_scope!("Waiting for frame to be finished");
             let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
             unsafe {
-                self.raw.wait_for_fences(
-                    &[frame.present_fence, frame.render_fence],
-                    true,
-                    u64::MAX,
-                )?
+                self.raw
+                    .wait_for_fences(&[frame.render_fence], true, u64::MAX)?
             };
             frame.reset(&self.raw, &mut self.allocator.lock())?;
         }
@@ -325,135 +320,12 @@ impl RenderDevice {
         mem::swap(frame, next_frame);
     }
 
-    /// Gets image and copy it to backbuffer.
-    ///
-    /// As far as I understand it will let us to execute redering commands while waiting for
-    /// vsync. So as soon as back bffer is there we can just copy result and go for another
-    /// frame.    
-    pub fn present(
-        &self,
-        target: SwapchainImage,
-        image: &Image,
-        frame: &Frame,
-    ) -> Result<(), Error> {
+    pub fn present(&self, target: SwapchainImage, frame: &Frame) -> Result<(), Error> {
         puffin::profile_function!();
-        unsafe {
-            let cb = frame.get_command_buffer(&self.raw, vk::CommandBufferLevel::PRIMARY)?;
-            self.raw.begin_command_buffer(
-                cb,
-                &vk::CommandBufferBeginInfo::default()
-                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-            )?;
-            self.begin_label(cb, "Present");
-            let barriers = [
-                vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .image(target.image.raw)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    }),
-                vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // ?
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .image(image.raw)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    }),
-            ];
-            self.raw.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &[],
-                &barriers,
-            );
-            self.raw.cmd_blit_image(
-                cb,
-                image.raw,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                target.image.raw,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::ImageBlit::default()
-                    .src_offsets([
-                        vk::Offset3D::default(),
-                        vk::Offset3D::default()
-                            .x(image.desc.dims[0] as _)
-                            .y(image.desc.dims[1] as _)
-                            .z(1),
-                    ])
-                    .src_subresource(vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .dst_offsets([
-                        vk::Offset3D::default(),
-                        vk::Offset3D::default()
-                            .x(target.image.desc.dims[0] as _)
-                            .y(target.image.desc.dims[1] as _)
-                            .z(1),
-                    ])
-                    .dst_subresource(vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })],
-                vk::Filter::LINEAR,
-            );
-            let barriers = [vk::ImageMemoryBarrier::default()
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE) // ?
-                .dst_access_mask(vk::AccessFlags::MEMORY_READ)
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .image(target.image.raw)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })];
-            self.raw.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &[],
-                &barriers,
-            );
-            self.end_labe(cb);
-            self.raw.end_command_buffer(cb)?;
-            self.submit(
-                &[cb],
-                frame.present_fence,
-                &[(
-                    frame.render_finished,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                )],
-                &[target.present_finished],
-            )?;
-        }
+
         let binding = target.swapchain.raw;
         let present_info = vk::PresentInfoKHR::default()
-            .wait_semaphores(slice::from_ref(&target.present_finished))
+            .wait_semaphores(slice::from_ref(&frame.render_finished))
             .swapchains(slice::from_ref(&binding))
             .image_indices(slice::from_ref(&target.image_index));
 

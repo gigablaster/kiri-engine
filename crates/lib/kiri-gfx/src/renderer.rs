@@ -301,7 +301,7 @@ impl Renderer {
         self.programs.write().remove(handle);
     }
 
-    pub fn render<RenderCB: FnOnce(&RenderContext) -> ImageHandle>(
+    pub fn render<RenderCB: FnOnce(&RenderContext)>(
         &self,
         swapchain: &Swapchain,
         render: RenderCB,
@@ -319,7 +319,7 @@ impl Renderer {
 
         // Generate render streams
         let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
-        let image = render(&context);
+        render(&context);
 
         // Prepare
         let staging_wait = self.staging.lock().upload()?;
@@ -356,6 +356,7 @@ impl Renderer {
             descriptors: &descriptors,
             pipelines: &pipelines,
             empty_descriptor_set,
+            backbuffer: target.image,
         };
         for pass in passes {
             self.device.begin_label(command_buffer, pass.name());
@@ -382,8 +383,7 @@ impl Renderer {
             &[frame.render_finished],
         )?;
         // Present
-        self.device
-            .present(target, images.get(image).unwrap(), &frame)?;
+        self.device.present(target, &frame)?;
         // Cleanup
         trash_descriptors.drain(..).for_each(|x| {
             descriptors.remove(x);
