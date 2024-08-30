@@ -119,7 +119,7 @@ impl PipelineVertex for PostprocessVertex {
 pub struct SceneRenderer {
     target_pool: RenderTargetPool,
     resources: Arc<ResourceCache>,
-    pipelines: Arc<PipelineCache>,
+    _pipelines: Arc<PipelineCache>,
     main_material: PipelineHandle,
     tonemapping: PipelineHandle,
 }
@@ -251,7 +251,7 @@ impl SceneRenderer {
         Ok(Self {
             target_pool: RenderTargetPool::new(renderer),
             resources: resource_cache.clone(),
-            pipelines: pipeline_cache.clone(),
+            _pipelines: pipeline_cache.clone(),
             main_material,
             tonemapping,
         })
@@ -285,7 +285,7 @@ impl SceneRenderer {
             );
         let pass_data = context.push_dynamic_data(&[RenderPassGpuData {
             view: env.camera.view,
-            projection: projection,
+            projection,
             view_projection: projection * env.camera.view,
             eye_position: env.camera.view.transform_point3(glam::Vec3::default()),
             lights: env.lights,
