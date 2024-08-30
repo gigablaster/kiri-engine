@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt::Display, sync::Arc};
 
-use glam::{vec3, vec3a, Affine3A, Mat4, Vec3};
+use glam::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
 use kiri::{
     Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, PipelineCache, RenderEnviroment,
     ResourceCache, Scene, SceneRenderer,
@@ -40,17 +40,17 @@ impl GameClient<LoopError> for Loop {
         let root = scene.add_node(
             Handle::default(),
             kiri::SceneNodeData::Model(test),
-            glam::Affine3A::IDENTITY,
+            glam::Affine3A::from_translation(vec3(0.0, 0.5, 0.0)),
         );
         scene.add_node(
             root,
             kiri::SceneNodeData::Model(test),
-            Affine3A::from_translation(Vec3::new(-0.5, 0.0, 0.0)),
+            Affine3A::from_translation(Vec3::new(-0.75, -0.5, 0.0)),
         );
         scene.add_node(
             root,
             kiri::SceneNodeData::Model(test),
-            Affine3A::from_translation(Vec3::new(0.5, 0.0, 0.0)),
+            Affine3A::from_translation(Vec3::new(0.75, -0.5, 0.0)),
         );
         let render = SceneRenderer::new(&resources, &_pipelines)?;
         Ok(Self {
@@ -67,8 +67,13 @@ impl GameClient<LoopError> for Loop {
     }
 
     fn update(&mut self, time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
-        self.scene
-            .update_node_transform(self.root, Affine3A::from_rotation_y(self.time * 0.5));
+        self.scene.update_node_transform(
+            self.root,
+            Affine3A::from_rotation_translation(
+                Quat::from_rotation_y(self.time * 0.5),
+                vec3(0.0, 0.5, 0.0),
+            ),
+        );
         self.time += time.delta_time;
         self.scene.update(&self.resources.resolve());
 
@@ -79,30 +84,30 @@ impl GameClient<LoopError> for Loop {
         self.resources.tick().unwrap();
         let camera = Camera {
             view: Mat4::look_at_lh(vec3(0.0, 0.75, -3.0), vec3(0.0, 0.5, 0.0), Vec3::Y),
-            projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.001, 10.0),
+            projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.1, 1000.0),
         };
         let env = RenderEnviroment {
             camera,
             lights: [
                 DirectionalLight {
-                    direction: vec3a(0.0, -1.0, 0.0).normalize(),
-                    color: vec3a(5.0, 0.0, 0.0),
+                    direction: vec3a(1.0, -1.0, 1.0).normalize(),
+                    color: vec3a(20.0, 20.0, 30.0),
                 },
                 DirectionalLight {
-                    direction: vec3a(-1.0, 0.0, 0.0).normalize(),
-                    color: vec3a(0.0, 4.0, 0.0),
+                    direction: vec3a(-1.0, 0.0, -1.0).normalize(),
+                    color: vec3a(20.0, 15.0, 15.0),
                 },
                 DirectionalLight {
-                    direction: vec3a(1.0, 0.0, 0.0).normalize(),
-                    color: vec3a(0.0, 0.0, 5.0),
+                    direction: vec3a(0.0, -2.0, -0.5).normalize(),
+                    color: vec3a(15.0, 13.0, 13.0),
                 },
             ],
             ambient: HemisphericalAmbient {
-                top: vec3a(0.0, 0.0, 2.0),
-                middle: vec3a(0.0, 2.0, 0.0),
-                bottom: vec3a(2.0, 0.0, 0.0),
+                top: vec3a(1.5, 1.5, 2.0),
+                middle: vec3a(1.0, 1.5, 1.0),
+                bottom: vec3a(1.0, 0.8, 0.8),
             },
-            expouse: 0.333,
+            expouse: 0.2,
         };
         self.render.render(&self.scene, env, context).unwrap()
     }
