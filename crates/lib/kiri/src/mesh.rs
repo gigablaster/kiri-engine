@@ -24,6 +24,7 @@ use crate::Bounds;
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
+    pub vertex_offset: u32,
     pub material: RenderMaterial,
 }
 

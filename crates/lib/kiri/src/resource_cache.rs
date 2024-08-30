@@ -396,20 +396,15 @@ impl ResourceCache {
                 .surfaces
                 .into_iter()
                 .map(|x| RenderMeshSurface {
-                    first_index: x.first_index,
+                    first_index: x.first_index + mesh.first_index as u32,
                     index_count: x.index_count,
+                    vertex_offset: mesh.first_vertex as u32,
                     material: materials[x.material as usize],
                 })
                 .collect::<Vec<_>>();
             let mesh = StaticRenderMesh {
-                vertex_buffer: BufferPointer::new(
-                    vertices,
-                    mesh.first_vertex * mem::size_of::<GpuStaticVertex>() as u64,
-                ),
-                index_buffer: BufferPointer::new(
-                    indices,
-                    mesh.first_index * mem::size_of::<u16>() as u64,
-                ),
+                vertex_buffer: BufferPointer::new(vertices, 0),
+                index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
                 bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
                 // position_scale: mesh.positon_scale,

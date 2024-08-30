@@ -57,7 +57,7 @@ const VERTEX_STREAM_MASK: u16 = 1 << 1;
 const INDEX_STREAM_MASK: u16 = VERTEX_STREAM_MASK << MAX_VERTEX_STREAMS;
 const DESCRIPTOR_SET_MASK: u16 = INDEX_STREAM_MASK << 1;
 const DYNAMIC_OFFSET_MASK: u16 = DESCRIPTOR_SET_MASK << MAX_DESCRIPTOR_SETS;
-const FIRST_INDEX_MASK: u16 = DYNAMIC_OFFSET_MASK << 1;
+const FIRST_INDEX_MASK: u16 = DYNAMIC_OFFSET_MASK << MAX_DYNAMIC_OFFSETS;
 const INDEX_COUNT_MASK: u16 = FIRST_INDEX_MASK << 1;
 const FIRST_INSTANCE_MASK: u16 = INDEX_COUNT_MASK << 1;
 const INSTANCE_COUNT_MASK: u16 = FIRST_INSTANCE_MASK << 1;
@@ -317,8 +317,8 @@ impl DrawStream {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                     let descriptor = reader.read_u64::<NativeEndian>().unwrap().into();
                     *target = descriptor;
-                    let ds = resolver.resolve_descriptor_set(descriptor)?;
                     if i != DYNAMIC_BINDING_SLOT {
+                        let ds = resolver.resolve_descriptor_set(descriptor)?;
                         unsafe {
                             device.cmd_bind_descriptor_sets(
                                 command_buffer,
@@ -377,7 +377,7 @@ impl DrawStream {
                         &[descriptor],
                         &offsets,
                     )
-                }
+                };
                 dynamic_offset_changed = false;
             }
             unsafe {

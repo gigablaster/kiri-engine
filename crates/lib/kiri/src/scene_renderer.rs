@@ -93,6 +93,7 @@ struct RenderOp {
     material: DescriptorHandle,
     first_index: u32,
     index_count: u32,
+    vertex_offset: u32,
 }
 
 impl PartialEq for RenderOp {
@@ -246,6 +247,7 @@ impl SceneRenderer {
                         material: surface.material.ds,
                         first_index: surface.first_index,
                         index_count: surface.index_count,
+                        vertex_offset: surface.vertex_offset,
                     })
                 }
             }
@@ -271,6 +273,7 @@ impl SceneRenderer {
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
                     stream.set_vertex_buffer(0, Some(op.vertex_buffer));
                     stream.set_index_buffer(op.index_buffer);
+                    stream.set_vertex_offset(op.vertex_offset as _);
                     stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
                     stream.set_dynamic_offset(0, Some(data.offset as _));
                     stream.draw(op.first_index, op.index_count, instance as _, 1);
