@@ -172,3 +172,18 @@ pub(crate) fn is_asset_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -
     }
     false
 }
+
+pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
+    let path = get_compiled_asset_path(reference).ok()?;
+    if path.exists() {
+        if let Ok(metadata) = fs::metadata(path) {
+            if let Ok(modified) = metadata.modified() {
+                return Some(modified);
+            }
+            if let Ok(created) = metadata.created() {
+                return Some(created);
+            }
+        }
+    }
+    None
+}

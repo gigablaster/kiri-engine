@@ -86,21 +86,21 @@ impl GameClient<LoopError> for Loop {
             lights: [
                 DirectionalLight {
                     direction: vec3a(0.5, 1.0, 0.5).normalize(),
-                    color: vec3a(2.0, 2.0, 2.0),
+                    color: vec3a(0.8, 0.8, 0.9),
                 },
                 DirectionalLight {
                     direction: vec3a(-0.5, 1.0, 0.5).normalize(),
-                    color: vec3a(1.0, 1.0, 3.0),
+                    color: vec3a(0.5, 0.5, 0.5),
                 },
                 DirectionalLight {
                     direction: vec3a(0.5, 2.0, -0.5).normalize(),
-                    color: vec3a(2.0, 2.0, 2.0),
+                    color: vec3a(0.25, 0.2, 0.2),
                 },
             ],
             ambient: HemisphericalAmbient {
-                top: vec3a(0.5, 0.5, 1.0),
-                middle: vec3a(1.0, 1.0, 0.5),
-                bottom: vec3a(0.2, 0.5, 0.2),
+                top: vec3a(0.5, 0.5, 0.6),
+                middle: vec3a(0.4, 0.4, 0.3),
+                bottom: vec3a(0.2, 0.3, 0.2),
             },
         };
         self.render.render(&self.scene, env, context).unwrap()

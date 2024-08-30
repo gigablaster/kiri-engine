@@ -13,9 +13,9 @@ use std::{
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
 use kiri_assets::{
-    get_compiled_asset_path, save_asset, Asset, AssetReference, AssetSource, Error,
-    GltfSceneSource, ImageAsset, ImageData, ImageSource, ImportAsset, ShaderAsset,
-    ShaderAssetSource,
+    get_compiled_asset_change_time, get_compiled_asset_path, save_asset, Asset, AssetReference,
+    AssetSource, Error, GltfSceneSource, ImageAsset, ImageData, ImageSource, ImportAsset,
+    ShaderAsset, ShaderAssetSource,
 };
 use kiri_vfs::{PackageBuilder, ROOT_SOURCE_ASSETS_PATH};
 use log::{error, info};
@@ -90,21 +90,6 @@ impl Packer for LocalCachePacker {
     fn finish(&mut self) -> io::Result<()> {
         Ok(())
     }
-}
-
-fn get_compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
-    let path = get_compiled_asset_path(reference).ok()?;
-    if path.exists() {
-        if let Ok(metadata) = fs::metadata(path) {
-            if let Ok(modified) = metadata.modified() {
-                return Some(modified);
-            }
-            if let Ok(created) = metadata.created() {
-                return Some(created);
-            }
-        }
-    }
-    None
 }
 
 impl ContentProcessor {
