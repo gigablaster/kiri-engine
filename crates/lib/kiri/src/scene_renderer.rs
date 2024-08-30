@@ -23,8 +23,9 @@ use crate::{
 use ash::vk::{self};
 use glam::{vec4, Mat4};
 use kiri_backend::{
-    DescriptorSetDesc, DescriptorSetLayoutDesc, RenderPassLayout, DYNAMIC_BINDING_SLOT,
-    EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+    DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
+    PipelineVertex, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
+    MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     passes::{FinalCompositionPassDispatcher, RasterizerPassBuilder, RenderTarget},
@@ -88,6 +89,32 @@ const POSTPROCESS_LAYOUT: RenderPassLayout = RenderPassLayout {
     depth: None,
 };
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct PostprocessVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+}
+
+const POSTPROCESS_VERTEX_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
+    streams: &[
+        InputVertexAttrubute {
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 0,
+        },
+        InputVertexAttrubute {
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 8,
+        },
+    ],
+    stride: 16,
+}];
+
+impl PipelineVertex for PostprocessVertex {
+    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
+        &POSTPROCESS_VERTEX_LAYOUT
+    }
+}
 #[derive(Debug)]
 pub struct SceneRenderer {
     target_pool: RenderTargetPool,
@@ -208,7 +235,9 @@ impl SceneRenderer {
                 ],
             ))?;
         let tonemapping =
-            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<()>(
+            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<
+                PostprocessVertex,
+            >(
                 "shaders/fullscreen.vert",
                 "shaders/tonemapping.frag",
                 &POSTPROCESS_LAYOUT,
@@ -349,7 +378,7 @@ impl SceneRenderer {
                 vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
             )?;
             let mut pass = RasterizerPassBuilder::new(
-                "test",
+                "Tonemapping",
                 &[RenderTarget::new(post.handle).initial_layout(vk::ImageLayout::UNDEFINED)],
                 None,
             );
@@ -366,7 +395,7 @@ impl SceneRenderer {
                     }])?,
                 ),
             )?;
-            pass.draw(self.postprocess(self.tonemapping, ds));
+            pass.draw(self.postprocess(context, self.tonemapping, ds)?);
 
             context.submit(pass.build());
 
@@ -380,11 +409,37 @@ impl SceneRenderer {
         self.target_pool.purge();
     }
 
-    fn postprocess(&self, pipeline: PipelineHandle, ds: DescriptorHandle) -> DrawStream {
+    fn postprocess(
+        &self,
+        context: &RenderContext,
+        pipeline: PipelineHandle,
+        ds: DescriptorHandle,
+    ) -> Result<DrawStream, Error> {
         let mut stream = DrawStreamBuilder::default();
+        let vb = context.push_dynamic_data(&[
+            PostprocessVertex {
+                position: [-1.0, -1.0],
+                uv: [0.0, 0.0],
+            },
+            PostprocessVertex {
+                position: [1.0, -1.0],
+                uv: [1.0, 0.0],
+            },
+            PostprocessVertex {
+                position: [1.0, 1.0],
+                uv: [1.0, 1.0],
+            },
+            PostprocessVertex {
+                position: [-1.0, 1.0],
+                uv: [0.0, 1.0],
+            },
+        ])?;
+        let ib = context.push_dynamic_data(&[2u16, 1u16, 0u16, 3u16, 2u16, 0u16])?;
         stream.set_pipeline(pipeline);
         stream.set_descriptor(0, Some(ds));
-        stream.draw(0, 3, 0, 1);
-        stream.build()
+        stream.set_vertex_buffer(0, vb.into());
+        stream.set_index_buffer(ib.into());
+        stream.draw(0, 6, 0, 1);
+        Ok(stream.build())
     }
 }
