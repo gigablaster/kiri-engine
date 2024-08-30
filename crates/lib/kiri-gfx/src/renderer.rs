@@ -44,6 +44,7 @@ pub(super) type PipelinePool =
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
 pub(super) type ProgramPool = Pool<Program>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
     Rendered,
     NeedRecreateSwapchain,
@@ -589,6 +590,7 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        unsafe { self.device.raw.device_wait_idle() }.unwrap();
         self.pipelines
             .write()
             .drain()

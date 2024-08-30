@@ -7,7 +7,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
     thread,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
