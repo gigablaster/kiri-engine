@@ -326,13 +326,12 @@ impl SceneRenderer {
 
                 while instance < DRAWS_PER_STREAM && index < render_ops.len() {
                     let op = &render_ops[index];
-                    // debug!("{:?}", op.model.to_scale_rotation_translation());
                     data.write(GpuInstanceData { model: op.model })?;
                     stream.set_pipeline(op.pipeline);
                     stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
-                    stream.set_vertex_buffer(0, Some(op.vertex_buffer));
-                    stream.set_index_buffer(Some(op.index_buffer));
+                    stream.set_vertex_buffer(0, op.vertex_buffer);
+                    stream.set_index_buffer(op.index_buffer);
                     stream.set_vertex_offset(op.vertex_offset as _);
                     stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
                     stream.set_dynamic_offset(0, Some(data.offset as _));

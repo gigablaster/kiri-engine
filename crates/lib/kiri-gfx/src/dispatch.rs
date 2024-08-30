@@ -27,7 +27,7 @@ pub struct RenderResourceResolver<'a> {
     pub(super) images: &'a ImagePool,
     pub(super) descriptors: &'a DescriptorPool,
     pub(super) pipelines: &'a PipelinePool,
-    pub empty_descriptor_set: vk::DescriptorSet,
+    pub(super) empty_descriptor_set: vk::DescriptorSet,
     pub backbuffer: &'a Image,
 }
 

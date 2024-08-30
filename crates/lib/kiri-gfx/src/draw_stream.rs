@@ -92,9 +92,8 @@ impl DrawStreamBuilder {
         }
     }
 
-    pub fn set_vertex_buffer(&mut self, stream: usize, buffer: Option<BufferPointer>) {
+    pub fn set_vertex_buffer(&mut self, stream: usize, buffer: BufferPointer) {
         debug_assert!(stream < MAX_VERTEX_STREAMS);
-        let buffer = buffer.unwrap_or_default();
         if self.current.streams[stream] != buffer {
             self.mask |= VERTEX_STREAM_MASK << stream;
             self.current.streams[stream] = buffer;
@@ -318,7 +317,11 @@ impl DrawStream {
                     let descriptor = reader.read_u64::<NativeEndian>().unwrap().into();
                     *target = descriptor;
                     if i != DYNAMIC_BINDING_SLOT {
-                        let ds = resolver.resolve_descriptor_set(descriptor)?;
+                        let ds = if descriptor.is_valid() {
+                            resolver.resolve_descriptor_set(descriptor)?
+                        } else {
+                            resolver.empty_descriptor_set
+                        };
                         unsafe {
                             device.cmd_bind_descriptor_sets(
                                 command_buffer,
@@ -362,8 +365,11 @@ impl DrawStream {
             }
 
             if dynamic_offset_changed {
-                let descriptor =
-                    resolver.resolve_descriptor_set(descriptor_sets[DYNAMIC_BINDING_SLOT])?;
+                let descriptor = if descriptor_sets[DYNAMIC_BINDING_SLOT].is_valid() {
+                    resolver.resolve_descriptor_set(descriptor_sets[DYNAMIC_BINDING_SLOT])?
+                } else {
+                    resolver.empty_descriptor_set
+                };
                 let offsets = dynamic_offsets
                     .iter()
                     .filter_map(|x| (*x != u32::MAX).then_some(*x))
