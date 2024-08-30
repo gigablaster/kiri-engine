@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{ImageHandle, Renderer};
-use ash::vk::{self, ImageUsageFlags};
+use ash::vk::{self};
 use kiri_backend::ImageCreateDesc;
 use log::debug;
 use parking_lot::Mutex;
@@ -44,8 +44,6 @@ struct TempImageKey {
 pub struct RenderTargetPool {
     renderer: Arc<Renderer>,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
-    images_to_transition: Mutex<Vec<(ImageHandle, ImageUsageFlags)>>,
-    images_in_use: Mutex<Vec<(TempImageKey, ImageHandle)>>,
 }
 
 #[derive(Debug)]
@@ -60,8 +58,6 @@ impl RenderTargetPool {
         Self {
             renderer: renderer.clone(),
             images: Default::default(),
-            images_to_transition: Default::default(),
-            images_in_use: Default::default(),
         }
     }
 
@@ -72,35 +68,13 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
-    ) -> Result<ImageHandle, Error> {
+    ) -> Result<TransientImageGuard, Error> {
         assert!(
             usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
                 || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
             "Must be an attachment"
         );
-        assert!(
-            !usage.contains(vk::ImageUsageFlags::TRANSIENT_ATTACHMENT),
-            "Transient attachments have their own thing"
-        );
         let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
-        self.mark_as_used(key, image, usage);
-        Ok(image)
-    }
-
-    pub fn get_transient_image(
-        &self,
-        format: vk::Format,
-        dims: [u32; 2],
-        usage: vk::ImageUsageFlags,
-    ) -> Result<TransientImageGuard, Error> {
-        assert!(
-            (usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-                || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
-                && usage.contains(vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,),
-            "Must be transient attachment"
-        );
-        let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
-        self.mark_to_transition(image, usage);
         Ok(TransientImageGuard {
             pool: self,
             key,
@@ -138,15 +112,6 @@ impl RenderTargetPool {
         }
     }
 
-    fn mark_to_transition(&self, image: ImageHandle, usage: ImageUsageFlags) {
-        self.images_to_transition.lock().push((image, usage));
-    }
-
-    fn mark_as_used(&self, key: TempImageKey, image: ImageHandle, usage: ImageUsageFlags) {
-        self.images_in_use.lock().push((key, image));
-        self.mark_to_transition(image, usage);
-    }
-
     pub fn purge(&self) {
         let mut images = self.images.lock();
         images.drain().for_each(|(_, mut group)| {
@@ -154,24 +119,13 @@ impl RenderTargetPool {
         });
     }
 
-    /// Returns used image back to pool
-    pub fn recycle(&self) {
-        let mut pool = self.images.lock();
-        self.images_in_use
-            .lock()
-            .drain(..)
-            .for_each(|(key, image)| {
-                pool.entry(key).or_default().push(image);
-            })
-    }
-
-    fn return_transient_image(&self, image: ImageHandle, key: TempImageKey) {
+    fn recycle(&self, image: ImageHandle, key: TempImageKey) {
         self.images.lock().entry(key).or_default().push(image);
     }
 }
 
 impl<'a> Drop for TransientImageGuard<'a> {
     fn drop(&mut self) {
-        self.pool.return_transient_image(self.handle, self.key);
+        self.pool.recycle(self.handle, self.key);
     }
 }

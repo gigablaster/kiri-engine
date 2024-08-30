@@ -26,7 +26,7 @@ use kiri_backend::{
     EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    passes::{CopyToBackbufferPassDispatcher, RasterizerPassBuilder, RenderTarget},
+    passes::{FinalCompositionPassDispatcher, RasterizerPassBuilder, RenderTarget},
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStreamBuilder, PipelineHandle,
     RenderContext, RenderTargetPool,
 };
@@ -169,14 +169,13 @@ impl SceneRenderer {
         context: &RenderContext,
     ) -> Result<(), Error> {
         puffin::profile_function!();
-        self.target_pool.recycle();
         let resolver = self.resources.resolve();
         let color_target = self.target_pool.get_image(
             vk::Format::A2R10G10B10_UNORM_PACK32,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
         )?;
-        let depth_target = self.target_pool.get_transient_image(
+        let depth_target = self.target_pool.get_image(
             vk::Format::D24_UNORM_S8_UINT,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
@@ -211,7 +210,7 @@ impl SceneRenderer {
         let visible = scene.cull(NullCuller {}, &resolver);
         let mut pass = RasterizerPassBuilder::new(
             "Main pass",
-            &[RenderTarget::new(color_target)
+            &[RenderTarget::new(color_target.handle)
                 .clear_color([0.0, 0.0, 0.0, 1.0])
                 .initial_layout(vk::ImageLayout::UNDEFINED)],
             Some(
@@ -282,7 +281,9 @@ impl SceneRenderer {
             }
             // self.target_pool.insert_barriers(context);
             context.submit(pass.build());
-            context.submit(Box::new(CopyToBackbufferPassDispatcher::new(color_target)));
+            context.submit(Box::new(FinalCompositionPassDispatcher::new(
+                color_target.handle,
+            )));
         }
 
         Ok(())

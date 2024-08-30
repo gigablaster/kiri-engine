@@ -2,17 +2,18 @@ use ash::vk;
 
 use crate::{ImageHandle, PassDispatcher};
 
-pub struct CopyToBackbufferPassDispatcher {
+/// Copy result image to backbuffer and prepare it for presentation
+pub struct FinalCompositionPassDispatcher {
     image: ImageHandle,
 }
 
-impl CopyToBackbufferPassDispatcher {
+impl FinalCompositionPassDispatcher {
     pub fn new(image: ImageHandle) -> Self {
         Self { image }
     }
 }
 
-impl PassDispatcher for CopyToBackbufferPassDispatcher {
+impl PassDispatcher for FinalCompositionPassDispatcher {
     fn dispatch(
         &self,
         device: &ash::Device,
