@@ -13,8 +13,8 @@ void main() {
     mat4 model = dynamic.instances[gl_InstanceIndex].model;
 
     vec3 world_pos = (model * position).xyz;
-    vec3 bitangent = normalize(cross(normal, tangent));
-    vec3 T = normalize(vec3(model * vec4(tangent, 0.0)));
+    vec3 bitangent = normalize(cross(normal, tangent.xyz) * tangent.w);
+    vec3 T = normalize(vec3(model * vec4(tangent.xyz, 0.0)));
     vec3 B = normalize(vec3(model * vec4(bitangent, 0.0)));
     vec3 N = normalize(vec3(model * vec4(normal, 0.0)));
 

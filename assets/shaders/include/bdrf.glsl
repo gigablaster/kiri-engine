@@ -20,7 +20,7 @@ float geometry_shlick_ggx(float cos_theta, float k) {
 }
 
 vec3 frensel_shlick(float cos_theta, vec3 f0) {
-    return f0 + (1.0 - f0) * pow(2, (-5.55473 * cos_theta - 6.98316 * cos_theta));
+    return f0 + (1.0 - f0) * pow(1.0 - cos_theta, 5);
 }
 
 float geometry_smith(float NdotV, float NdotL, float roughness) {
