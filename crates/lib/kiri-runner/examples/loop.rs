@@ -83,29 +83,29 @@ impl GameClient<LoopError> for Loop {
     fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) {
         self.resources.tick().unwrap();
         let camera = Camera {
-            view: Mat4::look_at_lh(vec3(0.0, 0.75, -3.0), vec3(0.0, 0.5, 0.0), Vec3::Y),
+            view: Mat4::look_at_lh(vec3(0.0, 0.75, -2.0), vec3(0.0, 0.5, 0.0), Vec3::Y),
             projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.1, 1000.0),
         };
         let env = RenderEnviroment {
             camera,
             lights: [
                 DirectionalLight {
-                    direction: vec3a(1.0, -1.0, 1.0).normalize(),
+                    direction: vec3a(3.0, -1.5, 0.5).normalize(),
                     color: vec3a(20.0, 20.0, 30.0),
                 },
                 DirectionalLight {
-                    direction: vec3a(-1.0, 0.0, -1.0).normalize(),
-                    color: vec3a(20.0, 15.0, 15.0),
+                    direction: vec3a(-4.0, -2.0, -1.0).normalize(),
+                    color: vec3a(5.0, 3.0, 3.0),
                 },
                 DirectionalLight {
                     direction: vec3a(0.0, -2.0, -0.5).normalize(),
-                    color: vec3a(15.0, 13.0, 13.0),
+                    color: vec3a(3.0, 5.0, 5.0),
                 },
             ],
             ambient: HemisphericalAmbient {
-                top: vec3a(1.5, 1.5, 2.0),
-                middle: vec3a(1.0, 1.5, 1.0),
-                bottom: vec3a(1.0, 0.8, 0.8),
+                top: vec3a(0.5, 0.5, 0.7),
+                middle: vec3a(0.2, 0.5, 0.3),
+                bottom: vec3a(0.3, 0.2, 0.2),
             },
             expouse: 0.2,
         };
