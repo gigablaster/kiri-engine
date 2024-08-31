@@ -24,7 +24,7 @@ void main() {
     vec3 B = normalize(vec3(model * vec4(bitangent, 0.0)));
     vec3 N = normalize(vec3(model * vec4(normal, 0.0)));
 
-    out_uv = in_uv;
+    out_uv = in_uv * dynamic.instances[gl_InstanceIndex].uv_scale;
     out_world_pos = world_pos;
     out_normal = normal;
     out_tbn = mat3(T, B, N);

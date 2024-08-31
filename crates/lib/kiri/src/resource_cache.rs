@@ -427,7 +427,8 @@ impl ResourceCache {
                 index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
                 bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
-                position_scale: mesh.positon_scale,
+                position_scale: mesh.position_scale,
+                uv_scale: mesh.uv_scale,
             };
             bounds.push(mesh.bounds);
             meshes.push(mesh);

@@ -63,7 +63,7 @@ pub struct MeshVertexPositions {
 pub struct MeshVertexAttributes {
     pub normal_packed: u32,
     pub tangent_packed: u32,
-    pub uv: [f32; 2],
+    pub uv: [i16; 2],
 }
 
 pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 2] = [
@@ -89,7 +89,7 @@ pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 2] = [
             },
             InputVertexAttrubute {
                 location: 3,
-                format: vk::Format::R32G32_SFLOAT,
+                format: vk::Format::R16G16_SNORM,
                 offset: 8,
             },
         ],
@@ -176,7 +176,8 @@ pub struct StaticMeshAsset {
     pub first_vertex: u64,
     pub first_index: u64,
     pub surfaces: Vec<MeshSurfaceAsset>,
-    pub positon_scale: f32,
+    pub position_scale: f32,
+    pub uv_scale: f32,
     pub bounds: ([f32; 3], f32),
 }
 

@@ -144,6 +144,7 @@ struct RenderOp {
     pipeline: PipelineHandle,
     material: DescriptorHandle,
     model: glam::Mat4,
+    uv_scale: f32,
     vertex_positions: BufferPointer,
     vertex_attributes: BufferPointer,
     index_buffer: BufferPointer,
@@ -333,6 +334,7 @@ impl SceneRenderer {
                     render_ops.push(RenderOp {
                         pipeline: self.main_material,
                         model: model * decompress_mat,
+                        uv_scale: mesh.uv_scale,
                         vertex_positions: mesh.vertex_positions,
                         vertex_attributes: mesh.vertex_attributes,
                         index_buffer: mesh.index_buffer,
@@ -358,7 +360,10 @@ impl SceneRenderer {
 
                 while instance < DRAWS_PER_STREAM && index < render_ops.len() {
                     let op = &render_ops[index];
-                    data.write(GpuInstanceData { model: op.model })?;
+                    data.write(GpuInstanceData {
+                        model: op.model,
+                        uv_scale: op.uv_scale,
+                    })?;
                     stream.set_pipeline(op.pipeline);
                     stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));

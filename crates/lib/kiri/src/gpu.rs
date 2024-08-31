@@ -37,4 +37,5 @@ pub struct RenderPassGpuData {
 #[repr(C, align(16))]
 pub struct GpuInstanceData {
     pub model: glam::Mat4,
+    pub uv_scale: f32,
 }

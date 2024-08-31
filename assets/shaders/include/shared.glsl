@@ -20,6 +20,7 @@ layout(set = 0, binding = 0) uniform PerPass {
 
 struct Instance {
     mat4 model;
+    float uv_scale;
 };
 
 layout(set = 3, binding = 0) buffer Instances {

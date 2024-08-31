@@ -69,6 +69,7 @@ pub struct StaticRenderMesh {
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: Bounds,
     pub position_scale: f32,
+    pub uv_scale: f32,
 }
 
 #[derive(Debug, Default)]

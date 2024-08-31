@@ -212,6 +212,10 @@ fn quantize_position(value: [f32; 3], max: f32) -> [i16; 3] {
     ]
 }
 
+fn quantize_uv(value: [f32; 2], max: f32) -> [i16; 2] {
+    [quantize_float(value[0], max), quantize_float(value[1], max)]
+}
+
 fn quantize_normalized(value: [f32; 3]) -> [i16; 3] {
     [
         quantize_float(value[0], 1.0),
@@ -225,7 +229,6 @@ unsafe fn to_10bits(value: [i16; 3], sign: f32) -> u32 {
     let y = (mem::transmute::<i16, u16>(value[1]) >> 6) as u32; // 16 - 10
     let z = (mem::transmute::<i16, u16>(value[2]) >> 6) as u32; // 16 - 10
     let sign = if sign > 0.0 { 1 } else { 0 };
-    // (w & 3) | (x & 0x3ff) << 2 | (y & 0x3ff) << 12 | (z & 0x3ff) << 22
     (z & 0x3ff) | (y & 0x3ff) << 10 | (x & 0x3ff) << 20 | (sign & 3) << 22
 }
 
@@ -279,6 +282,8 @@ impl MeshAssetBuilder {
         let bounds = calculate_bounding_sphere(&mesh_vertices);
         let position_scale = (find_limit_value(&mesh_vertices, |x| x.position).max(1.0) as u32)
             .next_power_of_two() as f32;
+        let uv_scale = (find_limit_value(&mesh_vertices, |x| x.uvs[0]).max(1.0) as u32)
+            .next_power_of_two() as f32;
         let mut quantized_vertex_positions = mesh_vertices
             .iter()
             .copied()
@@ -297,7 +302,7 @@ impl MeshAssetBuilder {
                         x.tangent[1],
                     )
                 },
-                uv: x.uvs[0],
+                uv: quantize_uv(x.uvs[0], uv_scale),
             })
             .collect::<Vec<_>>();
         vertex_positions.append(&mut quantized_vertex_positions);
@@ -305,7 +310,8 @@ impl MeshAssetBuilder {
         indices.append(&mut mesh_indices);
         StaticMeshAsset {
             surfaces: mesh_surfaces,
-            positon_scale: position_scale,
+            position_scale,
+            uv_scale,
             bounds,
             first_vertex,
             first_index,
