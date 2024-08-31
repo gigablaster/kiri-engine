@@ -94,7 +94,7 @@ impl GameClient<LoopError> for Loop {
                     color: vec3a(20.0, 20.0, 30.0),
                 },
                 DirectionalLight {
-                    direction: vec3a(-4.0, -2.0, -1.0).normalize(),
+                    direction: vec3a(-4.0, 2.0, 1.0).normalize(),
                     color: vec3a(5.0, 3.0, 3.0),
                 },
                 DirectionalLight {
@@ -107,7 +107,7 @@ impl GameClient<LoopError> for Loop {
                 middle: vec3a(0.2, 0.5, 0.3),
                 bottom: vec3a(0.3, 0.2, 0.2),
             },
-            expouse: 0.2,
+            expouse: 0.1,
         };
         self.render.render(&self.scene, env, context).unwrap()
     }

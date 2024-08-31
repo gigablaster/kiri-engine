@@ -16,10 +16,13 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
+    mem,
     time::SystemTime,
 };
 
+use ash::vk;
 use gltf::mesh::Mode;
+use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout, PipelineVertex};
 use speedy::{Readable, Writable};
 use uuid::uuid;
 
@@ -49,12 +52,38 @@ impl ModelSource {
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
+#[repr(C)]
 pub struct StaticMeshVertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub tangent: [f32; 4],
-    pub uv1: [f32; 2],
-    pub uv2: [f32; 2],
+    pub position: [i16; 3],
+    pub normal_packed: u32,
+    pub tangent_packed: u32,
+    pub uv: [f32; 2],
+}
+
+impl PipelineVertex for StaticMeshVertex {
+    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
+        &[InputVertexStreamLayout {
+            streams: &[
+                InputVertexAttrubute {
+                    format: vk::Format::R16G16B16A16_SNORM,
+                    offset: 0,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::A2R10G10B10_SNORM_PACK32,
+                    offset: 8,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::A2R10G10B10_SNORM_PACK32,
+                    offset: 12,
+                },
+                InputVertexAttrubute {
+                    format: vk::Format::R32G32_SFLOAT,
+                    offset: 16,
+                },
+            ],
+            stride: mem::size_of::<StaticMeshVertex>() as u32,
+        }]
+    }
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable, PartialEq)]
@@ -136,8 +165,7 @@ pub struct StaticMeshAsset {
     pub first_vertex: u64,
     pub first_index: u64,
     pub surfaces: Vec<MeshSurfaceAsset>,
-    // pub positon_scale: f32,
-    // pub uv_scale: [f32; 2],
+    pub positon_scale: f32,
     pub bounds: ([f32; 3], f32),
 }
 

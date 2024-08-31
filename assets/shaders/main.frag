@@ -21,7 +21,7 @@ void main() {
     float metallic = mr.b;
     float roughness = mr.g;
 
-    roughness = max(roughness, 0.001);
+    roughness = max(roughness, 0.0001);
 
     vec3 N = normalize(tbn * normal);
     vec3 V = normalize(per_pass.eye - world_pos);

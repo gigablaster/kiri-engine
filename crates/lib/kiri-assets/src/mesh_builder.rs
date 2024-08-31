@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use log::info;
+use std::mem;
 
 use crate::{MeshAssetMaterial, MeshSurfaceAsset, StaticMeshAsset, StaticMeshVertex};
 
@@ -190,41 +190,52 @@ fn calculate_bounding_sphere(vertices: &[FullVertex]) -> ([f32; 3], f32) {
     (middle.to_array(), radius)
 }
 
-// fn find_limit_value<T, const N: usize, F: Fn(&T) -> [f32; N]>(values: &[T], f: F) -> f32 {
-//     debug_assert!(!values.is_empty());
-//     let values = values.iter().map(f).collect::<Vec<_>>();
-//     let mut max = values[0][0];
-//     for value in values {
-//         for value in value {
-//             if value > max {
-//                 max = value;
-//             }
-//         }
-//     }
-//     max
-// }
+fn find_limit_value<T, const N: usize, F: Fn(&T) -> [f32; N]>(values: &[T], f: F) -> f32 {
+    debug_assert!(!values.is_empty());
+    let values = values.iter().map(f).collect::<Vec<_>>();
+    let mut max = values[0][0];
+    for value in values {
+        for value in value {
+            max = max.max(value);
+        }
+    }
+    max
+}
 
-// fn quantize_position(value: [f32; 3], max: f32) -> [u16; 3] {
-//     [
-//         quantize_float(value[0], max),
-//         quantize_float(value[1], max),
-//         quantize_float(value[2], max),
-//     ]
-// }
+fn quantize_position(value: [f32; 3], max: f32) -> [i16; 3] {
+    [
+        quantize_float(value[0], max),
+        quantize_float(value[1], max),
+        quantize_float(value[2], max),
+    ]
+}
 
-// fn quantize_normalized(value: [f32; 3], max: f32) -> [u16; 2] {
-//     [quantize_float(value[0], max), quantize_float(value[1], max)]
-// }
+fn quantize_normalized(value: [f32; 3]) -> [i16; 3] {
+    [
+        quantize_float(value[0], 1.0),
+        quantize_float(value[1], 1.0),
+        quantize_float(value[2], 1.0),
+    ]
+}
 
-// fn quantize_uv(value: [f32; 2], max: f32) -> [u16; 2] {
-//     [quantize_float(value[0], max), quantize_float(value[1], max)]
-// }
+unsafe fn to_10bits(value: [i16; 3], sign: f32) -> u32 {
+    let x = (mem::transmute::<i16, u16>(value[0]) >> 6) as u32; // 16 - 10
+    let y = (mem::transmute::<i16, u16>(value[1]) >> 6) as u32; // 16 - 10
+    let z = (mem::transmute::<i16, u16>(value[2]) >> 6) as u32; // 16 - 10
+    let sign = if sign > 0.0 { 1 } else { 0 };
+    // (w & 3) | (x & 0x3ff) << 2 | (y & 0x3ff) << 12 | (z & 0x3ff) << 22
+    (z & 0x3ff) | (y & 0x3ff) << 10 | (x & 0x3ff) << 20 | (sign & 3) << 22
+}
 
-// fn quantize_float(value: f32, max: f32) -> u16 {
-//     let value = ((value / max).clamp(-1.0, 1.0) + 1.0) / 2.0;
-//     let value = u16::MAX as f32 * value;
-//     value as u16
-// }
+fn quantize_float(value: f32, max: f32) -> i16 {
+    let value = (value / max).clamp(-1.0, 1.0);
+    let value = if value > 0.0 {
+        value * 32767.0 + 0.5
+    } else {
+        value * 32767.0 - 0.5
+    };
+    value.clamp(-32768.0, 32767.0) as i16
+}
 
 impl MeshAssetBuilder {
     pub fn push(&mut self, surface: MeshSurfaceBuilder) {
@@ -259,41 +270,31 @@ impl MeshAssetBuilder {
                 index_count: indices.len() as u32,
                 material: material_index,
             });
-            info!("indices {} vertices {}", indices.len(), vertices.len());
             mesh_vertices.append(&mut vertices);
             mesh_indices.append(&mut indices);
         }
         let bounds = calculate_bounding_sphere(&mesh_vertices);
-        // let position_scale = (((find_limit_value(&mesh_vertices, |x| x.position)).min(1.0)) as u32)
-        //     .next_power_of_two() as f32;
-        // let uv1_scale = find_limit_value(&mesh_vertices, |x| x.uvs[0]).min(1.0);
-        // let uv2_scale = find_limit_value(&mesh_vertices, |x| x.uvs[1]).min(1.0);
-        // let mut quantized_vertices = mesh_vertices
-        //     .into_iter()
-        //     .map(|x| StaticMeshVertex {
-        //         position: quantize_position(x.position, position_scale),
-        //         normal: quantize_normalized(x.normal, 1.0),
-        //         tangent: quantize_normalized(x.tangent, 1.0),
-        //         uv1: quantize_uv(x.uvs[0], uv1_scale),
-        //         uv2: quantize_uv(x.uvs[1], uv2_scale),
-        //     })
-        //     .collect::<Vec<_>>();
-        let mut static_vertices = mesh_vertices
+        let position_scale = (find_limit_value(&mesh_vertices, |x| x.position).max(1.0) as u32)
+            .next_power_of_two() as f32;
+        let mut quantized_vertices = mesh_vertices
             .into_iter()
             .map(|x| StaticMeshVertex {
-                position: x.position,
-                normal: x.normal,
-                tangent: x.tangent,
-                uv1: x.uvs[0],
-                uv2: x.uvs[1],
+                position: quantize_position(x.position, position_scale),
+                normal_packed: unsafe { to_10bits(quantize_normalized(x.normal), 1.0) },
+                tangent_packed: unsafe {
+                    to_10bits(
+                        quantize_normalized([x.tangent[0], x.tangent[1], x.tangent[2]]),
+                        x.tangent[1],
+                    )
+                },
+                uv: x.uvs[0],
             })
             .collect::<Vec<_>>();
-        vertices.append(&mut static_vertices);
+        vertices.append(&mut quantized_vertices);
         indices.append(&mut mesh_indices);
         StaticMeshAsset {
             surfaces: mesh_surfaces,
-            // positon_scale: position_scale,
-            // uv_scale: [uv1_scale, uv2_scale],
+            positon_scale: position_scale,
             bounds,
             first_vertex,
             first_index,
@@ -301,19 +302,19 @@ impl MeshAssetBuilder {
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
+#[cfg(test)]
+mod test {
+    use super::*;
 
-//     #[test]
-//     fn quantize() {
-//         assert_eq!(32767, quantize_float(0.0, 1.0));
-//         assert_eq!(0, quantize_float(-1.0, 1.0));
-//         assert_eq!(u16::MAX, quantize_float(1.0, 1.0));
-//         assert_eq!(32767, quantize_float(0.0, 100.0));
-//         assert_eq!(0, quantize_float(-100.0, 100.0));
-//         assert_eq!(u16::MAX, quantize_float(100.0, 100.0));
-//         assert_eq!(49151, quantize_float(50.0, 100.0));
-//         assert_eq!(16383, quantize_float(-50.0, 100.0));
-//     }
-// }
+    #[test]
+    fn quantize() {
+        assert_eq!(0, quantize_float(0.0, 1.0));
+        assert_eq!(-32767, quantize_float(-1.0, 1.0));
+        assert_eq!(i16::MAX, quantize_float(1.0, 1.0));
+        assert_eq!(0, quantize_float(0.0, 100.0));
+        assert_eq!(-32767, quantize_float(-100.0, 100.0));
+        assert_eq!(i16::MAX, quantize_float(100.0, 100.0));
+        assert_eq!(16384, quantize_float(50.0, 100.0));
+        assert_eq!(-16384, quantize_float(-50.0, 100.0));
+    }
+}

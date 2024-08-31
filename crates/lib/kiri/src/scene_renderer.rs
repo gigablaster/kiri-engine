@@ -16,12 +16,13 @@
 use std::{cmp::Ordering, mem, sync::Arc};
 
 use crate::{
-    gpu::{GpuInstanceData, GpuStaticVertex, RenderPassGpuData},
+    gpu::{GpuInstanceData, RenderPassGpuData},
     Error, PipelineCache, RasterPipelineDesc, ResourceCache, Scene, SceneCuller,
     MATERIAL_DESCRIPTOR_LAYOUT,
 };
 use ash::vk::{self};
-use glam::{vec4, Mat4};
+use glam::{vec3, vec4, Mat4};
+use kiri_assets::StaticMeshVertex;
 use kiri_backend::{
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
     PipelineVertex, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
@@ -144,10 +145,10 @@ const DRAWS_PER_STREAM: usize = 256;
 #[derive(Debug, Clone, Copy)]
 struct RenderOp {
     pipeline: PipelineHandle,
+    material: DescriptorHandle,
     model: glam::Mat4,
     vertex_buffer: BufferPointer,
     index_buffer: BufferPointer,
-    material: DescriptorHandle,
     first_index: u32,
     index_count: u32,
     vertex_offset: u32,
@@ -222,7 +223,7 @@ impl SceneRenderer {
         let renderer: &Arc<kiri_gfx::Renderer> = &resource_cache.renderer;
         let main_material =
             pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<
-                GpuStaticVertex,
+                StaticMeshVertex,
             >(
                 "shaders/main.vert",
                 "shaders/main.frag",
@@ -327,10 +328,16 @@ impl SceneRenderer {
         {
             puffin::profile_scope!("Generate renderops");
             for (model, mesh) in &visible.static_meshes {
+                let decompress_mat = Mat4::from_scale(vec3(
+                    mesh.position_scale,
+                    mesh.position_scale,
+                    mesh.position_scale,
+                ));
+                let model: Mat4 = (*model).into();
                 for surface in &mesh.surfaces {
                     render_ops.push(RenderOp {
                         pipeline: self.main_material,
-                        model: (*model).into(),
+                        model: model * decompress_mat,
                         vertex_buffer: mesh.vertex_buffer,
                         index_buffer: mesh.index_buffer,
                         material: surface.material.ds,

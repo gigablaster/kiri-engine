@@ -20,6 +20,7 @@ use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, load_asset, save_asset, Asset,
     AssetSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, ModelAsset, ModelSource,
+    StaticMeshVertex,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
@@ -31,9 +32,8 @@ use log::{debug, warn};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 
 use crate::{
-    gpu::{GpuMeshMaterial, GpuStaticVertex},
-    Bounds, ConstUniformBuffer, Error, MeshResolver, RenderMaterial, RenderMeshSurface,
-    RenderModel, StaticRenderMesh,
+    gpu::GpuMeshMaterial, Bounds, ConstUniformBuffer, Error, MeshResolver, RenderMaterial,
+    RenderMeshSurface, RenderModel, StaticRenderMesh,
 };
 
 pub type ModelHandle = Handle<RenderModel>;
@@ -371,10 +371,8 @@ impl ResourceCache {
             });
         }
         // let reference = source.reference();
-        let vertex_data: Vec<GpuStaticVertex> =
-            asset.vertices.into_iter().map(|x| x.into()).collect();
         let vertices = self.renderer.create_buffer(
-            BufferCreateDesc::gpu((mem::size_of::<GpuStaticVertex>() * vertex_data.len()) as _)
+            BufferCreateDesc::gpu((mem::size_of::<StaticMeshVertex>() * asset.vertices.len()) as _)
                 .veretex_buffer()
                 .transfer_destination()
                 .name(&format!("{:?} - VB", source)),
@@ -386,7 +384,7 @@ impl ResourceCache {
                 .name(&format!("{:?} - IB", source)),
         )?;
         self.renderer
-            .upload_buffer(BufferPointer::new(vertices, 0), &vertex_data)?;
+            .upload_buffer(BufferPointer::new(vertices, 0), &asset.vertices)?;
         self.renderer
             .upload_buffer(BufferPointer::new(indices, 0), &asset.indices)?;
         let mut meshes = Vec::new();
@@ -407,8 +405,7 @@ impl ResourceCache {
                 index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
                 bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
-                // position_scale: mesh.positon_scale,
-                // uv_scale: mesh.uv_scale,
+                position_scale: mesh.positon_scale,
             };
             bounds.push(mesh.bounds);
             meshes.push(mesh);
