@@ -22,11 +22,11 @@ use crate::{
 };
 use ash::vk::{self};
 use glam::{vec3, vec4, Mat4};
-use kiri_assets::StaticMeshVertex;
+use kiri_assets::STATIC_MESH_INPUT_LAYOUT;
 use kiri_backend::{
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
-    PipelineVertex, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
-    MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+    RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT,
+    PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     passes::{FinalCompositionPassDispatcher, RasterizerPassBuilder, RenderTarget},
@@ -85,7 +85,7 @@ const PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     depth: Some(vk::Format::D24_UNORM_S8_UINT),
 };
 
-const POSTPROCESS_LAYOUT: RenderPassLayout = RenderPassLayout {
+const POSTPROCESS_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
     depth: None,
 };
@@ -97,13 +97,15 @@ struct PostprocessVertex {
     uv: [f32; 2],
 }
 
-const POSTPROCESS_VERTEX_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
+const POSTPROCESS_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
     streams: &[
         InputVertexAttrubute {
+            location: 0,
             format: vk::Format::R32G32_SFLOAT,
             offset: 0,
         },
         InputVertexAttrubute {
+            location: 1,
             format: vk::Format::R32G32_SFLOAT,
             offset: 8,
         },
@@ -111,11 +113,6 @@ const POSTPROCESS_VERTEX_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStre
     stride: 16,
 }];
 
-impl PipelineVertex for PostprocessVertex {
-    fn layout() -> &'static [InputVertexStreamLayout<'static>] {
-        &POSTPROCESS_VERTEX_LAYOUT
-    }
-}
 #[derive(Debug)]
 pub struct SceneRenderer {
     target_pool: RenderTargetPool,
@@ -147,7 +144,8 @@ struct RenderOp {
     pipeline: PipelineHandle,
     material: DescriptorHandle,
     model: glam::Mat4,
-    vertex_buffer: BufferPointer,
+    vertex_positions: BufferPointer,
+    vertex_attributes: BufferPointer,
     index_buffer: BufferPointer,
     first_index: u32,
     index_count: u32,
@@ -158,7 +156,7 @@ impl PartialEq for RenderOp {
     fn eq(&self, other: &Self) -> bool {
         self.pipeline == other.pipeline
             && self.model == other.model
-            && self.vertex_buffer == other.vertex_buffer
+            && self.vertex_positions == other.vertex_positions
             && self.index_buffer == other.index_buffer
             && self.material == other.material
             && self.first_index == other.first_index
@@ -222,12 +220,11 @@ impl SceneRenderer {
     ) -> Result<Self, Error> {
         let renderer: &Arc<kiri_gfx::Renderer> = &resource_cache.renderer;
         let main_material =
-            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<
-                StaticMeshVertex,
-            >(
+            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new(
                 "shaders/main.vert",
                 "shaders/main.frag",
                 &PASS_LAYOUT,
+                &STATIC_MESH_INPUT_LAYOUT,
                 &[
                     RENDER_PASS_DESCRIPTOR_LAYOUT,
                     EMPTY_DESCRIPTOR_LAYOUT,
@@ -235,20 +232,18 @@ impl SceneRenderer {
                     INSTANCE_DESCRIPTOR_LAYOUT,
                 ],
             ))?;
-        let tonemapping =
-            pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new::<
-                PostprocessVertex,
-            >(
-                "shaders/fullscreen.vert",
-                "shaders/tonemapping.frag",
-                &POSTPROCESS_LAYOUT,
-                &[
-                    POSTPROCESS_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                ],
-            ))?;
+        let tonemapping = pipeline_cache.get_or_create_raster_pipeline(RasterPipelineDesc::new(
+            "shaders/fullscreen.vert",
+            "shaders/tonemapping.frag",
+            &POSTPROCESS_PASS_LAYOUT,
+            &POSTPROCESS_INPUT_LAYOUT,
+            &[
+                POSTPROCESS_DESCRIPTOR_LAYOUT,
+                EMPTY_DESCRIPTOR_LAYOUT,
+                EMPTY_DESCRIPTOR_LAYOUT,
+                EMPTY_DESCRIPTOR_LAYOUT,
+            ],
+        ))?;
         Ok(Self {
             target_pool: RenderTargetPool::new(renderer),
             resources: resource_cache.clone(),
@@ -338,7 +333,8 @@ impl SceneRenderer {
                     render_ops.push(RenderOp {
                         pipeline: self.main_material,
                         model: model * decompress_mat,
-                        vertex_buffer: mesh.vertex_buffer,
+                        vertex_positions: mesh.vertex_positions,
+                        vertex_attributes: mesh.vertex_attributes,
                         index_buffer: mesh.index_buffer,
                         material: surface.material.ds,
                         first_index: surface.first_index,
@@ -366,7 +362,8 @@ impl SceneRenderer {
                     stream.set_pipeline(op.pipeline);
                     stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
-                    stream.set_vertex_buffer(0, op.vertex_buffer);
+                    stream.set_vertex_buffer(0, op.vertex_positions);
+                    stream.set_vertex_buffer(1, op.vertex_attributes);
                     stream.set_index_buffer(op.index_buffer);
                     stream.set_vertex_offset(op.vertex_offset as _);
                     stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));

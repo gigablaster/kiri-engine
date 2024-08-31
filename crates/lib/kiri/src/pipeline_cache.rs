@@ -18,8 +18,8 @@ use std::{collections::HashMap, sync::Arc};
 use bytes::Bytes;
 use kiri_assets::{ShaderAssetSource, ShaderType};
 use kiri_backend::{
-    DescriptorSetLayoutDesc, InputVertexStreamLayout, PipelineVertex, RasterPipelineCreateDesc,
-    RenderPassLayout, ShaderDesc,
+    DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
+    ShaderDesc,
 };
 use kiri_gfx::{PipelineHandle, ProgramHandle, Renderer};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -38,17 +38,18 @@ pub struct RasterPipelineDesc {
 }
 
 impl RasterPipelineDesc {
-    pub fn new<T: PipelineVertex>(
+    pub fn new(
         vertex_shader: &str,
         fragment_shader: &str,
         render_pass: &'static RenderPassLayout<'static>,
+        input_layout: &'static [InputVertexStreamLayout<'static>],
         descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
             fragment_shader: fragment_shader.into(),
             render_pass,
-            input_layout: T::layout(),
+            input_layout,
             specialization: Default::default(),
             desc: Default::default(),
             descriptor_layout,

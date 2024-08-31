@@ -15,7 +15,9 @@
 
 use std::mem;
 
-use crate::{MeshAssetMaterial, MeshSurfaceAsset, StaticMeshAsset, StaticMeshVertex};
+use crate::{
+    MeshAssetMaterial, MeshSurfaceAsset, MeshVertexAttributes, MeshVertexPositions, StaticMeshAsset,
+};
 
 #[derive(Debug)]
 pub struct MeshSurfaceBuilder {
@@ -244,11 +246,12 @@ impl MeshAssetBuilder {
 
     pub fn build(
         self,
-        vertices: &mut Vec<StaticMeshVertex>,
+        vertex_positions: &mut Vec<MeshVertexPositions>,
+        vertex_attributes: &mut Vec<MeshVertexAttributes>,
         indices: &mut Vec<u16>,
         materials: &mut Vec<MeshAssetMaterial>,
     ) -> StaticMeshAsset {
-        let first_vertex = vertices.len() as u64;
+        let first_vertex = vertex_positions.len() as u64;
         let first_index = indices.len() as u64;
         let mut mesh_vertices = Vec::new();
         let mut mesh_indices = Vec::new();
@@ -276,10 +279,17 @@ impl MeshAssetBuilder {
         let bounds = calculate_bounding_sphere(&mesh_vertices);
         let position_scale = (find_limit_value(&mesh_vertices, |x| x.position).max(1.0) as u32)
             .next_power_of_two() as f32;
-        let mut quantized_vertices = mesh_vertices
-            .into_iter()
-            .map(|x| StaticMeshVertex {
+        let mut quantized_vertex_positions = mesh_vertices
+            .iter()
+            .copied()
+            .map(|x| MeshVertexPositions {
                 position: quantize_position(x.position, position_scale),
+            })
+            .collect::<Vec<_>>();
+        let mut quantized_vertex_attrubutes = mesh_vertices
+            .iter()
+            .copied()
+            .map(|x| MeshVertexAttributes {
                 normal_packed: unsafe { to_10bits(quantize_normalized(x.normal), 1.0) },
                 tangent_packed: unsafe {
                     to_10bits(
@@ -290,7 +300,8 @@ impl MeshAssetBuilder {
                 uv: x.uvs[0],
             })
             .collect::<Vec<_>>();
-        vertices.append(&mut quantized_vertices);
+        vertex_positions.append(&mut quantized_vertex_positions);
+        vertex_attributes.append(&mut quantized_vertex_attrubutes);
         indices.append(&mut mesh_indices);
         StaticMeshAsset {
             surfaces: mesh_surfaces,

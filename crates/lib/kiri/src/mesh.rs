@@ -63,7 +63,8 @@ impl From<MeshMaterialBlend> for RenderMaterialType {
 
 #[derive(Debug, Default)]
 pub struct StaticRenderMesh {
-    pub vertex_buffer: BufferPointer,
+    pub vertex_positions: BufferPointer,
+    pub vertex_attributes: BufferPointer,
     pub index_buffer: BufferPointer,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: Bounds,
@@ -72,7 +73,8 @@ pub struct StaticRenderMesh {
 
 #[derive(Debug, Default)]
 pub struct RenderModel {
-    pub vertices: BufferHandle,
+    pub vertex_positions: BufferHandle,
+    pub vertex_attributes: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
     pub bounds: Vec<Bounds>,

@@ -19,8 +19,8 @@ use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, load_asset, save_asset, Asset,
-    AssetSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, ModelAsset, ModelSource,
-    StaticMeshVertex,
+    AssetSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, MeshVertexAttributes,
+    MeshVertexPositions, ModelAsset, ModelSource,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Handle, Pool};
@@ -370,12 +370,23 @@ impl ResourceCache {
                 ty: material.blend.into(),
             });
         }
-        // let reference = source.reference();
-        let vertices = self.renderer.create_buffer(
-            BufferCreateDesc::gpu((mem::size_of::<StaticMeshVertex>() * asset.vertices.len()) as _)
-                .veretex_buffer()
-                .transfer_destination()
-                .name(&format!("{:?} - VB", source)),
+
+        // Create buffers
+        let vertex_positions = self.renderer.create_buffer(
+            BufferCreateDesc::gpu(
+                (mem::size_of::<MeshVertexPositions>() * asset.vertex_positions.len()) as _,
+            )
+            .veretex_buffer()
+            .transfer_destination()
+            .name(&format!("{:?} - VB Pos", source)),
+        )?;
+        let vertex_attributes = self.renderer.create_buffer(
+            BufferCreateDesc::gpu(
+                (mem::size_of::<MeshVertexAttributes>() * asset.vertex_positions.len()) as _,
+            )
+            .veretex_buffer()
+            .transfer_destination()
+            .name(&format!("{:?} - VB Attr", source)),
         )?;
         let indices = self.renderer.create_buffer(
             BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
@@ -383,10 +394,20 @@ impl ResourceCache {
                 .transfer_destination()
                 .name(&format!("{:?} - IB", source)),
         )?;
-        self.renderer
-            .upload_buffer(BufferPointer::new(vertices, 0), &asset.vertices)?;
+
+        // Upload buffers
+        self.renderer.upload_buffer(
+            BufferPointer::new(vertex_positions, 0),
+            &asset.vertex_positions,
+        )?;
+        self.renderer.upload_buffer(
+            BufferPointer::new(vertex_attributes, 0),
+            &asset.vertex_attributes,
+        )?;
         self.renderer
             .upload_buffer(BufferPointer::new(indices, 0), &asset.indices)?;
+
+        // Create meshes
         let mut meshes = Vec::new();
         let mut bounds = Vec::new();
         for mesh in asset.meshes {
@@ -401,7 +422,8 @@ impl ResourceCache {
                 })
                 .collect::<Vec<_>>();
             let mesh = StaticRenderMesh {
-                vertex_buffer: BufferPointer::new(vertices, 0),
+                vertex_positions: BufferPointer::new(vertex_positions, 0),
+                vertex_attributes: BufferPointer::new(vertex_attributes, 0),
                 index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
                 bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
@@ -411,7 +433,8 @@ impl ResourceCache {
             meshes.push(mesh);
         }
         let mut scene = RenderModel {
-            vertices,
+            vertex_positions,
+            vertex_attributes,
             indices,
             meshes,
             bounds,
@@ -464,8 +487,8 @@ impl Drop for ResourceCache {
             .drain()
             .for_each(|(_, handle)| self.renderer.destroy_image(handle));
         self.scene_assets.write().drain().for_each(|scene| {
-            self.renderer.destroy_buffer(scene.vertices);
-            self.renderer.destroy_buffer(scene.vertices);
+            self.renderer.destroy_buffer(scene.vertex_positions);
+            self.renderer.destroy_buffer(scene.vertex_positions);
         });
         self.materials
             .write()
