@@ -13,7 +13,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod gpu;
+mod scene;
+mod scene_renderer;
+
+use std::io;
+
+pub use scene::*;
+pub use scene_renderer::*;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum Error {}
+pub enum Error {
+    #[error("Backend error: {0}")]
+    BackendError(#[from] kiri_backend::Error),
+    #[error("Renderer error: {0}")]
+    RendererError(#[from] kiri_gfx::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+    #[error("Resource loading error: {0}")]
+    ResourceError(#[from] kiri_resources::Error),
+    #[error("Out of mesh memory")]
+    OutOfMeshMemory,
+    #[error("Too many uniforms")]
+    TooManyUniforms,
+}
+
+pub enum RenderOrder {
+    Opaque,
+    Transparent,
+}

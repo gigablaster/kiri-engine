@@ -3,12 +3,12 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use glam::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
-use kiri::{
-    Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, RenderEnviroment, Scene,
-    SceneRenderer,
-};
 use kiri_common::Handle;
 use kiri_gfx::{RenderContext, Renderer};
+use kiri_render::{
+    Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, RenderEnviroment, Scene,
+    SceneNodeData, SceneRenderer,
+};
 use kiri_resources::{PipelineCache, ResourceCache};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
@@ -40,17 +40,17 @@ impl GameClient<LoopError> for Loop {
         let mut scene = Scene::default();
         let root = scene.add_node(
             Handle::default(),
-            kiri::SceneNodeData::Model(test),
+            SceneNodeData::Model(test),
             glam::Affine3A::from_translation(vec3(0.0, 0.5, 0.0)),
         );
         scene.add_node(
             root,
-            kiri::SceneNodeData::Model(test),
+            SceneNodeData::Model(test),
             Affine3A::from_translation(Vec3::new(-0.75, -0.5, 0.0)),
         );
         scene.add_node(
             root,
-            kiri::SceneNodeData::Model(test),
+            SceneNodeData::Model(test),
             Affine3A::from_translation(Vec3::new(0.75, -0.5, 0.0)),
         );
         let render = SceneRenderer::new(&resources, &_pipelines)?;

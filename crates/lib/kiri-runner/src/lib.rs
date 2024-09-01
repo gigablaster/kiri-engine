@@ -34,6 +34,7 @@ pub enum GameError<E: Error> {
     GfxError(#[from] kiri_gfx::Error),
     EngineError(#[from] kiri::Error),
     ResourceError(#[from] kiri_resources::Error),
+    RenderError(#[from] kiri_render::Error),
     LoopError(String),
 }
 
