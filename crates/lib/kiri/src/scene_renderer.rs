@@ -145,6 +145,10 @@ const DRAWS_PER_STREAM: usize = 256;
 struct RenderOp {
     pipeline: PipelineHandle,
     material: DescriptorHandle,
+    index: usize,
+}
+#[derive(Debug, Clone, Copy)]
+struct RenderOpData {
     model: glam::Mat4,
     uv_scale: f32,
     vertex_positions: BufferPointer,
@@ -158,12 +162,8 @@ struct RenderOp {
 impl PartialEq for RenderOp {
     fn eq(&self, other: &Self) -> bool {
         self.pipeline == other.pipeline
-            && self.model == other.model
-            && self.vertex_positions == other.vertex_positions
-            && self.index_buffer == other.index_buffer
             && self.material == other.material
-            && self.first_index == other.first_index
-            && self.index_count == other.index_count
+            && self.index == other.index
     }
 }
 
@@ -373,6 +373,7 @@ impl SceneRenderer {
                     .discard(),
             ),
         );
+        let mut render_data = Vec::new();
         let mut render_ops = Vec::new();
         {
             puffin::profile_scope!("Generate renderops");
@@ -384,18 +385,23 @@ impl SceneRenderer {
                 ));
                 let model: Mat4 = (*model).into();
                 for surface in &mesh.surfaces {
-                    render_ops.push(RenderOp {
-                        pipeline: self.main_material,
+                    let index = render_data.len();
+                    render_data.push(RenderOpData {
                         model: model * decompress_mat,
                         uv_scale: mesh.uv_scale,
                         vertex_positions: mesh.vertex_positions,
                         vertex_attributes: mesh.vertex_attributes,
                         index_buffer: mesh.index_buffer,
-                        material: surface.material.ds,
                         first_index: surface.first_index,
                         index_count: surface.index_count,
                         vertex_offset: surface.vertex_offset,
-                    })
+                    });
+                    render_ops.push(RenderOp {
+                        pipeline: self.main_material,
+                        material: surface.material.ds,
+                        index,
+                    });
+                    debug_assert!(render_data.len() == render_ops.len(), "Sanity check failed");
                 }
             }
         }
@@ -406,27 +412,28 @@ impl SceneRenderer {
         {
             puffin::profile_scope!("Generate draw streams");
             let mut index = 0;
-            while index < render_ops.len() {
+            while index < render_data.len() {
                 let mut instance = 0;
                 let mut data = context.write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)?;
                 let mut stream = DrawStreamBuilder::default();
 
-                while instance < DRAWS_PER_STREAM && index < render_ops.len() {
-                    let op = &render_ops[index];
+                while instance < DRAWS_PER_STREAM && index < render_data.len() {
+                    let op = render_ops[index];
+                    let op_data = &render_data[op.index];
                     data.write(GpuInstanceData {
-                        model: op.model,
-                        uv_scale: op.uv_scale,
+                        model: op_data.model,
+                        uv_scale: op_data.uv_scale,
                     })?;
                     stream.set_pipeline(op.pipeline);
                     stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
                     stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
-                    stream.set_vertex_buffer(0, op.vertex_positions);
-                    stream.set_vertex_buffer(1, op.vertex_attributes);
-                    stream.set_index_buffer(op.index_buffer);
-                    stream.set_vertex_offset(op.vertex_offset as _);
+                    stream.set_vertex_buffer(0, op_data.vertex_positions);
+                    stream.set_vertex_buffer(1, op_data.vertex_attributes);
+                    stream.set_index_buffer(op_data.index_buffer);
+                    stream.set_vertex_offset(op_data.vertex_offset as _);
                     stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(op.material));
                     stream.set_dynamic_offset(0, Some(data.offset as _));
-                    stream.draw(op.first_index, op.index_count, instance as _, 1);
+                    stream.draw(op_data.first_index, op_data.index_count, instance as _, 1);
                     instance += 1;
                     index += 1;
                 }
