@@ -15,9 +15,8 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 use glam::Affine3A;
 use kiri_assets::NodeIndex;
-use kiri_common::{Handle, HotColdPool};
-
-use crate::{Bounds, ModelHandle, RenderModel, StaticRenderMesh};
+use kiri_common::{Bounds, Handle, HotColdPool};
+use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SceneNodeData {
@@ -27,7 +26,7 @@ pub enum SceneNodeData {
 }
 
 impl SceneNodeData {
-    pub fn bounds<T: MeshResolver>(self, resolver: &T) -> Option<Bounds> {
+    pub fn bounds<T: ResourceResolver>(self, resolver: &T) -> Option<Bounds> {
         match self {
             Self::StaticMesh(handle, index) => resolver
                 .resolve_static_mesh(handle, index)
@@ -66,12 +65,6 @@ pub struct Scene {
     rebuild_scene: bool,
     recalculate_transforms: bool,
     update_bounds: Vec<NodeHandle>,
-}
-
-/// Интерфейс для доступа к данным меша
-pub trait MeshResolver {
-    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh>;
-    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel>;
 }
 
 #[derive(Debug)]
@@ -140,7 +133,7 @@ impl Scene {
         }
     }
 
-    pub fn update<T: MeshResolver>(&mut self, resolver: &T) {
+    pub fn update<T: ResourceResolver>(&mut self, resolver: &T) {
         puffin::profile_function!();
         if self.rebuild_scene {
             puffin::profile_scope!("Rebuild scene");
@@ -211,7 +204,7 @@ impl Scene {
         self.recalculate_transforms = false;
     }
 
-    pub fn cull<'a, T: SceneCuller, U: MeshResolver>(
+    pub fn cull<'a, T: SceneCuller, U: ResourceResolver>(
         &'a self,
         culler: T,
         resolver: &'a U,
@@ -261,12 +254,14 @@ impl Scene {
 
 #[cfg(test)]
 mod test {
+    use kiri_resources::{RenderModel, StaticRenderMesh};
+
     use super::*;
 
     #[derive(Default)]
     struct DummyResolver {}
 
-    impl MeshResolver for DummyResolver {
+    impl ResourceResolver for DummyResolver {
         fn resolve_static_mesh(
             &self,
             _handle: ModelHandle,

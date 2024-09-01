@@ -14,89 +14,33 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod gpu;
-mod mesh;
-mod pipeline_cache;
-mod resource_cache;
 mod scene;
 mod scene_renderer;
-mod uniforms;
 
 use std::io;
 
-pub use mesh::*;
-pub use pipeline_cache::*;
-pub use resource_cache::*;
 pub use scene::*;
 pub use scene_renderer::*;
-pub use uniforms::*;
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Backend error: {0}")]
-    BackendError(kiri_backend::Error),
+    BackendError(#[from] kiri_backend::Error),
     #[error("Renderer error: {0}")]
-    RendererError(kiri_gfx::Error),
+    RendererError(#[from] kiri_gfx::Error),
     #[error("IO error: {0}")]
-    IoError(io::Error),
-    #[error("Asset import error: {0}")]
-    AssetImportError(kiri_assets::Error),
+    IoError(#[from] io::Error),
+    #[error("Resource loading error: {0}")]
+    ResourceError(#[from] kiri_resources::Error),
     #[error("Out of mesh memory")]
     OutOfMeshMemory,
     #[error("Too many uniforms")]
     TooManyUniforms,
 }
 
-impl From<kiri_backend::Error> for Error {
-    fn from(value: kiri_backend::Error) -> Self {
-        Self::BackendError(value)
-    }
-}
-
-impl From<kiri_gfx::Error> for Error {
-    fn from(value: kiri_gfx::Error) -> Self {
-        Self::RendererError(value)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        Self::IoError(value)
-    }
-}
-
-impl From<kiri_assets::Error> for Error {
-    fn from(value: kiri_assets::Error) -> Self {
-        Self::AssetImportError(value)
-    }
-}
-
 pub enum RenderOrder {
     Opaque,
     Transparent,
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Bounds {
-    pub center: glam::Vec3,
-    pub radius: f32,
-}
-
-impl Bounds {
-    pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
-        Self {
-            center: glam::Vec3::from_array(center),
-            radius,
-        }
-    }
-
-    pub fn transform(self, transform: glam::Affine3A) -> Self {
-        let (scale, _, _) = transform.to_scale_rotation_translation();
-        let scale = scale.max_element();
-        Self {
-            center: transform.transform_point3(self.center),
-            radius: self.radius * scale,
-        }
-    }
 }

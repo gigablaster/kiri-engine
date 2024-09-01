@@ -17,8 +17,7 @@ use std::{cmp::Ordering, mem, sync::Arc};
 
 use crate::{
     gpu::{GpuInstanceData, RenderPassGpuData},
-    Error, PipelineCache, RasterPipelineDesc, ResourceCache, Scene, SceneCuller,
-    MATERIAL_DESCRIPTOR_LAYOUT,
+    Error, Scene, SceneCuller,
 };
 use ash::vk::{self};
 use glam::{vec3, vec4, Mat4};
@@ -28,12 +27,16 @@ use kiri_backend::{
     RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT,
     PASS_BINDING_SLOT,
 };
+use kiri_common::Bounds;
 use kiri_gfx::{
     passes::{
         FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
     },
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
+};
+use kiri_resources::{
+    PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -127,7 +130,7 @@ pub struct SceneRenderer {
 struct NullCuller {}
 
 impl SceneCuller for NullCuller {
-    fn cull(&self, _bounds: crate::Bounds) -> bool {
+    fn cull(&self, _bounds: Bounds) -> bool {
         true
     }
 }

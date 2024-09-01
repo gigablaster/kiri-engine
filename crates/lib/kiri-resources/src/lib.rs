@@ -12,23 +12,31 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+mod mesh;
+mod pipeline_cache;
+mod resource_cache;
+mod uniforms;
 
-use crate::{DirectionalLight, HemisphericalAmbient};
+use std::io;
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct RenderPassGpuData {
-    pub view: glam::Mat4,
-    pub projection: glam::Mat4,
-    pub view_projection: glam::Mat4,
-    pub eye_position: glam::Vec3,
-    pub lights: [DirectionalLight; 3],
-    pub ambient: HemisphericalAmbient,
-}
+pub use mesh::*;
+pub use pipeline_cache::*;
+pub use resource_cache::*;
+use thiserror::Error;
+use uniforms::*;
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct GpuInstanceData {
-    pub model: glam::Mat4,
-    pub uv_scale: f32,
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Backend error: {0}")]
+    BackendError(#[from] kiri_backend::Error),
+    #[error("Renderer error: {0}")]
+    RendererError(#[from] kiri_gfx::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+    #[error("Asset import error: {0}")]
+    AssetImportError(#[from] kiri_assets::Error),
+    #[error("Out of mesh memory")]
+    OutOfMeshMemory,
+    #[error("Too many uniforms")]
+    TooManyUniforms,
 }

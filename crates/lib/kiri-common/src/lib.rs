@@ -13,11 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod bounds;
 mod chunky_list;
 mod memory;
 mod pool;
 mod time;
 
+pub use bounds::*;
 pub use chunky_list::*;
 pub use memory::*;
 pub use pool::*;

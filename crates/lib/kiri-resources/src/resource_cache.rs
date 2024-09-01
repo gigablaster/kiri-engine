@@ -23,7 +23,7 @@ use kiri_assets::{
     MeshVertexPositions, ModelAsset, ModelSource,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
-use kiri_common::{Handle, Pool};
+use kiri_common::{Bounds, Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
@@ -32,8 +32,7 @@ use log::{debug, warn};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 
 use crate::{
-    gpu::GpuMeshMaterial, Bounds, ConstUniformBuffer, Error, MeshResolver, RenderMaterial,
-    RenderMeshSurface, RenderModel, StaticRenderMesh,
+    ConstUniformBuffer, Error, RenderMaterial, RenderMeshSurface, RenderModel, StaticRenderMesh,
 };
 
 pub type ModelHandle = Handle<RenderModel>;
@@ -97,6 +96,19 @@ pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLay
     update_after_bind: false,
 };
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+struct MeshMaterialData {
+    pub alpha_cutoff: f32,
+    pub emissive_power: f32,
+}
+
+/// Interaface to resource access
+pub trait ResourceResolver {
+    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh>;
+    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel>;
+}
+
 /// Keeps normalized asset name -> asset + ref count.
 ///
 /// T must be a handle
@@ -129,7 +141,7 @@ impl<T: Copy + Hash + Eq> AssetTracker<T> {
     }
 }
 
-pub(super) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
+pub(crate) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
     source: &T,
 ) -> Result<U, Error> {
     let reference = source.reference();
@@ -306,7 +318,7 @@ impl ResourceCache {
                 )
                 .bind_uniform_buffer(
                     0,
-                    self.material_uniforms.push(GpuMeshMaterial {
+                    self.material_uniforms.push(MeshMaterialData {
                         alpha_cutoff: material.blend.get_alpha_cut(),
                         emissive_power: material.emissive_power,
                     })?,
@@ -502,7 +514,7 @@ pub struct ResourceCacheMeshResolver<'a> {
     scens: RwLockReadGuard<'a, ModelPool>,
 }
 
-impl<'a> MeshResolver for ResourceCacheMeshResolver<'a> {
+impl<'a> ResourceResolver for ResourceCacheMeshResolver<'a> {
     fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh> {
         let scene = self.scens.get(handle)?;
         Some(&scene.meshes[index as usize])

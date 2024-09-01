@@ -9,6 +9,7 @@ kiri-backend = { path = "../kiri-backend" }
 kiri = { path = "../kiri" }
 kiri-assets = { path = "../kiri-assets" }
 kiri-gfx = { path = "../kiri-gfx" }
+kiri-resources = { path = "../kiri-resources" }
 ash = "0.38.0"
 thiserror = "1.0.61"
 directories = "5.0.1"

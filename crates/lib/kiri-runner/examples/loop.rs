@@ -4,11 +4,12 @@ use std::{error::Error, fmt::Display, sync::Arc};
 
 use glam::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
 use kiri::{
-    Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, PipelineCache, RenderEnviroment,
-    ResourceCache, Scene, SceneRenderer,
+    Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, RenderEnviroment, Scene,
+    SceneRenderer,
 };
 use kiri_common::Handle;
 use kiri_gfx::{RenderContext, Renderer};
+use kiri_resources::{PipelineCache, ResourceCache};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]

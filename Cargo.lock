@@ -863,12 +863,12 @@ dependencies = [
  "arrayvec",
  "ash",
  "bevy_tasks",
- "bytes",
  "glam 0.29.0",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",
  "kiri-gfx",
+ "kiri-resources",
  "kiri-vfs",
  "lazy_static",
  "log",
@@ -927,6 +927,7 @@ name = "kiri-common"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "glam 0.29.0",
 ]
 
 [[package]]
@@ -947,6 +948,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiri-resources"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "ash",
+ "bevy_tasks",
+ "bytes",
+ "glam 0.29.0",
+ "kiri-assets",
+ "kiri-backend",
+ "kiri-common",
+ "kiri-gfx",
+ "kiri-vfs",
+ "log",
+ "parking_lot",
+ "thiserror",
+]
+
+[[package]]
 name = "kiri-runner"
 version = "0.1.0"
 dependencies = [
@@ -959,6 +979,7 @@ dependencies = [
  "kiri-backend",
  "kiri-common",
  "kiri-gfx",
+ "kiri-resources",
  "log",
  "puffin",
  "puffin_http",

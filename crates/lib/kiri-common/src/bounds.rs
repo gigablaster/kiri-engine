@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2023 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,22 +13,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::{DirectionalLight, HemisphericalAmbient};
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct RenderPassGpuData {
-    pub view: glam::Mat4,
-    pub projection: glam::Mat4,
-    pub view_projection: glam::Mat4,
-    pub eye_position: glam::Vec3,
-    pub lights: [DirectionalLight; 3],
-    pub ambient: HemisphericalAmbient,
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Bounds {
+    pub center: glam::Vec3,
+    pub radius: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct GpuInstanceData {
-    pub model: glam::Mat4,
-    pub uv_scale: f32,
+impl Bounds {
+    pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
+        Self {
+            center: glam::Vec3::from_array(center),
+            radius,
+        }
+    }
+
+    pub fn transform(self, transform: glam::Affine3A) -> Self {
+        let (scale, _, _) = transform.to_scale_rotation_translation();
+        let scale = scale.max_element();
+        Self {
+            center: transform.transform_point3(self.center),
+            radius: self.radius * scale,
+        }
+    }
 }

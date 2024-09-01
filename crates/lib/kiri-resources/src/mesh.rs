@@ -16,9 +16,8 @@
 use std::collections::HashMap;
 
 use kiri_assets::{MeshMaterialBlend, NodeIndex};
+use kiri_common::Bounds;
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
-
-use crate::Bounds;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {

@@ -31,28 +31,10 @@ pub enum GameTickState {
 pub enum GameError<E: Error> {
     GameFailure(E),
     BackendFailure(#[from] kiri_backend::Error),
-    GfxError(kiri_gfx::Error),
-    EngineError(kiri::Error),
+    GfxError(#[from] kiri_gfx::Error),
+    EngineError(#[from] kiri::Error),
+    ResourceError(#[from] kiri_resources::Error),
     LoopError(String),
-}
-
-impl<E: Error> From<kiri::Error> for GameError<E> {
-    fn from(value: kiri::Error) -> Self {
-        match value {
-            kiri::Error::BackendError(err) => Self::BackendFailure(err),
-            kiri::Error::RendererError(err) => Self::GfxError(err),
-            err => Self::EngineError(err),
-        }
-    }
-}
-
-impl<E: Error> From<kiri_gfx::Error> for GameError<E> {
-    fn from(value: kiri_gfx::Error) -> Self {
-        match value {
-            kiri_gfx::Error::BackendError(err) => Self::BackendFailure(err),
-            err => Self::GfxError(err),
-        }
-    }
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
