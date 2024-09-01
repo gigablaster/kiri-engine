@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, Rect2D};
 use kiri_backend::{ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
 
-use crate::{DrawStream, Error, ImageHandle, PassDispatcher, RenderResourceResolver};
+use crate::{DrawStream, Error, ImageHandle, ImagePool, PassDispatcher, RenderResourceResolver};
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
@@ -96,9 +96,82 @@ impl RenderTarget {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ImageDependency {
+    pub aspect: vk::ImageAspectFlags,
+    pub image: ImageHandle,
+    pub initial_layout: vk::ImageLayout,
+    pub desired_layout: Option<vk::ImageLayout>,
+    pub src_access: vk::AccessFlags2,
+    pub dst_access: vk::AccessFlags2,
+    pub src_stage: vk::PipelineStageFlags2,
+    pub dst_stage: vk::PipelineStageFlags2,
+}
+
+impl ImageDependency {
+    pub fn color(image: ImageHandle) -> Self {
+        Self {
+            aspect: vk::ImageAspectFlags::COLOR,
+            image,
+            initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            desired_layout: None,
+            src_access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            dst_access: vk::AccessFlags2::SHADER_READ,
+            src_stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            dst_stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+        }
+    }
+
+    pub fn depth(image: ImageHandle) -> Self {
+        Self {
+            aspect: vk::ImageAspectFlags::DEPTH,
+            image,
+            initial_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            desired_layout: None,
+            src_access: vk::AccessFlags2::SHADER_READ,
+            dst_access: vk::AccessFlags2::SHADER_READ,
+            src_stage: vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            dst_stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+        }
+    }
+
+    pub fn desired_layout(mut self, value: vk::ImageLayout) -> Self {
+        self.desired_layout = Some(value);
+        self
+    }
+
+    fn build(
+        self,
+        images: &ImagePool,
+        desired_layout: vk::ImageLayout,
+    ) -> Result<vk::ImageMemoryBarrier2, Error> {
+        Ok(vk::ImageMemoryBarrier2::default()
+            .old_layout(self.initial_layout)
+            .new_layout(self.desired_layout.unwrap_or(desired_layout))
+            .src_access_mask(self.src_access)
+            .dst_access_mask(self.dst_access)
+            .src_stage_mask(self.src_stage)
+            .dst_stage_mask(self.dst_stage)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: self.aspect,
+                base_mip_level: 0,
+                level_count: vk::REMAINING_MIP_LEVELS,
+                base_array_layer: 0,
+                layer_count: vk::REMAINING_ARRAY_LAYERS,
+            })
+            .image(
+                images
+                    .get(self.image)
+                    .ok_or(Error::InvalidImageHandle(self.image))?
+                    .raw,
+            ))
+    }
+}
+
 pub struct RasterizerPassBuilder<'a> {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
+    dependencies: Vec<ImageDependency>,
     streams: Vec<DrawStream>,
     area: Option<Rect2D>,
     name: &'a str,
@@ -116,10 +189,16 @@ impl<'a> RasterizerPassBuilder<'a> {
                 .copied()
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth_target,
+            dependencies: Default::default(),
             streams: Default::default(),
             area: None,
             name,
         }
+    }
+
+    pub fn read_image(mut self, image: ImageDependency) -> Self {
+        self.dependencies.push(image);
+        self
     }
 
     pub fn draw_area(mut self, area: Rect2D) -> Self {
@@ -136,6 +215,7 @@ impl<'a> RasterizerPassBuilder<'a> {
             self.name,
             &self.color_targets,
             self.depth_target,
+            self.dependencies,
             self.streams,
             self.area,
         ))
@@ -145,22 +225,25 @@ impl<'a> RasterizerPassBuilder<'a> {
 pub struct RasterizerPassDispatcher {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
+    dependencies: Vec<ImageDependency>,
     streams: Vec<DrawStream>,
     area: Option<vk::Rect2D>,
     name: String,
 }
 
 impl RasterizerPassDispatcher {
-    pub fn new(
+    fn new(
         name: &str,
         color_targets: &[RenderTarget],
         depth_target: Option<RenderTarget>,
+        dependencies: Vec<ImageDependency>,
         streams: Vec<DrawStream>,
         area: Option<vk::Rect2D>,
     ) -> Self {
         Self {
             name: name.to_owned(),
             color_targets: color_targets.iter().copied().collect(),
+            dependencies,
             depth_target,
             streams,
             area,
@@ -242,6 +325,13 @@ impl PassDispatcher for RasterizerPassDispatcher {
                 )
             }
         }
+        self.dependencies
+            .iter()
+            .copied()
+            .try_for_each(|x| -> Result<(), Error> {
+                barriers.push(x.build(resolver.images, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
+                Ok(())
+            })?;
         if let Some(target) = &self.depth_target {
             let initial_layout = target
                 .initial_layout

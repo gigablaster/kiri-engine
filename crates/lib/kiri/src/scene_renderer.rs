@@ -29,7 +29,9 @@ use kiri_backend::{
     PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
-    passes::{FinalCompositionPassDispatcher, RasterizerPassBuilder, RenderTarget},
+    passes::{
+        FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
+    },
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     PipelineHandle, RenderContext, RenderTargetPool,
 };
@@ -311,8 +313,7 @@ impl SceneRenderer {
             "Main pass",
             &[RenderTarget::new(color_target.handle)
                 .clear_color([0.0, 0.0, 0.0, 1.0])
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
+                .initial_layout(vk::ImageLayout::UNDEFINED)],
             Some(
                 RenderTarget::new(depth_target.handle)
                     .clear_depth_stencil(1.0, 0)
@@ -390,7 +391,9 @@ impl SceneRenderer {
                 "Tonemapping",
                 &[RenderTarget::new(post.handle).initial_layout(vk::ImageLayout::UNDEFINED)],
                 None,
-            );
+            )
+            .read_image(ImageDependency::color(color_target.handle));
+
             let ds = context.get_descriptor_set(
                 DescriptorSetBuilder::new(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
