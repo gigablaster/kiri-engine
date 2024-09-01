@@ -33,7 +33,7 @@ use kiri_gfx::{
         FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
     },
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
-    PipelineHandle, RenderContext, RenderTargetPool,
+    ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
 };
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -203,6 +203,7 @@ pub struct HemisphericalAmbient {
     pub bottom: glam::Vec3A,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct RenderEnviroment {
     pub camera: Camera,
     pub lights: [DirectionalLight; 3],
@@ -263,6 +264,57 @@ impl SceneRenderer {
         context: &RenderContext,
     ) -> Result<(), Error> {
         puffin::profile_function!();
+        let color_target = self.render_geometry(scene, &env, context)?;
+        let post = self.tonemapping(color_target.handle, &env, context)?;
+
+        context.submit(Box::new(FinalCompositionPassDispatcher::new(post.handle)));
+
+        Ok(())
+    }
+
+    fn tonemapping(
+        &self,
+        color_target: ImageHandle,
+        env: &RenderEnviroment,
+        context: &RenderContext,
+    ) -> Result<TransientImageGuard, Error> {
+        let post = self.target_pool.get_image(
+            vk::Format::A2R10G10B10_UNORM_PACK32,
+            context.backbuffer.desc.dims,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+        )?;
+        let mut pass = RasterizerPassBuilder::new(
+            "Tonemapping",
+            &[RenderTarget::new(post.handle).initial_layout(vk::ImageLayout::UNDEFINED)],
+            None,
+        )
+        .read_image(ImageDependency::color(color_target));
+
+        let ds = context.get_descriptor_set(
+            DescriptorSetBuilder::new(
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                POSTPROCESS_DESCRIPTOR_LAYOUT,
+            )
+            .bind_image(0, color_target, vk::ImageAspectFlags::COLOR)
+            .bind_uniform_buffer(
+                1,
+                context.push_dynamic_data(&[TonemappingParams {
+                    expouse: env.expouse,
+                }])?,
+            ),
+        )?;
+        pass.draw(self.postprocess(context, self.tonemapping, ds)?);
+
+        context.submit(pass.build());
+        Ok(post)
+    }
+
+    fn render_geometry(
+        &self,
+        scene: &Scene,
+        env: &RenderEnviroment,
+        context: &RenderContext,
+    ) -> Result<TransientImageGuard, Error> {
         let resolver = self.resources.resolve();
         let color_target = self.target_pool.get_image(
             vk::Format::R16G16B16A16_SFLOAT,
@@ -381,40 +433,8 @@ impl SceneRenderer {
                 pass.draw(stream.build());
             }
             context.submit(pass.build());
-
-            let post = self.target_pool.get_image(
-                vk::Format::A2R10G10B10_UNORM_PACK32,
-                context.backbuffer.desc.dims,
-                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-            )?;
-            let mut pass = RasterizerPassBuilder::new(
-                "Tonemapping",
-                &[RenderTarget::new(post.handle).initial_layout(vk::ImageLayout::UNDEFINED)],
-                None,
-            )
-            .read_image(ImageDependency::color(color_target.handle));
-
-            let ds = context.get_descriptor_set(
-                DescriptorSetBuilder::new(
-                    vk::ShaderStageFlags::ALL_GRAPHICS,
-                    POSTPROCESS_DESCRIPTOR_LAYOUT,
-                )
-                .bind_image(0, color_target.handle, vk::ImageAspectFlags::COLOR)
-                .bind_uniform_buffer(
-                    1,
-                    context.push_dynamic_data(&[TonemappingParams {
-                        expouse: env.expouse,
-                    }])?,
-                ),
-            )?;
-            pass.draw(self.postprocess(context, self.tonemapping, ds)?);
-
-            context.submit(pass.build());
-
-            context.submit(Box::new(FinalCompositionPassDispatcher::new(post.handle)));
         }
-
-        Ok(())
+        Ok(color_target)
     }
 
     pub fn swapchain_changed(&self) {
