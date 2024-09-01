@@ -57,6 +57,7 @@ fn main_loop<E: Error, G: GameClient<E>>(
     let mut last_time = Instant::now();
     let mut time_filter = TimeFilter::new();
     'main: loop {
+        puffin::GlobalProfiler::lock().new_frame();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
