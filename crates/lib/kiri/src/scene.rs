@@ -221,7 +221,7 @@ impl Scene {
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
             "Scene must be updated before culling"
         );
-        let mut static_meshes = Vec::new();
+        let mut static_meshes = Vec::with_capacity(64536);
         self.data
             .iter()
             .enumerate()

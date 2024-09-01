@@ -373,8 +373,8 @@ impl SceneRenderer {
                     .discard(),
             ),
         );
-        let mut render_data = Vec::new();
-        let mut render_ops = Vec::new();
+        let mut render_data = Vec::with_capacity(64536);
+        let mut render_ops = Vec::with_capacity(64536);
         {
             puffin::profile_scope!("Generate renderops");
             for (model, mesh) in &visible.static_meshes {
@@ -407,7 +407,9 @@ impl SceneRenderer {
         }
         {
             puffin::profile_scope!("Sorting renderops");
-            render_ops.sort();
+            radsort::sort_by_key(&mut render_ops, |x| {
+                (Into::<u64>::into(x.pipeline), Into::<u64>::into(x.material))
+            });
         }
         {
             puffin::profile_scope!("Generate draw streams");
