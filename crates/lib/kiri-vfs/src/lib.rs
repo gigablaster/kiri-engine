@@ -23,7 +23,7 @@ use std::{
     path::{self, Path, PathBuf},
 };
 
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 pub use packed::*;
 use parking_lot::RwLock;
 use siphasher::sip;
@@ -57,18 +57,16 @@ pub trait Archive: Send + Sync {
     fn exist(&self, reference: AssetReference) -> bool;
 }
 
-lazy_static! {
-    static ref ARCHIVES: RwLock<Vec<Box<dyn Archive>>> = {
-        let mut archives = Vec::<Box<dyn Archive>>::default();
-        // Data pack
-        if let Ok(pack) = PackedArchive::open("data.bin") {
-            archives.push(Box::new(pack));
-        }
-        // Compiled assets outside of data pack
-        archives.push(Box::new(FileSystemArchive::new(".cache")));
-        RwLock::new(archives)
-    };
-}
+static ARCHIVES: Lazy<RwLock<Vec<Box<dyn Archive>>>> = Lazy::new(|| {
+    let mut archives = Vec::<Box<dyn Archive>>::default();
+    // Data pack
+    if let Ok(pack) = PackedArchive::open("data.bin") {
+        archives.push(Box::new(pack));
+    }
+    // Compiled assets outside of data pack
+    archives.push(Box::new(FileSystemArchive::new(".cache")));
+    RwLock::new(archives)
+});
 
 pub fn vfs_register_archive(archive: Box<dyn Archive>) {
     ARCHIVES.write().insert(0, archive);
