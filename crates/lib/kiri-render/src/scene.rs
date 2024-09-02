@@ -13,6 +13,7 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 use glam::Affine3A;
 use kiri_assets::NodeIndex;
 use kiri_common::{Bounds, Handle, HotColdPool};
@@ -85,6 +86,88 @@ impl Default for Scene {
             recalculate_transforms: Default::default(),
             update_bounds: Default::default(),
         }
+    }
+}
+
+pub struct SceneCullIterator<'a, T: ResourceResolver, C: SceneCuller> {
+    resolver: &'a T,
+    culler: &'a C,
+    nodes: &'a [SceneNodeData],
+    bounds: &'a [Bounds],
+    transforms: &'a [Affine3A],
+    index: usize,
+    model_node_to_mesh_index: usize,
+}
+
+impl<'a, T: ResourceResolver, C: SceneCuller> SceneCullIterator<'a, T, C> {
+    fn new(
+        nodes: &'a [SceneNodeData],
+        bounds: &'a [Bounds],
+        transforms: &'a [Affine3A],
+        resolver: &'a T,
+        culler: &'a C,
+    ) -> Self {
+        Self {
+            resolver,
+            nodes,
+            bounds,
+            transforms,
+            culler,
+            index: 0,
+            model_node_to_mesh_index: 0,
+        }
+    }
+}
+
+impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a, T, C> {
+    type Item = (glam::Affine3A, &'a StaticRenderMesh);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Check current node, skip empty nodes and process nodes with content
+        while self.index < self.nodes.len() {
+            let current_index = self.index;
+            match self.nodes[self.index] {
+                SceneNodeData::Empty => {
+                    // Just skip it
+                    self.index += 1;
+                }
+                SceneNodeData::StaticMesh(model, index) => {
+                    self.index += 1;
+                    // It's a mesh. Check if it's really exist, cull and return
+                    if let Some(mesh) = self.resolver.resolve_static_mesh(model, index) {
+                        if self.culler.cull(self.bounds[current_index]) {
+                            return Some((self.transforms[current_index], mesh));
+                        }
+                    }
+                }
+                SceneNodeData::Model(model) => {
+                    // First, we get model from resources.
+                    if let Some(model) = self.resolver.resolve_model(model) {
+                        // Check if we stll have unprocessed meshes in model.
+                        while self.model_node_to_mesh_index < model.node_to_mesh.len() {
+                            // Get current submesh, transform bounds into world space and cull
+                            let (node_index, mesh_index) =
+                                model.node_to_mesh[self.model_node_to_mesh_index];
+                            self.model_node_to_mesh_index += 1;
+                            let node_index = node_index as usize;
+                            let mesh_index = mesh_index as usize;
+                            let transform =
+                                self.transforms[current_index] * model.world_transforms[node_index];
+                            let bounds = model.bounds_per_mesh[mesh_index].transform(transform);
+                            if self.culler.cull(bounds) {
+                                let mesh = &model.meshes[mesh_index];
+                                return Some((transform, mesh));
+                            }
+                        }
+                    }
+                    // Next node
+                    self.model_node_to_mesh_index = 0;
+                    self.index += 1;
+                }
+            }
+        }
+        // List is over
+        None
     }
 }
 
@@ -206,49 +289,21 @@ impl Scene {
 
     pub fn cull<'a, T: SceneCuller, U: ResourceResolver>(
         &'a self,
-        culler: T,
+        culler: &'a T,
         resolver: &'a U,
-    ) -> CullResult<'a> {
+    ) -> impl Iterator<Item = (Affine3A, &'a StaticRenderMesh)> {
         puffin::profile_function!();
         assert!(
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
             "Scene must be updated before culling"
         );
-        let mut static_meshes = Vec::with_capacity(64536);
-        self.data
-            .iter()
-            .enumerate()
-            .for_each(|(index, data)| match data {
-                SceneNodeData::StaticMesh(handle, mesh_index) => {
-                    let transform = self.world_transforms[index];
-                    if culler.cull(self.bounds[index].transform(transform)) {
-                        if let Some(mesh) = resolver.resolve_static_mesh(*handle, *mesh_index) {
-                            static_meshes.push((transform, mesh));
-                        }
-                    }
-                }
-                SceneNodeData::Model(handle) => {
-                    if let Some(model) = resolver.resolve_model(*handle) {
-                        let parent_transform = self.world_transforms[index];
-                        model
-                            .node_to_mesh
-                            .iter()
-                            .copied()
-                            .for_each(|(node_index, mesh_index)| {
-                                let tranform =
-                                    parent_transform * model.world_transforms[node_index as usize];
-                                if culler
-                                    .cull(model.bounds[mesh_index as usize].transform(tranform))
-                                {
-                                    static_meshes
-                                        .push((tranform, &model.meshes[mesh_index as usize]));
-                                }
-                            });
-                    }
-                }
-                _ => {}
-            });
-        CullResult { static_meshes }
+        SceneCullIterator::new(
+            &self.data,
+            &self.bounds,
+            &self.world_transforms,
+            resolver,
+            culler,
+        )
     }
 }
 

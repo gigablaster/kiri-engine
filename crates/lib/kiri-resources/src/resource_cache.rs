@@ -468,7 +468,7 @@ impl ResourceCache {
             vertex_attributes,
             indices,
             meshes,
-            bounds,
+            bounds_per_mesh: bounds,
             names: asset.name_to_mesh,
             parents: asset.nodes.iter().map(|x| x.parent).collect(),
             local_transforms: asset

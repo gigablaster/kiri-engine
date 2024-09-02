@@ -77,7 +77,7 @@ pub struct RenderModel {
     pub vertex_attributes: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
-    pub bounds: Vec<Bounds>,
+    pub bounds_per_mesh: Vec<Bounds>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
     pub local_transforms: Vec<glam::Affine3A>,

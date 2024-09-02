@@ -363,7 +363,6 @@ impl SceneRenderer {
                 (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
             ),
         )?;
-        let visible = scene.cull(NullCuller {}, &resolver);
         let mut pass = RasterizerPassBuilder::new(
             "Main pass",
             &[RenderTarget::new(color_target.handle)
@@ -380,13 +379,13 @@ impl SceneRenderer {
         let mut render_ops = Vec::with_capacity(64536);
         {
             puffin::profile_scope!("Generate renderops");
-            for (model, mesh) in &visible.static_meshes {
+            for (tr, mesh) in scene.cull(&NullCuller {}, &resolver) {
                 let decompress_mat = Mat4::from_scale(vec3(
                     mesh.position_scale,
                     mesh.position_scale,
                     mesh.position_scale,
                 ));
-                let model: Mat4 = (*model).into();
+                let model: Mat4 = tr.into();
                 for surface in &mesh.surfaces {
                     let index = render_data.len();
                     render_data.push(RenderOpData {
