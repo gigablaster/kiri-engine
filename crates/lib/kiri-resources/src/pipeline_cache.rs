@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
-use kiri_assets::{ShaderAssetSource, ShaderType};
+use kiri_assets::{ShaderAsset, ShaderAssetSource, ShaderType};
 use kiri_backend::{
     DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
     ShaderDesc,
@@ -93,7 +93,7 @@ impl PipelineCache {
         if let Some(shader) = shaders.get(&key) {
             Ok(shader.clone())
         } else {
-            let shader = load_or_compile_asset(&ShaderAssetSource::new(name, ty))?;
+            let shader: ShaderAsset = load_or_compile_asset(&ShaderAssetSource::new(name, ty))?;
             let bytecode: Bytes = shader.bytecode.into();
             shaders.insert(key, bytecode.clone());
             Ok(bytecode)

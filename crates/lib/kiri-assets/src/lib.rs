@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 mod gltf;
 mod image;
+#[cfg(feature = "devel")]
 mod mesh_builder;
 mod shader;
 
@@ -29,6 +30,7 @@ pub enum Error {
 
 pub trait AssetSource: Send + Sync {
     fn reference(&self) -> AssetReference;
+    #[cfg(feature = "devel")]
     fn changed(&self, last_update: SystemTime) -> bool;
 }
 
@@ -102,6 +104,7 @@ pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     asset.serialize(w)
 }
 
+#[cfg(feature = "devel")]
 pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
     fn import(&self) -> Result<T, Error>;
 }
@@ -117,6 +120,7 @@ pub use gltf::*;
 pub use image::*;
 pub use kiri_vfs::AssetReference;
 use kiri_vfs::{ROOT_COMPILED_ASSETS_PATH, ROOT_SOURCE_ASSETS_PATH};
+#[cfg(feature = "devel")]
 use mesh_builder::*;
 pub use shader::*;
 

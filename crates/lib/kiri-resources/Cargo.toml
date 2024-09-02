@@ -17,3 +17,6 @@ log = "0.4.20"
 glam = "0.29.0"
 arrayvec = "0.7.4"
 bytes = "1.6.0"
+
+[features]
+devel = ["kiri-assets/devel"]

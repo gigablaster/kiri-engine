@@ -13,14 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, fs::File, hash::Hash, io, mem, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, mem, sync::Arc};
 
 use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
+#[cfg(feature = "devel")]
 use kiri_assets::{
-    get_compiled_asset_change_time, get_compiled_asset_path, load_asset, save_asset, Asset,
-    AssetSource, ImageAsset, ImageSource, ImportAsset, MeshAssetMaterial, MeshVertexAttributes,
-    MeshVertexPositions, ModelAsset, ModelSource,
+    get_compiled_asset_change_time, get_compiled_asset_path, save_asset, ImportAsset,
+};
+use kiri_assets::{
+    load_asset, Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial,
+    MeshVertexAttributes, MeshVertexPositions, ModelAsset, ModelSource,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
 use kiri_common::{Bounds, Handle, Pool};
@@ -28,8 +31,12 @@ use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
 use kiri_vfs::{vfs_load, AssetReference};
-use log::{debug, warn};
+use log::debug;
+#[cfg(feature = "devel")]
+use log::warn;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
+#[cfg(feature = "devel")]
+use std::{fs::File, io};
 
 use crate::{
     ConstUniformBuffer, Error, RenderMaterial, RenderMeshSurface, RenderModel, StaticRenderMesh,
@@ -141,6 +148,16 @@ impl<T: Copy + Hash + Eq> AssetTracker<T> {
     }
 }
 
+#[cfg(not(feature = "devel"))]
+pub(crate) fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
+    source: &T,
+) -> Result<U, Error> {
+    let reference = source.reference();
+    let reader = vfs_load(reference)?;
+    Ok(load_asset(reader)?)
+}
+
+#[cfg(feature = "devel")]
 pub(crate) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
     source: &T,
 ) -> Result<U, Error> {
@@ -163,6 +180,7 @@ pub(crate) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: 
     Ok(asset)
 }
 
+#[cfg(feature = "devel")]
 fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
     save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
 }

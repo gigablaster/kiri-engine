@@ -21,15 +21,16 @@ use std::{
 };
 
 use ash::vk;
-use gltf::mesh::Mode;
+use import::GltfProcessingContext;
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout};
 use speedy::{Readable, Writable};
 use uuid::uuid;
 
+#[cfg(feature = "devel")]
+use crate::ImportAsset;
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetReference,
-    AssetSource, Error, ImageAssetType, ImageSource, ImportAsset, MeshAssetBuilder,
-    MeshSurfaceBuilder,
+    AssetSource, Error, ImageSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,6 +41,7 @@ impl AssetSource for ModelSource {
         AssetReference::new(self)
     }
 
+    #[cfg(feature = "devel")]
     fn changed(&self, last_update: SystemTime) -> bool {
         is_asset_changed(&self.0, last_update)
     }
@@ -254,251 +256,267 @@ impl Asset for ModelAsset {
     }
 }
 
-struct GltfProcessingContext<'a> {
-    pub base_path: &'a str,
-    pub buffers: Vec<gltf::buffer::Data>,
-    pub vertex_positions: Vec<MeshVertexPositions>,
-    pub vertex_attributes: Vec<MeshVertexAttributes>,
-    pub indices: Vec<u16>,
-    pub materials: Vec<MeshAssetMaterial>,
-}
+#[cfg(feature = "devel")]
+mod import {
+    use std::collections::HashMap;
 
-struct NodeProcessingContext<'a> {
-    context: &'a mut GltfProcessingContext<'a>,
-    bone_to_mesh: HashMap<u32, u32>,
-    bones: Vec<Node>,
-    bone_names: HashMap<String, u32>,
-    meshes: Vec<StaticMeshAsset>,
-    mesh_names: Vec<String>,
-    name_to_mesh: HashMap<String, u32>,
-    processed_meshes: HashMap<u32, u32>,
-}
+    use gltf::mesh::Mode;
 
-fn process_texture(
-    context: &GltfProcessingContext,
-    texture: &gltf::texture::Texture,
-    ty: ImageAssetType,
-    srgb: bool,
-) -> ImageSource {
-    match texture.source().source() {
-        gltf::image::Source::Uri { uri, .. } => {
-            ImageSource::path(&format!("{}/{}", context.base_path, uri))
-                .ty(ty)
-                .srgb(srgb)
-        }
-        _ => panic!(),
+    use crate::{Error, ImageAssetType, ImageSource, MeshAssetBuilder, MeshSurfaceBuilder};
+
+    use super::{
+        MeshAssetMaterial, MeshMaterialBlend, MeshVertexAttributes, MeshVertexPositions,
+        ModelAsset, Node, NodeIndex, StaticMeshAsset,
+    };
+
+    pub struct GltfProcessingContext<'a> {
+        pub base_path: &'a str,
+        pub buffers: Vec<gltf::buffer::Data>,
+        pub vertex_positions: Vec<MeshVertexPositions>,
+        pub vertex_attributes: Vec<MeshVertexAttributes>,
+        pub indices: Vec<u16>,
+        pub materials: Vec<MeshAssetMaterial>,
     }
-}
 
-fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
-    match material.alpha_mode() {
-        gltf::material::AlphaMode::Opaque => MeshMaterialBlend::Opaque,
-        gltf::material::AlphaMode::Mask => {
-            MeshMaterialBlend::AlphaTest(material.alpha_cutoff().unwrap_or(0.0).clamp(0.0, 1.0))
-        }
-        gltf::material::AlphaMode::Blend => MeshMaterialBlend::AlphaBlend,
+    pub struct NodeProcessingContext<'a> {
+        context: &'a mut GltfProcessingContext<'a>,
+        bone_to_mesh: HashMap<u32, u32>,
+        bones: Vec<Node>,
+        bone_names: HashMap<String, u32>,
+        meshes: Vec<StaticMeshAsset>,
+        mesh_names: Vec<String>,
+        name_to_mesh: HashMap<String, u32>,
+        processed_meshes: HashMap<u32, u32>,
     }
-}
 
-fn color(color: [f32; 4]) -> [u8; 4] {
-    [
-        (color[0].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[1].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[2].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[3].clamp(0.0, 1.0) * 255.0) as u8,
-    ]
-}
-
-fn process_material(
-    context: &GltfProcessingContext,
-    material: gltf::Material,
-) -> MeshAssetMaterial {
-    let base_color = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Rgba, true)
-    } else {
-        ImageSource::color(color(material.pbr_metallic_roughness().base_color_factor()))
-    };
-    let metallic_roughness = if let Some(texture) = material
-        .pbr_metallic_roughness()
-        .metallic_roughness_texture()
-    {
-        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
-    } else {
-        ImageSource::color(color([
-            0.0,
-            material.pbr_metallic_roughness().roughness_factor(),
-            material.pbr_metallic_roughness().metallic_factor(),
-            1.0,
-        ]))
-    };
-    let normals = if let Some(texture) = material.normal_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Rg, false)
-    } else {
-        ImageSource::color([127, 127, 255, 255])
-    };
-    let occlusion = if let Some(texture) = material.occlusion_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
-    } else {
-        ImageSource::color([0, 0, 0, 0])
-    };
-    let emissive_color = material.emissive_factor();
-    let emissive = if let Some(texture) = material.emissive_texture() {
-        process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
-    } else {
-        ImageSource::color(color([
-            emissive_color[0],
-            emissive_color[1],
-            emissive_color[2],
-            1.0,
-        ]))
-    };
-    MeshAssetMaterial {
-        emissive_power: material.emissive_strength().unwrap_or(0.0),
-        blend: process_blend(&material),
-        base_color,
-        normals,
-        metallic_roughness,
-        occlusion,
-        emissive,
-    }
-}
-
-fn process_mesh(
-    context: &mut GltfProcessingContext,
-    mesh: gltf::Mesh,
-) -> Result<StaticMeshAsset, Error> {
-    let mut builder = MeshAssetBuilder::default();
-    for prim in mesh.primitives() {
-        let mut surface = MeshSurfaceBuilder::new(process_material(context, prim.material()));
-        if prim.mode() != Mode::Triangles {
-            return Err(Error::ProcessingFailed(
-                "Only processing triangle meshes".into(),
-            ));
+    fn process_texture(
+        context: &GltfProcessingContext,
+        texture: &gltf::texture::Texture,
+        ty: ImageAssetType,
+        srgb: bool,
+    ) -> ImageSource {
+        match texture.source().source() {
+            gltf::image::Source::Uri { uri, .. } => {
+                ImageSource::path(&format!("{}/{}", context.base_path, uri))
+                    .ty(ty)
+                    .srgb(srgb)
+            }
+            _ => panic!(),
         }
-        let reader = prim.reader(|buffer| Some(&context.buffers[buffer.index()]));
-        if let Some(positions) = reader.read_positions() {
-            surface.push_position(&positions.collect::<Vec<_>>());
+    }
+
+    fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
+        match material.alpha_mode() {
+            gltf::material::AlphaMode::Opaque => MeshMaterialBlend::Opaque,
+            gltf::material::AlphaMode::Mask => {
+                MeshMaterialBlend::AlphaTest(material.alpha_cutoff().unwrap_or(0.0).clamp(0.0, 1.0))
+            }
+            gltf::material::AlphaMode::Blend => MeshMaterialBlend::AlphaBlend,
+        }
+    }
+
+    fn color(color: [f32; 4]) -> [u8; 4] {
+        [
+            (color[0].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[1].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[2].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[3].clamp(0.0, 1.0) * 255.0) as u8,
+        ]
+    }
+
+    fn process_material(
+        context: &GltfProcessingContext,
+        material: gltf::Material,
+    ) -> MeshAssetMaterial {
+        let base_color =
+            if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
+                process_texture(context, &texture.texture(), ImageAssetType::Rgba, true)
+            } else {
+                ImageSource::color(color(material.pbr_metallic_roughness().base_color_factor()))
+            };
+        let metallic_roughness = if let Some(texture) = material
+            .pbr_metallic_roughness()
+            .metallic_roughness_texture()
+        {
+            process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
         } else {
-            return Err(Error::ProcessingFailed("Mesh has no positions".into()));
+            ImageSource::color(color([
+                0.0,
+                material.pbr_metallic_roughness().roughness_factor(),
+                material.pbr_metallic_roughness().metallic_factor(),
+                1.0,
+            ]))
         };
-        if let Some(indices) = reader.read_indices() {
-            surface.push_indices(&indices.into_u32().collect::<Vec<_>>());
+        let normals = if let Some(texture) = material.normal_texture() {
+            process_texture(context, &texture.texture(), ImageAssetType::Rg, false)
         } else {
-            return Err(Error::ProcessingFailed(
-                "Only processing indexed meshes".into(),
-            ));
-        }
-        if let Some(normals) = reader.read_normals() {
-            surface.push_normals(&normals.collect::<Vec<_>>());
-        }
-        if let Some(tangents) = reader.read_tangents() {
-            surface.push_tangents(&tangents.collect::<Vec<_>>());
-        }
-        if let Some(uvs) = reader.read_tex_coords(0) {
-            surface.push_uv1(&uvs.into_f32().collect::<Vec<_>>());
-        }
-        if let Some(uvs) = reader.read_tex_coords(1) {
-            surface.push_uv2(&uvs.into_f32().collect::<Vec<_>>());
-        }
-        builder.push(surface);
-    }
-    Ok(builder.build(
-        &mut context.vertex_positions,
-        &mut context.vertex_attributes,
-        &mut context.indices,
-        &mut context.materials,
-    ))
-}
-
-fn process_node(
-    context: &mut NodeProcessingContext,
-    parent_index: NodeIndex,
-    name: &str,
-    node: gltf::Node,
-) -> Result<(), Error> {
-    let bone_index = context.bones.len() as u32;
-    let (translation, rotation, scale) = node.transform().decomposed();
-    context.bones.push(Node {
-        name: name.to_owned(),
-        parent: parent_index,
-        translation,
-        rotation,
-        scale,
-    });
-    context.bone_names.insert(name.to_owned(), bone_index);
-    if let Some(mesh) = node.mesh() {
-        if let Some(mesh_index) = context.processed_meshes.get(&(mesh.index() as u32)) {
-            context.bone_to_mesh.insert(bone_index, *mesh_index);
+            ImageSource::color([127, 127, 255, 255])
+        };
+        let occlusion = if let Some(texture) = material.occlusion_texture() {
+            process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
         } else {
-            let name = mesh.name().unwrap_or(name);
-
-            let mesh = process_mesh(context.context, mesh)?;
-            let mesh_index = context.meshes.len() as u32;
-            context.meshes.push(mesh);
-            context.mesh_names.push(name.to_owned());
-            context.name_to_mesh.insert(name.to_owned(), mesh_index);
-            context.bone_to_mesh.insert(bone_index, mesh_index);
+            ImageSource::color([0, 0, 0, 0])
+        };
+        let emissive_color = material.emissive_factor();
+        let emissive = if let Some(texture) = material.emissive_texture() {
+            process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
+        } else {
+            ImageSource::color(color([
+                emissive_color[0],
+                emissive_color[1],
+                emissive_color[2],
+                1.0,
+            ]))
+        };
+        MeshAssetMaterial {
+            emissive_power: material.emissive_strength().unwrap_or(0.0),
+            blend: process_blend(&material),
+            base_color,
+            normals,
+            metallic_roughness,
+            occlusion,
+            emissive,
         }
     }
-    for (index, child) in node.children().enumerate() {
-        process_node(
+
+    fn process_mesh(
+        context: &mut GltfProcessingContext,
+        mesh: gltf::Mesh,
+    ) -> Result<StaticMeshAsset, Error> {
+        let mut builder = MeshAssetBuilder::default();
+        for prim in mesh.primitives() {
+            let mut surface = MeshSurfaceBuilder::new(process_material(context, prim.material()));
+            if prim.mode() != Mode::Triangles {
+                return Err(Error::ProcessingFailed(
+                    "Only processing triangle meshes".into(),
+                ));
+            }
+            let reader = prim.reader(|buffer| Some(&context.buffers[buffer.index()]));
+            if let Some(positions) = reader.read_positions() {
+                surface.push_position(&positions.collect::<Vec<_>>());
+            } else {
+                return Err(Error::ProcessingFailed("Mesh has no positions".into()));
+            };
+            if let Some(indices) = reader.read_indices() {
+                surface.push_indices(&indices.into_u32().collect::<Vec<_>>());
+            } else {
+                return Err(Error::ProcessingFailed(
+                    "Only processing indexed meshes".into(),
+                ));
+            }
+            if let Some(normals) = reader.read_normals() {
+                surface.push_normals(&normals.collect::<Vec<_>>());
+            }
+            if let Some(tangents) = reader.read_tangents() {
+                surface.push_tangents(&tangents.collect::<Vec<_>>());
+            }
+            if let Some(uvs) = reader.read_tex_coords(0) {
+                surface.push_uv1(&uvs.into_f32().collect::<Vec<_>>());
+            }
+            if let Some(uvs) = reader.read_tex_coords(1) {
+                surface.push_uv2(&uvs.into_f32().collect::<Vec<_>>());
+            }
+            builder.push(surface);
+        }
+        Ok(builder.build(
+            &mut context.vertex_positions,
+            &mut context.vertex_attributes,
+            &mut context.indices,
+            &mut context.materials,
+        ))
+    }
+
+    fn process_node(
+        context: &mut NodeProcessingContext,
+        parent_index: NodeIndex,
+        name: &str,
+        node: gltf::Node,
+    ) -> Result<(), Error> {
+        let bone_index = context.bones.len() as u32;
+        let (translation, rotation, scale) = node.transform().decomposed();
+        context.bones.push(Node {
+            name: name.to_owned(),
+            parent: parent_index,
+            translation,
+            rotation,
+            scale,
+        });
+        context.bone_names.insert(name.to_owned(), bone_index);
+        if let Some(mesh) = node.mesh() {
+            if let Some(mesh_index) = context.processed_meshes.get(&(mesh.index() as u32)) {
+                context.bone_to_mesh.insert(bone_index, *mesh_index);
+            } else {
+                let name = mesh.name().unwrap_or(name);
+
+                let mesh = process_mesh(context.context, mesh)?;
+                let mesh_index = context.meshes.len() as u32;
+                context.meshes.push(mesh);
+                context.mesh_names.push(name.to_owned());
+                context.name_to_mesh.insert(name.to_owned(), mesh_index);
+                context.bone_to_mesh.insert(bone_index, mesh_index);
+            }
+        }
+        for (index, child) in node.children().enumerate() {
+            process_node(
+                context,
+                NodeIndex::new(bone_index),
+                &format!("{}/{}", name, child.name().unwrap_or(&format!("{}", index))),
+                child,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn import_scene<'a>(
+        context: &'a mut GltfProcessingContext<'a>,
+        scene: gltf::Scene,
+    ) -> Result<ModelAsset, Error> {
+        let mut context = NodeProcessingContext {
             context,
-            NodeIndex::new(bone_index),
-            &format!("{}/{}", name, child.name().unwrap_or(&format!("{}", index))),
-            child,
-        )?;
-    }
-    Ok(())
-}
-
-fn import_scene<'a>(
-    context: &'a mut GltfProcessingContext<'a>,
-    scene: gltf::Scene,
-) -> Result<ModelAsset, Error> {
-    let mut context = NodeProcessingContext {
-        context,
-        bone_to_mesh: Default::default(),
-        meshes: Default::default(),
-        bones: Default::default(),
-        bone_names: Default::default(),
-        mesh_names: Default::default(),
-        name_to_mesh: Default::default(),
-        processed_meshes: Default::default(),
-    };
-    for (index, node) in scene.nodes().enumerate() {
-        process_node(
-            &mut context,
-            NodeIndex::default(),
-            node.name().unwrap_or(&format!("{}", index)),
-            node,
-        )?;
-    }
-    Ok({
-        ModelAsset {
-            vertex_positions: context.context.vertex_positions.clone(),
-            vertex_attributes: context.context.vertex_attributes.clone(),
-            indices: context.context.indices.clone(),
-            meshes: context.meshes,
-            nodes: context.bones,
-            mesh_names: context.mesh_names,
-            name_to_mesh: context.name_to_mesh,
-            node_names: context.bone_names,
-            node_to_mesh: context.bone_to_mesh.into_iter().collect::<Vec<_>>(),
-            materials: context.context.materials.clone(),
+            bone_to_mesh: Default::default(),
+            meshes: Default::default(),
+            bones: Default::default(),
+            bone_names: Default::default(),
+            mesh_names: Default::default(),
+            name_to_mesh: Default::default(),
+            processed_meshes: Default::default(),
+        };
+        for (index, node) in scene.nodes().enumerate() {
+            process_node(
+                &mut context,
+                NodeIndex::default(),
+                node.name().unwrap_or(&format!("{}", index)),
+                node,
+            )?;
         }
-    })
+        Ok({
+            ModelAsset {
+                vertex_positions: context.context.vertex_positions.clone(),
+                vertex_attributes: context.context.vertex_attributes.clone(),
+                indices: context.context.indices.clone(),
+                meshes: context.meshes,
+                nodes: context.bones,
+                mesh_names: context.mesh_names,
+                name_to_mesh: context.name_to_mesh,
+                node_names: context.bone_names,
+                node_to_mesh: context.bone_to_mesh.into_iter().collect::<Vec<_>>(),
+                materials: context.context.materials.clone(),
+            }
+        })
+    }
+
+    pub(crate) fn import_scenes<'a>(
+        context: &'a mut GltfProcessingContext<'a>,
+        document: gltf::Document,
+    ) -> Result<ModelAsset, Error> {
+        let scene = document
+            .default_scene()
+            .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
+        import_scene(context, scene)
+    }
 }
 
-fn import_scenes<'a>(
-    context: &'a mut GltfProcessingContext<'a>,
-    document: gltf::Document,
-) -> Result<ModelAsset, Error> {
-    let scene = document
-        .default_scene()
-        .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
-    import_scene(context, scene)
-}
-
+#[cfg(feature = "devel")]
 impl ImportAsset<ModelAsset> for ModelSource {
     fn import(&self) -> Result<ModelAsset, Error> {
         let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)
@@ -509,7 +527,7 @@ impl ImportAsset<ModelAsset> for ModelSource {
             .to_str()
             .unwrap()
             .to_owned();
-        import_scenes(
+        import::import_scenes(
             &mut GltfProcessingContext {
                 vertex_positions: Default::default(),
                 vertex_attributes: Default::default(),

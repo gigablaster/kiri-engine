@@ -18,20 +18,22 @@ image = { version = "0.25.2", default-features = false, features = [
     "webp",
     "bmp",
     "hdr",
-] }
+], optional = true }
 
-intel_tex_2 = "0.3.0"
+intel_tex_2 = { version = "0.3.0", optional = true }
 normalize-path = "0.2.1"
 numquant = "0.2.0"
 mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
     "glam",
-], default-features = false }
+], default-features = false, optional = true }
 glam = "0.29.0"
-meshopt = "0.3.0"
-gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
+meshopt = { version = "0.3.0", optional = true }
+gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"], optional = true }
 thiserror = "1.0.61"
-shader-prepper = "0.3.0-pre.3"
+shader-prepper = { version = "0.3.0-pre.3", optional = true }
 ash = "0.38.0"
 uuid = { version = "1.10.0", features = ["v4"] }
-hassle-rs = "0.11.0"
 log = "0.4.20"
+
+[features]
+devel = ["dep:image", "dep:intel_tex_2", "dep:mikktspace", "dep:meshopt", "dep:gltf", "dep:shader-prepper"]

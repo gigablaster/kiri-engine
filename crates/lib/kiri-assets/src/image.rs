@@ -16,15 +16,17 @@
 use std::time::SystemTime;
 
 use ash::vk;
+#[cfg(feature = "devel")]
 use image::{imageops::FilterType, ImageBuffer};
+#[cfg(feature = "devel")]
 use intel_tex_2::{bc5, bc7};
 use kiri_vfs::AssetReference;
 use speedy::{Context, Readable, Writable};
 use uuid::uuid;
 
-use crate::{
-    get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error, ImportAsset,
-};
+#[cfg(feature = "devel")]
+use crate::ImportAsset;
+use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error};
 
 #[derive(Debug)]
 pub struct ImageAsset {
@@ -120,6 +122,7 @@ impl AssetSource for ImageSource {
         AssetReference::new(self)
     }
 
+    #[cfg(feature = "devel")]
     fn changed(&self, last_update: SystemTime) -> bool {
         match &self.data {
             ImageData::Path(path) => is_asset_changed(path, last_update),
@@ -140,6 +143,7 @@ impl Asset for ImageAsset {
     }
 }
 
+#[cfg(feature = "devel")]
 impl ImportAsset<ImageAsset> for ImageSource {
     fn import(&self) -> Result<ImageAsset, Error> {
         // Load image data
@@ -204,6 +208,7 @@ impl BcMode {
     }
 }
 
+#[cfg(feature = "devel")]
 fn block_compress(image: ImageBuffer<image::Rgba<u8>, Vec<u8>>, bc: BcMode) -> Vec<u8> {
     let block_count = intel_tex_2::divide_up_by_multiple(image.width() * image.height(), 16);
     let needs_alpha = bc == BcMode::Bc7 && image.pixels().any(|px| px.0[3] != 255);

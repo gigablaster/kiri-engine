@@ -21,12 +21,13 @@ use std::{
 
 use ash::vk;
 use kiri_vfs::{AssetReference, ROOT_SOURCE_ASSETS_PATH};
+#[cfg(feature = "devel")]
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
-use crate::{
-    get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error, ImportAsset,
-};
+#[cfg(feature = "devel")]
+use crate::ImportAsset;
+use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ShaderType {
@@ -68,6 +69,7 @@ impl AssetSource for ShaderAssetSource {
         AssetReference::new(self)
     }
 
+    #[cfg(feature = "devel")]
     fn changed(&self, last_update: std::time::SystemTime) -> bool {
         if is_asset_changed(&self.path, last_update) {
             return true;
@@ -80,6 +82,7 @@ impl AssetSource for ShaderAssetSource {
     }
 }
 
+#[cfg(feature = "devel")]
 fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> Result<bool, Error> {
     Ok(
         shader_prepper::process_file(path, &mut ShaderIncludeProvider::default(), PathBuf::new())
@@ -113,9 +116,11 @@ impl From<ShaderType> for vk::ShaderStageFlags {
     }
 }
 
+#[cfg(feature = "devel")]
 #[derive(Debug, Default)]
 struct ShaderIncludeProvider {}
 
+#[cfg(feature = "devel")]
 impl IncludeProvider for ShaderIncludeProvider {
     type IncludeContext = PathBuf;
 
@@ -157,6 +162,7 @@ impl Asset for ShaderAsset {
     }
 }
 
+#[cfg(feature = "devel")]
 impl ImportAsset<ShaderAsset> for ShaderAssetSource {
     fn import(&self) -> Result<ShaderAsset, Error> {
         let child = Command::new("glslc")
