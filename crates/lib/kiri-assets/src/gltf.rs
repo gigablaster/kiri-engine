@@ -21,7 +21,6 @@ use std::{
 };
 
 use ash::vk;
-use import::GltfProcessingContext;
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout};
 use speedy::{Readable, Writable};
 use uuid::uuid;
@@ -528,7 +527,7 @@ impl ImportAsset<ModelAsset> for ModelSource {
             .unwrap()
             .to_owned();
         import::import_scenes(
-            &mut GltfProcessingContext {
+            &mut import::GltfProcessingContext {
                 vertex_positions: Default::default(),
                 vertex_attributes: Default::default(),
                 indices: Default::default(),
