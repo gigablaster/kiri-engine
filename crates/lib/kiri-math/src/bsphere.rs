@@ -13,18 +13,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use glam::{Affine3A, Vec3};
+use glam::{Affine3A, Vec3, Vec3A};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoundingSphere {
-    pub center: Vec3,
+    pub center: Vec3A,
     pub radius: f32,
 }
 
 impl BoundingSphere {
+    pub fn new(center: Vec3, radius: f32) -> Self {
+        Self {
+            center: center.into(),
+            radius: radius,
+        }
+    }
+
     pub fn from_array_and_radius(center: [f32; 3], radius: f32) -> Self {
         Self {
-            center: Vec3::from_array(center),
+            center: Vec3A::from_array(center),
             radius,
         }
     }
@@ -33,7 +40,7 @@ impl BoundingSphere {
         let (scale, _, _) = transform.to_scale_rotation_translation();
         let scale = scale.max_element();
         Self {
-            center: transform.transform_point3(self.center),
+            center: transform.transform_point3a(self.center),
             radius: self.radius * scale,
         }
     }
