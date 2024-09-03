@@ -15,6 +15,8 @@
 
 use glam::{Affine3A, Vec3, Vec3A};
 
+use crate::Ray;
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoundingSphere {
     pub center: Vec3A,
@@ -43,5 +45,125 @@ impl BoundingSphere {
             center: transform.transform_point3a(self.center),
             radius: self.radius * scale,
         }
+    }
+
+    pub fn contains_point3(self, point: Vec3) -> bool {
+        self.contains_point3a(point.into())
+    }
+
+    pub fn contains_point3a(self, point: Vec3A) -> bool {
+        self.center.distance_squared(point) <= self.radius * self.radius
+    }
+
+    pub fn intersects_ray(self, ray: Ray) -> Option<f32> {
+        // https://www.cs.colostate.edu/~cs410/yr2016fa/more_progress/cs410_F16_Lecture14.pdf
+        let to_center = self.center - ray.origin;
+        if to_center.dot(ray.direction) <= 0.0 {
+            return None;
+        }
+        let r2 = self.radius * self.radius;
+        let c2 = self.center.distance_squared(ray.origin);
+        let v2 = (to_center.project_onto(ray.direction * to_center.length())).length_squared();
+        let d2 = r2 - (c2 - v2);
+        if d2 < 0.0 {
+            return None;
+        }
+        Some(v2.sqrt() - d2.sqrt())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use glam::{vec3, Vec3};
+
+    use crate::Ray;
+
+    use super::BoundingSphere;
+
+    #[test]
+    fn ray_intersects_shpere() {
+        let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(0.0, 2.0, 2.0), Vec3::X))
+        );
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(2.0, 0.0, 2.0), Vec3::Y))
+        );
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(2.0, 2.0, 0.0), Vec3::Z))
+        );
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(4.0, 2.0, 2.0), Vec3::NEG_X))
+        );
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(2.0, 4.0, 2.0), Vec3::NEG_Y))
+        );
+        assert_eq!(
+            Some(1.0),
+            sphere.intersects_ray(Ray::new(vec3(2.0, 2.0, 4.0), Vec3::NEG_Z))
+        );
+    }
+
+    #[test]
+    fn ray_not_intersects_sphere_in_opposite_direction() {
+        let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(0.0, 2.0, 2.0), Vec3::NEG_X))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 0.0, 2.0), Vec3::NEG_Y))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 2.0, 0.0), Vec3::NEG_Z))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(4.0, 2.0, 2.0), Vec3::X))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 4.0, 2.0), Vec3::Y))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 2.0, 4.0), Vec3::Z))
+        );
+    }
+
+    #[test]
+    fn ray_not_intersects_shpere_when_outside() {
+        let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(0.0, 5.0, 2.0), Vec3::X))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(5.0, 0.0, 2.0), Vec3::Y))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 5.0, 0.0), Vec3::Z))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(4.0, 2.0, 5.0), Vec3::NEG_X))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(5.0, 4.0, 2.0), Vec3::NEG_Y))
+        );
+        assert_eq!(
+            None,
+            sphere.intersects_ray(Ray::new(vec3(2.0, 5.0, 4.0), Vec3::NEG_Z))
+        );
     }
 }
