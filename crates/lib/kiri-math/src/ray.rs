@@ -28,4 +28,8 @@ impl Ray {
             direction: direction.normalize().into(),
         }
     }
+
+    pub fn along(self, distance: f32) -> Vec3 {
+        (self.origin + self.direction * distance).into()
+    }
 }
