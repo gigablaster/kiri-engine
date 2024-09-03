@@ -17,7 +17,7 @@ use std::{cmp::Ordering, mem, sync::Arc};
 
 use crate::{
     gpu::{GpuInstanceData, RenderPassGpuData},
-    Error, Scene, SceneCuller,
+    Error,
 };
 use ash::vk::{self};
 use glam::{vec3, vec4, Mat4};
@@ -38,6 +38,7 @@ use kiri_gfx::{
 use kiri_resources::{
     PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
+use kiri_scene::{Scene, SceneCuller};
 
 const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[(

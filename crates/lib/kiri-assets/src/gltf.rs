@@ -22,6 +22,7 @@ use std::{
 
 use ash::vk;
 use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout};
+use kiri_common::NodeIndex;
 use speedy::{Readable, Writable};
 use uuid::uuid;
 
@@ -180,35 +181,6 @@ pub struct StaticMeshAsset {
     pub position_scale: f32,
     pub uv_scale: f32,
     pub bounds: ([f32; 3], f32),
-}
-
-#[derive(Debug, Clone, Copy, Readable, Writable, Eq, PartialEq)]
-pub struct NodeIndex(u32);
-
-impl From<u32> for NodeIndex {
-    fn from(value: u32) -> Self {
-        Self(value)
-    }
-}
-
-impl Default for NodeIndex {
-    fn default() -> Self {
-        Self(u32::MAX)
-    }
-}
-
-impl NodeIndex {
-    pub fn new(index: u32) -> NodeIndex {
-        Self(index)
-    }
-
-    pub fn index(self) -> Option<u32> {
-        if self.0 < u32::MAX {
-            Some(self.0)
-        } else {
-            None
-        }
-    }
 }
 
 #[derive(Debug, Clone, Readable, Writable)]

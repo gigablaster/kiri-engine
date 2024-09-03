@@ -6,11 +6,11 @@ use glam::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
 use kiri_common::Handle;
 use kiri_gfx::{RenderContext, Renderer};
 use kiri_render::{
-    Camera, DirectionalLight, HemisphericalAmbient, NodeHandle, RenderEnviroment, Scene,
-    SceneNodeData, SceneRenderer,
+    Camera, DirectionalLight, HemisphericalAmbient, RenderEnviroment, SceneRenderer,
 };
 use kiri_resources::{PipelineCache, ResourceCache};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
+use kiri_scene::{NodeHandle, Scene, SceneNodeData};
 
 #[derive(Debug)]
 struct Loop {

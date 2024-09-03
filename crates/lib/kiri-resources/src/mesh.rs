@@ -15,8 +15,8 @@
 
 use std::collections::HashMap;
 
-use kiri_assets::{MeshMaterialBlend, NodeIndex};
-use kiri_common::Bounds;
+use kiri_assets::MeshMaterialBlend;
+use kiri_common::{Bounds, NodeIndex};
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
 
 #[derive(Debug, Clone, Copy)]

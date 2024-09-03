@@ -23,6 +23,7 @@ pub use bounds::*;
 pub use chunky_list::*;
 pub use memory::*;
 pub use pool::*;
+use speedy::{Readable, Writable};
 pub use time::*;
 
 pub trait Align<T> {
@@ -62,6 +63,35 @@ impl Align<usize> for usize {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
     ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+}
+
+#[derive(Debug, Clone, Copy, Readable, Writable, Eq, PartialEq)]
+pub struct NodeIndex(u32);
+
+impl From<u32> for NodeIndex {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl Default for NodeIndex {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
+
+impl NodeIndex {
+    pub fn new(index: u32) -> NodeIndex {
+        Self(index)
+    }
+
+    pub fn index(self) -> Option<u32> {
+        if self.0 < u32::MAX {
+            Some(self.0)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

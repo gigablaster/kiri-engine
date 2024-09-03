@@ -15,8 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use glam::Affine3A;
-use kiri_assets::NodeIndex;
-use kiri_common::{Bounds, Handle, HotColdPool};
+use kiri_common::{Bounds, Handle, HotColdPool, NodeIndex};
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

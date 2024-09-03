@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 arrayvec = "0.7.4"
 glam = "0.29.0"
+speedy = { version = "0.8.7", features = ["speedy-derive"] }

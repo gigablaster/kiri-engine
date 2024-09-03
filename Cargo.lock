@@ -871,6 +871,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "glam 0.29.0",
+ "speedy",
 ]
 
 [[package]]
@@ -900,6 +901,7 @@ dependencies = [
  "kiri-common",
  "kiri-gfx",
  "kiri-resources",
+ "kiri-scene",
  "log",
  "puffin",
  "radsort",
@@ -940,6 +942,7 @@ dependencies = [
  "kiri-gfx",
  "kiri-render",
  "kiri-resources",
+ "kiri-scene",
  "log",
  "puffin",
  "puffin_http",
@@ -947,6 +950,16 @@ dependencies = [
  "sdl2",
  "simple_logger",
  "thiserror",
+]
+
+[[package]]
+name = "kiri-scene"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.0",
+ "kiri-common",
+ "kiri-resources",
+ "puffin",
 ]
 
 [[package]]
