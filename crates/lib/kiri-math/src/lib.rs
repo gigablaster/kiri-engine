@@ -15,8 +15,12 @@
 
 mod bbox;
 mod bsphere;
+mod plane;
 mod ray;
 
 pub use bbox::*;
 pub use bsphere::*;
+pub use plane::*;
 pub use ray::*;
+
+const EPSILON: f32 = 0.0000001;

@@ -12,3 +12,20 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use glam::{Vec3, Vec3A};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Ray {
+    pub origin: Vec3A,
+    pub direction: Vec3A,
+}
+
+impl Ray {
+    pub fn new(origin: Vec3, direction: Vec3) -> Self {
+        Self {
+            origin: origin.into(),
+            direction: direction.normalize().into(),
+        }
+    }
+}

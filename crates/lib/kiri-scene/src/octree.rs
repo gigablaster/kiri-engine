@@ -13,8 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod octree;
-mod scene;
+use glam::Affine3A;
+use kiri_common::Handle;
+use kiri_resources::ModelHandle;
 
-pub use octree::*;
-pub use scene::*;
+pub type LeafHandle = Handle<ModelHandle>;
+
+#[derive(Debug, Clone, Copy)]
+struct Leaf {
+    transform: Affine3A,
+    handle: LeafHandle,
+}
+
+struct Node {
+    parent: u32,
+    leafs: Vec<Leaf>,
+    children: Option<[u32; 8]>,
+}
