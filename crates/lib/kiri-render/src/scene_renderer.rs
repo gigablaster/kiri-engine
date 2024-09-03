@@ -27,7 +27,6 @@ use kiri_backend::{
     RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT,
     PASS_BINDING_SLOT,
 };
-use kiri_common::Bounds;
 use kiri_gfx::{
     passes::{
         FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
@@ -35,6 +34,7 @@ use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
 };
+use kiri_math::BoundingSphere;
 use kiri_resources::{
     PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
@@ -131,7 +131,7 @@ pub struct SceneRenderer {
 struct NullCuller {}
 
 impl SceneCuller for NullCuller {
-    fn cull(&self, _bounds: Bounds) -> bool {
+    fn cull(&self, _bounds: BoundingSphere) -> bool {
         true
     }
 }

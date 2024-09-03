@@ -857,7 +857,6 @@ name = "kiri-common"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "glam 0.29.0",
  "speedy",
 ]
 
@@ -878,6 +877,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiri-math"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.0",
+]
+
+[[package]]
 name = "kiri-render"
 version = "0.1.0"
 dependencies = [
@@ -887,6 +893,7 @@ dependencies = [
  "kiri-backend",
  "kiri-common",
  "kiri-gfx",
+ "kiri-math",
  "kiri-resources",
  "kiri-scene",
  "log",
@@ -908,6 +915,7 @@ dependencies = [
  "kiri-backend",
  "kiri-common",
  "kiri-gfx",
+ "kiri-math",
  "kiri-vfs",
  "log",
  "parking_lot",
@@ -945,6 +953,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.29.0",
  "kiri-common",
+ "kiri-math",
  "kiri-resources",
  "puffin",
 ]

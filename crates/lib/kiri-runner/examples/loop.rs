@@ -10,7 +10,7 @@ use kiri_render::{
 };
 use kiri_resources::{PipelineCache, ResourceCache};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
-use kiri_scene::{NodeHandle, Scene, SceneNodeData};
+use kiri_scene::{NodeHandle, NodeValue, Scene};
 
 #[derive(Debug)]
 struct Loop {
@@ -40,17 +40,17 @@ impl GameClient<LoopError> for Loop {
         let mut scene = Scene::default();
         let root = scene.add_node(
             Handle::default(),
-            SceneNodeData::Model(test),
+            NodeValue::Model(test),
             glam::Affine3A::from_translation(vec3(0.0, 0.5, 0.0)),
         );
         scene.add_node(
             root,
-            SceneNodeData::Model(test),
+            NodeValue::Model(test),
             Affine3A::from_translation(Vec3::new(-0.75, -0.5, 0.0)),
         );
         scene.add_node(
             root,
-            SceneNodeData::Model(test),
+            NodeValue::Model(test),
             Affine3A::from_translation(Vec3::new(0.75, -0.5, 0.0)),
         );
         let render = SceneRenderer::new(&resources, &_pipelines)?;

@@ -26,10 +26,11 @@ use kiri_assets::{
     MeshVertexAttributes, MeshVertexPositions, ModelAsset, ModelSource,
 };
 use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
-use kiri_common::{Bounds, Handle, Pool};
+use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
+use kiri_math::BoundingSphere;
 use kiri_vfs::{vfs_load, AssetReference};
 use log::debug;
 #[cfg(feature = "devel")]
@@ -456,7 +457,7 @@ impl ResourceCache {
                 vertex_attributes: BufferPointer::new(vertex_attributes, 0),
                 index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
-                bounds: Bounds::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
+                bounds: BoundingSphere::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
                 position_scale: mesh.position_scale,
                 uv_scale: mesh.uv_scale,
             };

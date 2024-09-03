@@ -1,4 +1,3 @@
-#![allow(clippy::doc_lazy_continuation)]
 // Copyright (C) 2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
@@ -15,18 +14,19 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use glam::Affine3A;
-use kiri_common::{Bounds, Handle, HotColdPool, NodeIndex};
+use kiri_common::{Handle, HotColdPool, NodeIndex};
+use kiri_math::BoundingSphere;
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SceneNodeData {
+pub enum NodeValue {
     Empty,
     StaticMesh(ModelHandle, u32),
     Model(ModelHandle),
 }
 
-impl SceneNodeData {
-    pub fn bounds<T: ResourceResolver>(self, resolver: &T) -> Option<Bounds> {
+impl NodeValue {
+    pub fn bounds<T: ResourceResolver>(self, resolver: &T) -> Option<BoundingSphere> {
         match self {
             Self::StaticMesh(handle, index) => resolver
                 .resolve_static_mesh(handle, index)
@@ -42,14 +42,14 @@ type NodePool = HotColdPool<SceneNode, NodeIndex>;
 /// Клиентские данные о ноде
 #[derive(Debug, Clone, Copy)]
 pub struct SceneNode {
-    data: SceneNodeData,
+    data: NodeValue,
     parent: NodeHandle,
     transform: glam::Affine3A,
 }
 
 /// Интерфейс для получения данных из сцены
 pub trait SceneCuller: Send + Sync {
-    fn cull(&self, bounds: Bounds) -> bool;
+    fn cull(&self, bounds: BoundingSphere) -> bool;
 }
 
 const MAX_SCENE_NODES: usize = 0xfffff;
@@ -57,11 +57,11 @@ const MAX_SCENE_NODES: usize = 0xfffff;
 #[derive(Debug)]
 pub struct Scene {
     nodes: NodePool,
-    data: Vec<SceneNodeData>,
+    data: Vec<NodeValue>,
     parents: Vec<NodeIndex>,
     local_transforms: Vec<glam::Affine3A>,
     world_transforms: Vec<glam::Affine3A>,
-    bounds: Vec<Bounds>,
+    bounds: Vec<BoundingSphere>,
     rebuild_scene: bool,
     recalculate_transforms: bool,
     update_bounds: Vec<NodeHandle>,
@@ -91,8 +91,8 @@ impl Default for Scene {
 pub struct SceneCullIterator<'a, T: ResourceResolver, C: SceneCuller> {
     resolver: &'a T,
     culler: &'a C,
-    nodes: &'a [SceneNodeData],
-    bounds: &'a [Bounds],
+    nodes: &'a [NodeValue],
+    bounds: &'a [BoundingSphere],
     transforms: &'a [Affine3A],
     index: usize,
     model_node_to_mesh_index: usize,
@@ -100,8 +100,8 @@ pub struct SceneCullIterator<'a, T: ResourceResolver, C: SceneCuller> {
 
 impl<'a, T: ResourceResolver, C: SceneCuller> SceneCullIterator<'a, T, C> {
     fn new(
-        nodes: &'a [SceneNodeData],
-        bounds: &'a [Bounds],
+        nodes: &'a [NodeValue],
+        bounds: &'a [BoundingSphere],
         transforms: &'a [Affine3A],
         resolver: &'a T,
         culler: &'a C,
@@ -126,11 +126,11 @@ impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a,
         while self.index < self.nodes.len() {
             let current_index = self.index;
             match self.nodes[self.index] {
-                SceneNodeData::Empty => {
+                NodeValue::Empty => {
                     // Just skip it
                     self.index += 1;
                 }
-                SceneNodeData::StaticMesh(model, index) => {
+                NodeValue::StaticMesh(model, index) => {
                     self.index += 1;
                     // It's a mesh. Check if it's really exist, cull and return
                     if let Some(mesh) = self.resolver.resolve_static_mesh(model, index) {
@@ -139,7 +139,7 @@ impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a,
                         }
                     }
                 }
-                SceneNodeData::Model(model) => {
+                NodeValue::Model(model) => {
                     // First, we get model from resources.
                     if let Some(model) = self.resolver.resolve_model(model) {
                         // Check if we stll have unprocessed meshes in model.
@@ -174,7 +174,7 @@ impl Scene {
     pub fn add_node(
         &mut self,
         parent: NodeHandle,
-        data: SceneNodeData,
+        data: NodeValue,
         transform: Affine3A,
     ) -> NodeHandle {
         let handle = self.nodes.push(
@@ -205,7 +205,7 @@ impl Scene {
         }
     }
 
-    pub fn update_node_data(&mut self, handle: NodeHandle, data: SceneNodeData) {
+    pub fn update_node_data(&mut self, handle: NodeHandle, data: NodeValue) {
         if let Some(node) = self.nodes.get_mut(handle) {
             node.data = data;
             if let Some(index) = self.nodes.get_cold(handle).unwrap().index() {
@@ -332,20 +332,20 @@ mod test {
     #[test]
     fn build_scene() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), NodeValue::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -394,20 +394,20 @@ mod test {
     #[test]
     fn remove_node() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), NodeValue::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -448,20 +448,20 @@ mod test {
     #[test]
     fn move_node() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), NodeValue::Empty, Affine3A::default());
         let handle1_1 = scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -515,20 +515,20 @@ mod test {
     #[test]
     fn remove_parent_node_removes_children() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), NodeValue::Empty, Affine3A::default());
         let _handle1_1 = scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         let _handle1_2 = scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
@@ -550,10 +550,10 @@ mod test {
     #[test]
     fn move_attached_objects() {
         let mut scene = Scene::default();
-        let handle1 = scene.add_node(Handle::default(), SceneNodeData::Empty, Affine3A::default());
+        let handle1 = scene.add_node(Handle::default(), NodeValue::Empty, Affine3A::default());
         scene.add_node(
             handle1,
-            SceneNodeData::Empty,
+            NodeValue::Empty,
             Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
         );
         scene.update(&DummyResolver::default());

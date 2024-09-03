@@ -16,8 +16,9 @@
 use std::collections::HashMap;
 
 use kiri_assets::MeshMaterialBlend;
-use kiri_common::{Bounds, NodeIndex};
+use kiri_common::NodeIndex;
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
+use kiri_math::BoundingSphere;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
@@ -66,7 +67,7 @@ pub struct StaticRenderMesh {
     pub vertex_attributes: BufferPointer,
     pub index_buffer: BufferPointer,
     pub surfaces: Vec<RenderMeshSurface>,
-    pub bounds: Bounds,
+    pub bounds: BoundingSphere,
     pub position_scale: f32,
     pub uv_scale: f32,
 }
@@ -77,7 +78,7 @@ pub struct RenderModel {
     pub vertex_attributes: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
-    pub bounds_per_mesh: Vec<Bounds>,
+    pub bounds_per_mesh: Vec<BoundingSphere>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
     pub local_transforms: Vec<glam::Affine3A>,

@@ -11,6 +11,7 @@ members = [
     "crates/lib/kiri-resources",
     "crates/lib/kiri-render",
     "crates/lib/kiri-scene",
+    "crates/lib/kiri-math",
 ]
 
 resolver = "2"
