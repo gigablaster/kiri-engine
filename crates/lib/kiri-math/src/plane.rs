@@ -41,6 +41,14 @@ impl Plane {
         }
         None
     }
+
+    pub fn signed_distance_point3(self, point: Vec3) -> f32 {
+        self.signed_distance_point3a(point.into())
+    }
+
+    pub fn signed_distance_point3a(self, point: Vec3A) -> f32 {
+        self.normal.dot(point - self.origin)
+    }
 }
 
 #[cfg(test)]
@@ -88,5 +96,12 @@ mod test {
             None,
             plane.intersects_ray(Ray::new(vec3(0.0, 0.0, 2.0), Vec3::X))
         );
+    }
+
+    #[test]
+    fn signed_distance() {
+        let plane = Plane::new(vec3(1.0, 1.0, 1.0), Vec3::Z);
+        assert_eq!(1.0, plane.signed_distance_point3(vec3(0.0, 0.0, 2.0)));
+        assert_eq!(-2.0, plane.signed_distance_point3(vec3(0.0, 0.0, -1.0)));
     }
 }

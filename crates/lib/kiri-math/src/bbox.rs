@@ -15,7 +15,7 @@
 
 use glam::{vec3a, Affine3A, Vec3, Vec3A};
 
-use crate::{BoundingSphere, Bounds, Ray};
+use crate::{BoundingSphere, Bounds, Plane, Ray};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoundingBox {
@@ -138,13 +138,20 @@ impl Bounds for BoundingBox {
         let ma = min.max(max);
         Self { min: mi, max: ma }
     }
+
+    fn is_on_or_forward_plane(self, plane: Plane) -> bool {
+        let extents = self.max - self.min;
+        let center = self.max.midpoint(self.min);
+        let r = (plane.normal.abs() * extents).length_squared();
+        -r <= plane.signed_distance_point3a(center)
+    }
 }
 
 #[cfg(test)]
 mod test {
     use glam::{vec3, Affine3A, Vec3};
 
-    use crate::{BoundingSphere, Bounds, Ray};
+    use crate::{BoundingSphere, Bounds, PerspectiveCamera, Plane, Ray};
 
     use super::BoundingBox;
 
@@ -385,5 +392,51 @@ mod test {
             BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
                 .interesects_sphere(BoundingSphere::new(vec3(1.0, 1.0, 1.0), 5.0))
         );
+    }
+
+    #[test]
+    fn bbox_on_forward_plane() {
+        let plane = Plane::new(vec3(0.0, 0.0, 1.0), Vec3::Z);
+        assert!(
+            BoundingBox::from_extent(vec3(0.0, 0.0, 3.0), vec3(1.0, 1.0, 1.0))
+                .is_on_or_forward_plane(plane)
+        );
+    }
+
+    #[test]
+    fn bbox_not_on_forward_plane() {
+        let plane = Plane::new(vec3(0.0, 0.0, 1.0), Vec3::Z);
+        assert!(
+            !BoundingBox::from_extent(vec3(0.0, 0.0, -3.0), vec3(1.0, 1.0, 1.0))
+                .is_on_or_forward_plane(plane)
+        );
+    }
+
+    #[test]
+    fn bbox_in_frustum() {
+        let frustum =
+            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
+                .to_frustum();
+        assert!(BoundingBox::from_extent(vec3(0.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(
+            BoundingBox::from_extent(vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)).is_visible(&frustum)
+        );
+        assert!(
+            BoundingBox::from_extent(vec3(0.0, 0.0, 10.0), vec3(2.0, 2.0, 2.0))
+                .is_visible(&frustum)
+        )
+    }
+
+    #[test]
+    fn bbox_not_in_frustum() {
+        let frustum =
+            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
+                .to_frustum();
+        assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, -1.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, 12.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(0.0, 5.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(0.0, -5.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(5.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(-5.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
     }
 }

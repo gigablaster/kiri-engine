@@ -27,7 +27,7 @@ impl BoundingSphere {
     pub fn new(center: Vec3, radius: f32) -> Self {
         Self {
             center: center.into(),
-            radius: radius,
+            radius,
         }
     }
 
@@ -77,18 +77,22 @@ impl Bounds for BoundingSphere {
             radius: self.radius * scale,
         }
     }
+
+    fn is_on_or_forward_plane(self, plane: crate::Plane) -> bool {
+        plane.signed_distance_point3a(self.center) > -self.radius
+    }
 }
 
 #[cfg(test)]
 mod test {
     use glam::{vec3, Vec3};
 
-    use crate::{Bounds, Ray};
+    use crate::{Bounds, PerspectiveCamera, Plane, Ray};
 
     use super::BoundingSphere;
 
     #[test]
-    fn ray_intersects_shpere() {
+    fn bsphere_ray_intersects() {
         let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
         assert_eq!(
             Some(1.0),
@@ -117,7 +121,7 @@ mod test {
     }
 
     #[test]
-    fn ray_not_intersects_sphere_in_opposite_direction() {
+    fn bsphere_ray_not_intersects_in_opposite_direction() {
         let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
         assert_eq!(
             None,
@@ -146,7 +150,7 @@ mod test {
     }
 
     #[test]
-    fn ray_not_intersects_shpere_when_outside() {
+    fn bsphere_ray_not_intersects_when_outside() {
         let sphere = BoundingSphere::new(vec3(2.0, 2.0, 2.0), 1.0);
         assert_eq!(
             None,
@@ -172,5 +176,40 @@ mod test {
             None,
             sphere.intersects_ray(Ray::new(vec3(2.0, 5.0, 4.0), Vec3::NEG_Z))
         );
+    }
+
+    #[test]
+    fn bsphere_on_forward_plane() {
+        let plane = Plane::new(vec3(0.0, 0.0, 1.0), Vec3::Z);
+        assert!(BoundingSphere::new(vec3(2.0, 3.0, 4.0), 1.0).is_on_or_forward_plane(plane));
+    }
+
+    #[test]
+    fn bsphere_not_on_forward_plane() {
+        let plane = Plane::new(vec3(0.0, 0.0, 1.0), Vec3::Z);
+        assert!(!BoundingSphere::new(vec3(2.0, 3.0, -4.0), 1.0).is_on_or_forward_plane(plane));
+    }
+
+    #[test]
+    fn bsphere_in_frustum() {
+        let frustum =
+            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
+                .to_frustum();
+        assert!(BoundingSphere::new(vec3(0.0, 0.0, 5.0), 1.0).is_visible(&frustum));
+        assert!(BoundingSphere::new(vec3(0.0, 0.0, 0.0), 3.0).is_visible(&frustum));
+        assert!(BoundingSphere::new(vec3(0.0, 0.0, 10.0), 2.0).is_visible(&frustum));
+    }
+
+    #[test]
+    fn bsphere_not_in_frustum() {
+        let frustum =
+            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
+                .to_frustum();
+        assert!(!BoundingSphere::new(vec3(0.0, 0.0, -1.0), 1.0).is_visible(&frustum));
+        assert!(!BoundingSphere::new(vec3(0.0, 0.0, 12.0), 1.0).is_visible(&frustum));
+        assert!(!BoundingSphere::new(vec3(5.0, 0.0, 5.0), 1.0).is_visible(&frustum));
+        assert!(!BoundingSphere::new(vec3(-5.0, 0.0, 5.0), 1.0).is_visible(&frustum));
+        assert!(!BoundingSphere::new(vec3(0.0, 5.0, 5.0), 1.0).is_visible(&frustum));
+        assert!(!BoundingSphere::new(vec3(0.0, -5.0, 5.0), 1.0).is_visible(&frustum));
     }
 }

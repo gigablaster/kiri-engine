@@ -15,11 +15,13 @@
 
 mod bbox;
 mod bsphere;
+mod camera;
 mod plane;
 mod ray;
 
 pub use bbox::*;
 pub use bsphere::*;
+pub use camera::*;
 use glam::{Affine3A, Vec3, Vec3A};
 pub use plane::*;
 pub use ray::*;
@@ -41,6 +43,12 @@ pub trait Bounds: Copy {
     fn intersects_ray(self, ray: Ray) -> Option<f32>;
 
     fn transform(self, transform: Affine3A) -> Self;
+
+    fn is_on_or_forward_plane(self, plane: Plane) -> bool;
+
+    fn is_visible(self, frustrum: &[Plane]) -> bool {
+        frustrum.iter().all(|x| self.is_on_or_forward_plane(*x))
+    }
 }
 
 pub fn ray_triangle_intersection(ray: Ray, p0: Vec3A, p1: Vec3A, p2: Vec3A) -> Option<f32> {
@@ -63,11 +71,9 @@ pub fn ray_triangle_intersection(ray: Ray, p0: Vec3A, p1: Vec3A, p2: Vec3A) -> O
 
 #[cfg(test)]
 mod test {
-    use std::f32::EPSILON;
-
     use glam::{vec3, vec3a, Vec3};
 
-    use crate::{ray_triangle_intersection, Ray};
+    use crate::{ray_triangle_intersection, Ray, EPSILON};
 
     #[test]
     fn ray_intersects_triangle() {
