@@ -42,3 +42,57 @@ pub trait Bounds: Copy {
 
     fn transform(self, transform: Affine3A) -> Self;
 }
+
+pub fn ray_triangle_intersection(ray: Ray, p0: Vec3A, p1: Vec3A, p2: Vec3A) -> Option<f32> {
+    let n = (p1 - p0).cross(p2 - p0);
+    let plane = Plane {
+        origin: p0,
+        normal: n,
+    };
+    if let Some(t) = plane.intersects_ray(ray) {
+        let x = ray.origin + ray.direction * t;
+        if (p1 - p0).cross(x - p0).dot(n) >= 0.0
+            && (p2 - p1).cross(x - p1).dot(n) >= 0.0
+            && (p0 - p2).cross(x - p2).dot(n) >= 0.0
+        {
+            return Some(t);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod test {
+    use std::f32::EPSILON;
+
+    use glam::{vec3, vec3a, Vec3};
+
+    use crate::{ray_triangle_intersection, Ray};
+
+    #[test]
+    fn ray_intersects_triangle() {
+        let p0 = vec3a(-2.0, 2.0, 1.0);
+        let p1 = vec3a(2.0, 0.0, -1.0);
+        let p2 = vec3a(-2.0, -2.0, 1.0);
+        let ray = Ray::new(vec3(0.0, 0.0, 3.0), Vec3::NEG_Z);
+        assert!((ray_triangle_intersection(ray, p0, p1, p2).unwrap()).abs() - 3.0 < EPSILON);
+    }
+
+    #[test]
+    fn ray_not_intersects_triangle_oppsite_direction() {
+        let p0 = vec3a(-2.0, 2.0, 1.0);
+        let p1 = vec3a(2.0, 0.0, -1.0);
+        let p2 = vec3a(-2.0, -2.0, 1.0);
+        let ray = Ray::new(vec3(0.0, 0.0, -3.0), Vec3::NEG_Z);
+        assert_eq!(None, ray_triangle_intersection(ray, p0, p1, p2));
+    }
+
+    #[test]
+    fn ray_not_intersects_triangle_outside() {
+        let p0 = vec3a(-2.0, 2.0, 1.0);
+        let p1 = vec3a(2.0, 0.0, -1.0);
+        let p2 = vec3a(-2.0, -2.0, 1.0);
+        let ray = Ray::new(vec3(5.0, 5.0, 3.0), Vec3::NEG_Z);
+        assert_eq!(None, ray_triangle_intersection(ray, p0, p1, p2));
+    }
+}
