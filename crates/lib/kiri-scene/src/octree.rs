@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use glam::Affine3A;
 use kiri_common::Handle;
+use kiri_math::Affine3A;
 use kiri_resources::ModelHandle;
 
 pub type LeafHandle = Handle<ModelHandle>;

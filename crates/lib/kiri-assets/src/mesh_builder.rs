@@ -15,6 +15,8 @@
 
 use std::mem;
 
+use kiri_math::Vec3;
+
 use crate::{
     MeshAssetMaterial, MeshSurfaceAsset, MeshVertexAttributes, MeshVertexPositions, StaticMeshAsset,
 };
@@ -177,14 +179,14 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 
 fn calculate_bounding_sphere(vertices: &[FullVertex]) -> ([f32; 3], f32) {
     debug_assert!(!vertices.is_empty());
-    let mut middle = glam::Vec3::from_array(vertices[0].position);
+    let mut middle = Vec3::from_array(vertices[0].position);
     for vertex in vertices.iter().skip(1) {
-        middle += glam::Vec3::from_array(vertex.position);
+        middle += Vec3::from_array(vertex.position);
     }
     middle /= vertices.len() as f32;
     let mut radius = 0.0;
     for vertex in vertices {
-        let distance = middle.distance(glam::Vec3::from_array(vertex.position));
+        let distance = middle.distance(Vec3::from_array(vertex.position));
         if distance > radius {
             radius = distance;
         }

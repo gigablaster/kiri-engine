@@ -7,7 +7,6 @@ edition = "2021"
 kiri-common = { path = "../kiri-common" }
 kiri-resources = { path = "../kiri-resources" }
 kiri-math = { path = "../kiri-math" }
-glam = "0.29.0"
 puffin = "0.19.0"
 
 [features]

@@ -13,15 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use kiri_math::{Mat4, Vec3};
+
 use crate::{DirectionalLight, HemisphericalAmbient};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct RenderPassGpuData {
-    pub view: glam::Mat4,
-    pub projection: glam::Mat4,
-    pub view_projection: glam::Mat4,
-    pub eye_position: glam::Vec3,
+    pub view: Mat4,
+    pub projection: Mat4,
+    pub view_projection: Mat4,
+    pub eye_position: Vec3,
     pub lights: [DirectionalLight; 3],
     pub ambient: HemisphericalAmbient,
 }
@@ -29,6 +31,6 @@ pub struct RenderPassGpuData {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 pub struct GpuInstanceData {
-    pub model: glam::Mat4,
+    pub model: Mat4,
     pub uv_scale: f32,
 }

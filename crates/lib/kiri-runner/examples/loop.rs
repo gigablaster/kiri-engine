@@ -2,9 +2,9 @@
 
 use std::{error::Error, fmt::Display, sync::Arc};
 
-use glam::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
 use kiri_common::Handle;
 use kiri_gfx::{RenderContext, Renderer};
+use kiri_math::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
 use kiri_render::{
     Camera, DirectionalLight, HemisphericalAmbient, RenderEnviroment, SceneRenderer,
 };
@@ -41,7 +41,7 @@ impl GameClient<LoopError> for Loop {
         let root = scene.add_node(
             Handle::default(),
             NodeValue::Model(test),
-            glam::Affine3A::from_translation(vec3(0.0, 0.5, 0.0)),
+            Affine3A::from_translation(vec3(0.0, 0.5, 0.0)),
         );
         scene.add_node(
             root,

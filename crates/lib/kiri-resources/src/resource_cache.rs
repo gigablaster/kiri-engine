@@ -30,7 +30,7 @@ use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
-use kiri_math::BoundingSphere;
+use kiri_math::{Affine3A, BoundingSphere, Quat, Vec3};
 use kiri_vfs::{vfs_load, AssetReference};
 use log::debug;
 #[cfg(feature = "devel")]
@@ -476,18 +476,14 @@ impl ResourceCache {
                 .nodes
                 .iter()
                 .map(|x| {
-                    glam::Affine3A::from_scale_rotation_translation(
-                        glam::Vec3::from_array(x.scale),
-                        glam::Quat::from_array(x.rotation),
-                        glam::Vec3::from_array(x.translation),
+                    Affine3A::from_scale_rotation_translation(
+                        Vec3::from_array(x.scale),
+                        Quat::from_array(x.rotation),
+                        Vec3::from_array(x.translation),
                     )
                 })
                 .collect(),
-            world_transforms: asset
-                .nodes
-                .iter()
-                .map(|_| glam::Affine3A::IDENTITY)
-                .collect(),
+            world_transforms: asset.nodes.iter().map(|_| Affine3A::IDENTITY).collect(),
             node_to_mesh: asset.node_to_mesh,
             mesh_names: asset.mesh_names,
         };

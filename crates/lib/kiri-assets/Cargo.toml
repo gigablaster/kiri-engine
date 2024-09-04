@@ -7,6 +7,7 @@ edition = "2021"
 kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
 kiri-vfs = { path = "../kiri-vfs" }
+kiri-math = { path = "../kiri-math" }
 speedy = { version = "0.8.7", features = ["speedy-derive"] }
 bytes = "1.7.1"
 image = { version = "0.25.2", default-features = false, features = [
@@ -26,9 +27,10 @@ numquant = "0.2.0"
 mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
     "glam",
 ], default-features = false, optional = true }
-glam = "0.29.0"
 meshopt = { version = "0.3.0", optional = true }
-gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"], optional = true }
+gltf = { version = "1.4.1", features = [
+    "KHR_materials_emissive_strength",
+], optional = true }
 thiserror = "1.0.61"
 shader-prepper = { version = "0.3.0-pre.3", optional = true }
 ash = "0.38.0"
@@ -36,4 +38,11 @@ uuid = { version = "1.10.0", features = ["v4"] }
 log = "0.4.20"
 
 [features]
-devel = ["dep:image", "dep:intel_tex_2", "dep:mikktspace", "dep:meshopt", "dep:gltf", "dep:shader-prepper"]
+devel = [
+    "dep:image",
+    "dep:intel_tex_2",
+    "dep:mikktspace",
+    "dep:meshopt",
+    "dep:gltf",
+    "dep:shader-prepper",
+]

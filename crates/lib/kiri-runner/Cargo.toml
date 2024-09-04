@@ -12,6 +12,7 @@ kiri-gfx = { path = "../kiri-gfx" }
 kiri-resources = { path = "../kiri-resources" }
 kiri-render = { path = "../kiri-render" }
 kiri-scene = { path = "../kiri-scene" }
+kiri-math = { path = "../kiri-math" }
 ash = "0.38.0"
 thiserror = "1.0.61"
 directories = "5.0.1"
@@ -25,7 +26,6 @@ sdl2 = { version = "0.37.0", default-features = false, features = [
 
 [dev-dependencies]
 simple_logger = "5.0.0"
-glam = "0.29.0"
 puffin_http = "0.16.1"
 
 [[example]]

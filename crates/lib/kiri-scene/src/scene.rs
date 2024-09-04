@@ -13,9 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use glam::Affine3A;
 use kiri_common::{Handle, HotColdPool, NodeIndex};
-use kiri_math::{BoundingSphere, Bounds};
+use kiri_math::{Affine3A, BoundingSphere, Bounds};
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,7 +43,7 @@ type NodePool = HotColdPool<SceneNode, NodeIndex>;
 pub struct SceneNode {
     data: NodeValue,
     parent: NodeHandle,
-    transform: glam::Affine3A,
+    transform: Affine3A,
 }
 
 /// Интерфейс для получения данных из сцены
@@ -59,8 +58,8 @@ pub struct Scene {
     nodes: NodePool,
     data: Vec<NodeValue>,
     parents: Vec<NodeIndex>,
-    local_transforms: Vec<glam::Affine3A>,
-    world_transforms: Vec<glam::Affine3A>,
+    local_transforms: Vec<Affine3A>,
+    world_transforms: Vec<Affine3A>,
     bounds: Vec<BoundingSphere>,
     rebuild_scene: bool,
     recalculate_transforms: bool,
@@ -119,7 +118,7 @@ impl<'a, T: ResourceResolver, C: SceneCuller> SceneCullIterator<'a, T, C> {
 }
 
 impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a, T, C> {
-    type Item = (glam::Affine3A, &'a StaticRenderMesh);
+    type Item = (Affine3A, &'a StaticRenderMesh);
 
     fn next(&mut self) -> Option<Self::Item> {
         // Check current node, skip empty nodes and process nodes with content
@@ -308,6 +307,7 @@ impl Scene {
 
 #[cfg(test)]
 mod test {
+    use kiri_math::{Vec3, Vec3A};
     use kiri_resources::{RenderModel, StaticRenderMesh};
 
     use super::*;
@@ -336,17 +336,17 @@ mod test {
         let handle1_1 = scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+            Affine3A::from_translation(Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
         assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle1).unwrap());
@@ -357,36 +357,30 @@ mod test {
         assert_eq!(NodeIndex::default(), scene.parents[1]);
         assert_eq!(NodeIndex::new(0), scene.parents[2]);
         assert_eq!(NodeIndex::new(1), scene.parents[3]);
+        assert_eq!(Vec3A::default(), scene.local_transforms[0].translation);
         assert_eq!(
-            glam::Vec3A::default(),
-            scene.local_transforms[0].translation
-        );
-        assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[2].translation
         );
         assert_eq!(
-            glam::Vec3A::new(2.0, 2.0, 2.0),
+            Vec3A::new(2.0, 2.0, 2.0),
             scene.local_transforms[3].translation
         );
+        assert_eq!(Vec3A::default(), scene.world_transforms[0].translation);
         assert_eq!(
-            glam::Vec3A::default(),
-            scene.world_transforms[0].translation
-        );
-        assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.world_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.world_transforms[2].translation
         );
         assert_eq!(
-            glam::Vec3A::new(3.0, 3.0, 3.0),
+            Vec3A::new(3.0, 3.0, 3.0),
             scene.world_transforms[3].translation
         );
     }
@@ -398,17 +392,17 @@ mod test {
         let handle1_1 = scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+            Affine3A::from_translation(Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
         scene.remove_node(handle1_1);
@@ -419,28 +413,22 @@ mod test {
         assert_eq!(NodeIndex::default(), scene.parents[0]);
         assert_eq!(NodeIndex::default(), scene.parents[1]);
         assert_eq!(NodeIndex::new(1), scene.parents[2]);
+        assert_eq!(Vec3A::default(), scene.local_transforms[0].translation);
         assert_eq!(
-            glam::Vec3A::default(),
-            scene.local_transforms[0].translation
-        );
-        assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(2.0, 2.0, 2.0),
+            Vec3A::new(2.0, 2.0, 2.0),
             scene.local_transforms[2].translation
         );
+        assert_eq!(Vec3A::default(), scene.world_transforms[0].translation);
         assert_eq!(
-            glam::Vec3A::default(),
-            scene.world_transforms[0].translation
-        );
-        assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.world_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(3.0, 3.0, 3.0),
+            Vec3A::new(3.0, 3.0, 3.0),
             scene.world_transforms[2].translation
         );
     }
@@ -452,22 +440,22 @@ mod test {
         let handle1_1 = scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2_1 = scene.add_node(
             handle2,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+            Affine3A::from_translation(Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
         scene.update_node_transform(
             handle1,
-            glam::Affine3A::from_translation(glam::Vec3::new(10.0, 10.0, 10.0)),
+            Affine3A::from_translation(Vec3::new(10.0, 10.0, 10.0)),
         );
         scene.update(&DummyResolver::default());
         assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle1).unwrap());
@@ -479,35 +467,35 @@ mod test {
         assert_eq!(NodeIndex::new(0), scene.parents[2]);
         assert_eq!(NodeIndex::new(1), scene.parents[3]);
         assert_eq!(
-            glam::Vec3A::new(10.0, 10.0, 10.0),
+            Vec3A::new(10.0, 10.0, 10.0),
             scene.local_transforms[0].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[2].translation
         );
         assert_eq!(
-            glam::Vec3A::new(2.0, 2.0, 2.0),
+            Vec3A::new(2.0, 2.0, 2.0),
             scene.local_transforms[3].translation
         );
         assert_eq!(
-            glam::Vec3A::new(10.0, 10.0, 10.0),
+            Vec3A::new(10.0, 10.0, 10.0),
             scene.world_transforms[0].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.world_transforms[1].translation
         );
         assert_eq!(
-            glam::Vec3A::new(11.0, 11.0, 11.0),
+            Vec3A::new(11.0, 11.0, 11.0),
             scene.world_transforms[2].translation
         );
         assert_eq!(
-            glam::Vec3A::new(3.0, 3.0, 3.0),
+            Vec3A::new(3.0, 3.0, 3.0),
             scene.world_transforms[3].translation
         );
     }
@@ -519,17 +507,17 @@ mod test {
         let _handle1_1 = scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let handle2 = scene.add_node(
             Handle::default(),
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         let _handle1_2 = scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(2.0, 2.0, 2.0)),
+            Affine3A::from_translation(Vec3::new(2.0, 2.0, 2.0)),
         );
         scene.update(&DummyResolver::default());
         scene.remove_node(handle1);
@@ -538,11 +526,11 @@ mod test {
         assert_eq!(NodeIndex::new(0), *scene.nodes.get_cold(handle2).unwrap());
         assert_eq!(NodeIndex::default(), scene.parents[0]);
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.local_transforms[0].translation
         );
         assert_eq!(
-            glam::Vec3A::new(1.0, 1.0, 1.0),
+            Vec3A::new(1.0, 1.0, 1.0),
             scene.world_transforms[0].translation
         );
     }
@@ -554,20 +542,20 @@ mod test {
         scene.add_node(
             handle1,
             NodeValue::Empty,
-            Affine3A::from_translation(glam::Vec3::new(1.0, 1.0, 1.0)),
+            Affine3A::from_translation(Vec3::new(1.0, 1.0, 1.0)),
         );
         scene.update(&DummyResolver::default());
         scene.update_node_transform(
             handle1,
-            glam::Affine3A::from_translation(glam::Vec3::new(-1.0, -1.0, -1.0)),
+            Affine3A::from_translation(Vec3::new(-1.0, -1.0, -1.0)),
         );
         scene.update(&DummyResolver::default());
         assert_eq!(
-            glam::Vec3A::new(-1.0, -1.0, -1.0),
+            Vec3A::new(-1.0, -1.0, -1.0),
             scene.world_transforms[0].translation
         );
         assert_eq!(
-            glam::Vec3A::new(0.0, 0.0, 0.0),
+            Vec3A::new(0.0, 0.0, 0.0),
             scene.world_transforms[1].translation
         );
     }

@@ -22,7 +22,7 @@ mod ray;
 pub use bbox::*;
 pub use bsphere::*;
 pub use camera::*;
-use glam::{Affine3A, Vec3, Vec3A};
+pub use glam::*;
 pub use plane::*;
 pub use ray::*;
 

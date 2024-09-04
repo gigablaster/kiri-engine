@@ -20,7 +20,6 @@ use crate::{
     Error,
 };
 use ash::vk::{self};
-use glam::{vec3, vec4, Mat4};
 use kiri_assets::STATIC_MESH_INPUT_LAYOUT;
 use kiri_backend::{
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
@@ -34,7 +33,7 @@ use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
 };
-use kiri_math::BoundingSphere;
+use kiri_math::{vec3, vec4, BoundingSphere, Mat4, Vec3, Vec3A};
 use kiri_resources::{
     PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
@@ -139,8 +138,8 @@ impl SceneCuller for NullCuller {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Camera {
-    pub view: glam::Mat4,
-    pub projection: glam::Mat4,
+    pub view: Mat4,
+    pub projection: Mat4,
 }
 
 const DRAWS_PER_STREAM: usize = 256;
@@ -153,7 +152,7 @@ struct RenderOp {
 }
 #[derive(Debug, Clone, Copy)]
 struct RenderOpData {
-    model: glam::Mat4,
+    model: Mat4,
     uv_scale: f32,
     vertex_positions: BufferPointer,
     vertex_attributes: BufferPointer,
@@ -194,17 +193,17 @@ impl Ord for RenderOp {
 #[repr(C, align(16))]
 
 pub struct DirectionalLight {
-    pub direction: glam::Vec3A,
-    pub color: glam::Vec3A,
+    pub direction: Vec3A,
+    pub color: Vec3A,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 
 pub struct HemisphericalAmbient {
-    pub top: glam::Vec3A,
-    pub middle: glam::Vec3A,
-    pub bottom: glam::Vec3A,
+    pub top: Vec3A,
+    pub middle: Vec3A,
+    pub bottom: Vec3A,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -342,7 +341,7 @@ impl SceneRenderer {
             view: env.camera.view,
             projection,
             view_projection: projection * env.camera.view,
-            eye_position: env.camera.view.transform_point3(glam::Vec3::default()),
+            eye_position: env.camera.view.transform_point3(Vec3::default()),
             lights: env.lights,
             ambient: env.ambient,
         }])?;

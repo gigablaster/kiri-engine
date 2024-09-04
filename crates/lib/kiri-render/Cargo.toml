@@ -14,7 +14,6 @@ kiri-math = { path = "../kiri-math" }
 ash = "0.38.0"
 thiserror = "1.0.61"
 log = "0.4.20"
-glam = "0.29.0"
 puffin = "0.19.0"
 radsort = "0.1.1"
 

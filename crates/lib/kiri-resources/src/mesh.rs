@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use kiri_assets::MeshMaterialBlend;
 use kiri_common::NodeIndex;
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
-use kiri_math::BoundingSphere;
+use kiri_math::{Affine3A, BoundingSphere};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
@@ -81,8 +81,8 @@ pub struct RenderModel {
     pub bounds_per_mesh: Vec<BoundingSphere>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
-    pub local_transforms: Vec<glam::Affine3A>,
-    pub world_transforms: Vec<glam::Affine3A>,
+    pub local_transforms: Vec<Affine3A>,
+    pub world_transforms: Vec<Affine3A>,
     pub node_to_mesh: Vec<(u32, u32)>,
     pub mesh_names: Vec<String>,
 }
