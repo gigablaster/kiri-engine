@@ -15,7 +15,7 @@
 
 use glam::{Affine3A, Vec3, Vec3A};
 
-use crate::Ray;
+use crate::{Bounds, Ray};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoundingSphere {
@@ -37,25 +37,23 @@ impl BoundingSphere {
             radius,
         }
     }
+}
 
-    pub fn transform(self, transform: Affine3A) -> Self {
-        let (scale, _, _) = transform.to_scale_rotation_translation();
-        let scale = scale.max_element();
-        Self {
-            center: transform.transform_point3a(self.center),
-            radius: self.radius * scale,
-        }
-    }
-
-    pub fn contains_point3(self, point: Vec3) -> bool {
-        self.contains_point3a(point.into())
-    }
-
-    pub fn contains_point3a(self, point: Vec3A) -> bool {
+impl Bounds for BoundingSphere {
+    fn contains_point3a(self, point: Vec3A) -> bool {
         self.center.distance_squared(point) <= self.radius * self.radius
     }
 
-    pub fn intersects_ray(self, ray: Ray) -> Option<f32> {
+    fn intersects_bbox(self, bbox: crate::BoundingBox) -> bool {
+        bbox.interesects_sphere(self)
+    }
+
+    fn interesects_sphere(self, sphere: BoundingSphere) -> bool {
+        self.center.distance_squared(sphere.center)
+            <= self.radius * self.radius + sphere.radius * sphere.radius
+    }
+
+    fn intersects_ray(self, ray: Ray) -> Option<f32> {
         // https://www.cs.colostate.edu/~cs410/yr2016fa/more_progress/cs410_F16_Lecture14.pdf
         let to_center = self.center - ray.origin;
         if to_center.dot(ray.direction) <= 0.0 {
@@ -70,13 +68,22 @@ impl BoundingSphere {
         }
         Some(v2.sqrt() - d2.sqrt())
     }
+
+    fn transform(self, transform: Affine3A) -> Self {
+        let (scale, _, _) = transform.to_scale_rotation_translation();
+        let scale = scale.max_element();
+        Self {
+            center: transform.transform_point3a(self.center),
+            radius: self.radius * scale,
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use glam::{vec3, Vec3};
 
-    use crate::Ray;
+    use crate::{Bounds, Ray};
 
     use super::BoundingSphere;
 

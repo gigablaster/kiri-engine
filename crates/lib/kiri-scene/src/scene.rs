@@ -15,7 +15,7 @@
 
 use glam::Affine3A;
 use kiri_common::{Handle, HotColdPool, NodeIndex};
-use kiri_math::BoundingSphere;
+use kiri_math::{BoundingSphere, Bounds};
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

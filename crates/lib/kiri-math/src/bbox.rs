@@ -15,7 +15,7 @@
 
 use glam::{Affine3A, Vec3, Vec3A};
 
-use crate::Ray;
+use crate::{BoundingSphere, Bounds, Ray};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoundingBox {
@@ -88,25 +88,31 @@ impl BoundingBox {
         (self.max - self.min).into()
     }
 
-    pub fn transform(self, transform: Affine3A) -> Self {
-        let min = transform.transform_point3a(self.min);
-        let max = transform.transform_point3a(self.max);
-        let mi = min.min(max);
-        let ma = min.max(max);
-        Self { min: mi, max: ma }
+    pub fn inside(self, other: BoundingBox) -> bool {
+        let min = self.min.cmple(other.min);
+        let max = self.max.cmpge(other.max);
+        (min & max).all()
     }
+}
 
-    pub fn contains_point3(self, point: Vec3) -> bool {
-        self.contains_point3a(point.into())
-    }
-
-    pub fn contains_point3a(self, point: Vec3A) -> bool {
+impl Bounds for BoundingBox {
+    fn contains_point3a(self, point: Vec3A) -> bool {
         let min = self.min.cmple(point);
         let max = self.max.cmpge(point);
         (min & max).all()
     }
 
-    pub fn intersects_ray(self, ray: Ray) -> Option<f32> {
+    fn intersects_bbox(self, bbox: BoundingBox) -> bool {
+        let min = self.min.cmple(bbox.max);
+        let max = self.max.cmpge(bbox.min);
+        (min & max).all()
+    }
+
+    fn interesects_sphere(self, sphere: BoundingSphere) -> bool {
+        todo!()
+    }
+
+    fn intersects_ray(self, ray: Ray) -> Option<f32> {
         // https://gamedev.stackexchange.com/questions/18436/most-efficient-aabb-vs-ray-collision-algorithms#18459
         let inv_dir = ray.direction.recip();
         let tmin = (self.min - ray.origin) * inv_dir;
@@ -121,16 +127,12 @@ impl BoundingBox {
         Some(min)
     }
 
-    pub fn inside(self, other: BoundingBox) -> bool {
-        let min = self.min.cmple(other.min);
-        let max = self.max.cmpge(other.max);
-        (min & max).all()
-    }
-
-    pub fn intersects(self, other: BoundingBox) -> bool {
-        let min = self.min.cmple(other.max);
-        let max = self.max.cmpge(other.min);
-        (min & max).all()
+    fn transform(self, transform: Affine3A) -> Self {
+        let min = transform.transform_point3a(self.min);
+        let max = transform.transform_point3a(self.max);
+        let mi = min.min(max);
+        let ma = min.max(max);
+        Self { min: mi, max: ma }
     }
 }
 
@@ -138,7 +140,7 @@ impl BoundingBox {
 mod test {
     use glam::{vec3, Affine3A, Vec3};
 
-    use crate::Ray;
+    use crate::{Bounds, Ray};
 
     use super::BoundingBox;
 
@@ -316,7 +318,7 @@ mod test {
     #[test]
     fn bbox_not_intersects_when_fully_outside() {
         assert!(
-            !BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects(
+            !BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects_bbox(
                 BoundingBox::from_extent(vec3(3.0, 3.0, 3.0), vec3(1.0, 1.0, 1.0))
             )
         );
@@ -325,7 +327,7 @@ mod test {
     #[test]
     fn bbox_intesects_when_partially_intersects() {
         assert!(
-            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects_bbox(
                 BoundingBox::from_extent(vec3(2.0, 2.0, 2.0), vec3(2.0, 2.0, 2.0))
             )
         );
@@ -334,7 +336,7 @@ mod test {
     #[test]
     fn bbox_intersects_when_smaller_and_inside() {
         assert!(
-            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects_bbox(
                 BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(1.0, 1.0, 1.0))
             )
         );
@@ -343,7 +345,7 @@ mod test {
     #[test]
     fn bbox_intersects_when_exact_same() {
         assert!(
-            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects_bbox(
                 BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
             )
         );

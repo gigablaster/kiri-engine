@@ -20,7 +20,25 @@ mod ray;
 
 pub use bbox::*;
 pub use bsphere::*;
+use glam::{Affine3A, Vec3, Vec3A};
 pub use plane::*;
 pub use ray::*;
 
 const EPSILON: f32 = 0.0000001;
+
+/// Shared traits for every bounding volume
+pub trait Bounds: Copy {
+    fn contains_point3(self, point: Vec3) -> bool {
+        self.contains_point3a(point.into())
+    }
+
+    fn contains_point3a(self, point: Vec3A) -> bool;
+
+    fn intersects_bbox(self, bbox: BoundingBox) -> bool;
+
+    fn interesects_sphere(self, sphere: BoundingSphere) -> bool;
+
+    fn intersects_ray(self, ray: Ray) -> Option<f32>;
+
+    fn transform(self, transform: Affine3A) -> Self;
+}
