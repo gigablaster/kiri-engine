@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use glam::{Affine3A, Vec3, Vec3A};
+use glam::{vec3a, Affine3A, Vec3, Vec3A};
 
 use crate::{BoundingSphere, Bounds, Ray};
 
@@ -109,7 +109,11 @@ impl Bounds for BoundingBox {
     }
 
     fn interesects_sphere(self, sphere: BoundingSphere) -> bool {
-        todo!()
+        // https://codereview.stackexchange.com/questions/145809/high-performance-branchless-intersection-testing-sphere-aabb-aabb-aabb
+        let ex = (self.min - sphere.center).max(Vec3A::ZERO)
+            + (sphere.center - self.max).max(Vec3A::ZERO);
+        let less_than_radius = ex.cmple(vec3a(sphere.radius, sphere.radius, sphere.radius));
+        less_than_radius.all() && ex.length_squared() < sphere.radius * sphere.radius
     }
 
     fn intersects_ray(self, ray: Ray) -> Option<f32> {
@@ -140,7 +144,7 @@ impl Bounds for BoundingBox {
 mod test {
     use glam::{vec3, Affine3A, Vec3};
 
-    use crate::{Bounds, Ray};
+    use crate::{BoundingSphere, Bounds, Ray};
 
     use super::BoundingBox;
 
@@ -348,6 +352,38 @@ mod test {
             BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0)).intersects_bbox(
                 BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
             )
+        );
+    }
+
+    #[test]
+    fn bbox_sphere_intersects() {
+        assert!(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
+                .interesects_sphere(BoundingSphere::new(vec3(-1.0, -1.0, -1.0), 2.5))
+        );
+    }
+
+    #[test]
+    fn bbox_sphere_not_intersects() {
+        assert!(
+            !BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
+                .interesects_sphere(BoundingSphere::new(vec3(-3.0, -3.0, -3.0), 2.0))
+        );
+    }
+
+    #[test]
+    fn bbox_sphere_intersects_sphere_inside() {
+        assert!(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
+                .interesects_sphere(BoundingSphere::new(vec3(1.0, 1.0, 1.0), 1.0))
+        );
+    }
+
+    #[test]
+    fn bbox_sphere_intersects_box_inside() {
+        assert!(
+            BoundingBox::from_extent(vec3(1.0, 1.0, 1.0), vec3(2.0, 2.0, 2.0))
+                .interesects_sphere(BoundingSphere::new(vec3(1.0, 1.0, 1.0), 5.0))
         );
     }
 }
