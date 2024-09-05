@@ -30,7 +30,7 @@ use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
-use kiri_math::{Affine3A, BoundingSphere, Quat, Vec3};
+use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Quat, Vec3};
 use kiri_vfs::{vfs_load, AssetReference};
 use log::debug;
 #[cfg(feature = "devel")]
@@ -457,7 +457,7 @@ impl ResourceCache {
                 vertex_attributes: BufferPointer::new(vertex_attributes, 0),
                 index_buffer: BufferPointer::new(indices, 0),
                 surfaces,
-                bounds: BoundingSphere::from_array_and_radius(mesh.bounds.0, mesh.bounds.1),
+                bounds: BoundingBox::from_extent_array(mesh.bounds.0, mesh.bounds.1),
                 position_scale: mesh.position_scale,
                 uv_scale: mesh.uv_scale,
             };
@@ -486,6 +486,7 @@ impl ResourceCache {
             world_transforms: asset.nodes.iter().map(|_| Affine3A::IDENTITY).collect(),
             node_to_mesh: asset.node_to_mesh,
             mesh_names: asset.mesh_names,
+            bounds: Default::default(),
         };
         scene.update_world_transforms();
         self.scene_assets.write().replace(handle, scene);

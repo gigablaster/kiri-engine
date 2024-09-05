@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use kiri_common::{Handle, HotColdPool, NodeIndex};
-use kiri_math::{Affine3A, BoundingSphere, Bounds};
+use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Bounds};
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,7 +25,7 @@ pub enum NodeValue {
 }
 
 impl NodeValue {
-    pub fn bounds<T: ResourceResolver>(self, resolver: &T) -> Option<BoundingSphere> {
+    pub fn bounds<T: ResourceResolver>(self, resolver: &T) -> Option<BoundingBox> {
         match self {
             Self::StaticMesh(handle, index) => resolver
                 .resolve_static_mesh(handle, index)
@@ -48,7 +48,7 @@ pub struct SceneNode {
 
 /// Интерфейс для получения данных из сцены
 pub trait SceneCuller: Send + Sync {
-    fn cull(&self, bounds: BoundingSphere) -> bool;
+    fn cull(&self, bounds: BoundingBox) -> bool;
 }
 
 const MAX_SCENE_NODES: usize = 0xfffff;
@@ -60,7 +60,7 @@ pub struct Scene {
     parents: Vec<NodeIndex>,
     local_transforms: Vec<Affine3A>,
     world_transforms: Vec<Affine3A>,
-    bounds: Vec<BoundingSphere>,
+    bounds: Vec<BoundingBox>,
     rebuild_scene: bool,
     recalculate_transforms: bool,
     update_bounds: Vec<NodeHandle>,
@@ -91,7 +91,7 @@ pub struct SceneCullIterator<'a, T: ResourceResolver, C: SceneCuller> {
     resolver: &'a T,
     culler: &'a C,
     nodes: &'a [NodeValue],
-    bounds: &'a [BoundingSphere],
+    bounds: &'a [BoundingBox],
     transforms: &'a [Affine3A],
     index: usize,
     model_node_to_mesh_index: usize,
@@ -100,7 +100,7 @@ pub struct SceneCullIterator<'a, T: ResourceResolver, C: SceneCuller> {
 impl<'a, T: ResourceResolver, C: SceneCuller> SceneCullIterator<'a, T, C> {
     fn new(
         nodes: &'a [NodeValue],
-        bounds: &'a [BoundingSphere],
+        bounds: &'a [BoundingBox],
         transforms: &'a [Affine3A],
         resolver: &'a T,
         culler: &'a C,

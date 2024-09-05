@@ -43,7 +43,7 @@ impl BoundingBox {
         }
     }
 
-    pub fn from_points(points: &[Vec3]) -> Self {
+    pub fn from_points3(points: &[Vec3]) -> Self {
         debug_assert!(
             !points.is_empty(),
             "Can't caluculate bounds when there's no points"
@@ -55,6 +55,20 @@ impl BoundingBox {
             max = max.max(*point);
         }
         Self::new(min, max)
+    }
+
+    pub fn from_points3a(points: &[Vec3A]) -> Self {
+        debug_assert!(
+            !points.is_empty(),
+            "Can't caluculate bounds when there's no points"
+        );
+        let mut min = Vec3A::MAX;
+        let mut max = Vec3A::MIN;
+        for point in points {
+            min = min.min(*point);
+            max = max.max(*point);
+        }
+        Self { min, max }
     }
 
     pub fn from_arrays(min: [f32; 3], max: [f32; 3]) -> Self {
@@ -86,6 +100,19 @@ impl BoundingBox {
 
     pub fn extents(self) -> Vec3 {
         (self.max - self.min).into()
+    }
+
+    pub fn corners(self) -> [Vec3A; 8] {
+        [
+            self.min,
+            vec3a(self.min.x, self.max.y, self.min.z),
+            vec3a(self.max.x, self.max.y, self.min.z),
+            vec3a(self.max.x, self.min.y, self.min.z),
+            vec3a(self.min.x, self.min.y, self.max.z),
+            vec3a(self.min.x, self.max.y, self.max.z),
+            self.max,
+            vec3a(self.max.x, self.min.y, self.max.z),
+        ]
     }
 
     pub fn inside(self, other: BoundingBox) -> bool {
@@ -132,11 +159,8 @@ impl Bounds for BoundingBox {
     }
 
     fn transform(self, transform: Affine3A) -> Self {
-        let min = transform.transform_point3a(self.min);
-        let max = transform.transform_point3a(self.max);
-        let mi = min.min(max);
-        let ma = min.max(max);
-        Self { min: mi, max: ma }
+        let points = self.corners().map(|x| transform.transform_point3a(x));
+        Self::from_points3a(&points)
     }
 
     fn is_on_or_forward_plane(self, plane: Plane) -> bool {

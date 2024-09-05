@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use kiri_assets::MeshMaterialBlend;
 use kiri_common::NodeIndex;
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
-use kiri_math::{Affine3A, BoundingSphere};
+use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Bounds, Vec3A};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
@@ -67,7 +67,7 @@ pub struct StaticRenderMesh {
     pub vertex_attributes: BufferPointer,
     pub index_buffer: BufferPointer,
     pub surfaces: Vec<RenderMeshSurface>,
-    pub bounds: BoundingSphere,
+    pub bounds: BoundingBox,
     pub position_scale: f32,
     pub uv_scale: f32,
 }
@@ -78,23 +78,32 @@ pub struct RenderModel {
     pub vertex_attributes: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<StaticRenderMesh>,
-    pub bounds_per_mesh: Vec<BoundingSphere>,
+    pub bounds_per_mesh: Vec<BoundingBox>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
     pub local_transforms: Vec<Affine3A>,
     pub world_transforms: Vec<Affine3A>,
     pub node_to_mesh: Vec<(u32, u32)>,
     pub mesh_names: Vec<String>,
+    pub bounds: BoundingBox,
 }
 
 impl RenderModel {
     pub(super) fn update_world_transforms(&mut self) {
+        let mut min = Vec3A::MAX;
+        let mut max = Vec3A::MIN;
         for (index, local) in self.local_transforms.iter().enumerate() {
             let parent = self.parents[index]
                 .index()
                 .map(|index| self.world_transforms[index as usize])
                 .unwrap_or(self.local_transforms[index]);
-            self.world_transforms[index] = parent * *local;
+            let world_transform = parent * *local;
+            self.world_transforms[index] = world_transform;
+            let bbox = self.bounds_per_mesh[self.node_to_mesh[index].1 as usize]
+                .transform(world_transform);
+            min = min.min(bbox.min);
+            max = max.max(bbox.max);
         }
+        self.bounds = BoundingBox { min, max };
     }
 }

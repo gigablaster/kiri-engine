@@ -15,7 +15,7 @@
 
 use std::mem;
 
-use kiri_math::Vec3;
+use kiri_math::{BoundingBox, Vec3};
 
 use crate::{
     MeshAssetMaterial, MeshSurfaceAsset, MeshVertexAttributes, MeshVertexPositions, StaticMeshAsset,
@@ -177,21 +177,15 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-fn calculate_bounding_sphere(vertices: &[FullVertex]) -> ([f32; 3], f32) {
+fn calculate_bounding_box(vertices: &[FullVertex]) -> ([f32; 3], [f32; 3]) {
     debug_assert!(!vertices.is_empty());
-    let mut middle = Vec3::from_array(vertices[0].position);
-    for vertex in vertices.iter().skip(1) {
-        middle += Vec3::from_array(vertex.position);
-    }
-    middle /= vertices.len() as f32;
-    let mut radius = 0.0;
-    for vertex in vertices {
-        let distance = middle.distance(Vec3::from_array(vertex.position));
-        if distance > radius {
-            radius = distance;
-        }
-    }
-    (middle.to_array(), radius)
+    let points = vertices
+        .iter()
+        .copied()
+        .map(|x| x.position)
+        .collect::<Vec<_>>();
+    let bbox = BoundingBox::from_points_array(&points);
+    (bbox.min.to_array(), bbox.max.to_array())
 }
 
 fn find_limit_value<T, const N: usize, F: Fn(&T) -> [f32; N]>(values: &[T], f: F) -> f32 {
@@ -281,7 +275,7 @@ impl MeshAssetBuilder {
             mesh_vertices.append(&mut vertices);
             mesh_indices.append(&mut indices);
         }
-        let bounds = calculate_bounding_sphere(&mesh_vertices);
+        let bounds = calculate_bounding_box(&mesh_vertices);
         let position_scale = (find_limit_value(&mesh_vertices, |x| x.position).max(1.0) as u32)
             .next_power_of_two() as f32;
         let uv_scale = (find_limit_value(&mesh_vertices, |x| x.uvs[0]).max(1.0) as u32)

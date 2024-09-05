@@ -33,7 +33,7 @@ use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
 };
-use kiri_math::{vec3, vec4, BoundingSphere, Mat4, Vec3, Vec3A};
+use kiri_math::{vec3, vec4, BoundingBox, BoundingSphere, Mat4, Vec3, Vec3A};
 use kiri_resources::{
     PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
@@ -130,7 +130,7 @@ pub struct SceneRenderer {
 struct NullCuller {}
 
 impl SceneCuller for NullCuller {
-    fn cull(&self, _bounds: BoundingSphere) -> bool {
+    fn cull(&self, _bounds: BoundingBox) -> bool {
         true
     }
 }

@@ -180,7 +180,7 @@ pub struct StaticMeshAsset {
     pub surfaces: Vec<MeshSurfaceAsset>,
     pub position_scale: f32,
     pub uv_scale: f32,
-    pub bounds: ([f32; 3], f32),
+    pub bounds: ([f32; 3], [f32; 3]),
 }
 
 #[derive(Debug, Clone, Readable, Writable)]
