@@ -268,7 +268,7 @@ mod import {
     ) -> ImageSource {
         match texture.source().source() {
             gltf::image::Source::Uri { uri, .. } => {
-                ImageSource::path(&format!("{}/{}", context.base_path, uri))
+                ImageSource::path(format!("{}/{}", context.base_path, uri))
                     .ty(ty)
                     .srgb(srgb)
             }

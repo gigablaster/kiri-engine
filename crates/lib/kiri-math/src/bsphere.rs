@@ -87,7 +87,7 @@ impl Bounds for BoundingSphere {
 mod test {
     use glam::{vec3, Vec3};
 
-    use crate::{Bounds, PerspectiveCamera, Plane, Ray};
+    use crate::{Bounds, Camera, PerspectiveCamera, Plane, Ray};
 
     use super::BoundingSphere;
 
@@ -194,7 +194,7 @@ mod test {
     fn bsphere_in_frustum() {
         let frustum =
             PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .to_frustum();
+                .frustum();
         assert!(BoundingSphere::new(vec3(0.0, 0.0, 5.0), 1.0).is_visible(&frustum));
         assert!(BoundingSphere::new(vec3(0.0, 0.0, 0.0), 3.0).is_visible(&frustum));
         assert!(BoundingSphere::new(vec3(0.0, 0.0, 10.0), 2.0).is_visible(&frustum));
@@ -204,7 +204,7 @@ mod test {
     fn bsphere_not_in_frustum() {
         let frustum =
             PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .to_frustum();
+                .frustum();
         assert!(!BoundingSphere::new(vec3(0.0, 0.0, -1.0), 1.0).is_visible(&frustum));
         assert!(!BoundingSphere::new(vec3(0.0, 0.0, 12.0), 1.0).is_visible(&frustum));
         assert!(!BoundingSphere::new(vec3(5.0, 0.0, 5.0), 1.0).is_visible(&frustum));

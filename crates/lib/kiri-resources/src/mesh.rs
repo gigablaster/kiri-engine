@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use kiri_assets::MeshMaterialBlend;
 use kiri_common::NodeIndex;
 use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle};
-use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Bounds, Vec3A};
+use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {

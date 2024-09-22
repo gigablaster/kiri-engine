@@ -175,7 +175,7 @@ impl Bounds for BoundingBox {
 mod test {
     use glam::{vec3, Affine3A, Vec3};
 
-    use crate::{BoundingSphere, Bounds, PerspectiveCamera, Plane, Ray};
+    use crate::{BoundingSphere, Bounds, Camera, PerspectiveCamera, Plane, Ray};
 
     use super::BoundingBox;
 
@@ -440,7 +440,7 @@ mod test {
     fn bbox_in_frustum() {
         let frustum =
             PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .to_frustum();
+                .frustum();
         assert!(BoundingBox::from_extent(vec3(0.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
         assert!(
             BoundingBox::from_extent(vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)).is_visible(&frustum)
@@ -455,7 +455,7 @@ mod test {
     fn bbox_not_in_frustum() {
         let frustum =
             PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .to_frustum();
+                .frustum();
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, -1.0), Vec3::ONE).is_visible(&frustum));
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, 12.0), Vec3::ONE).is_visible(&frustum));
         assert!(!BoundingBox::from_extent(vec3(0.0, 5.0, 5.0), Vec3::ONE).is_visible(&frustum));

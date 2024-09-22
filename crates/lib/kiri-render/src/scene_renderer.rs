@@ -33,7 +33,7 @@ use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
     ImageHandle, PipelineHandle, RenderContext, RenderTargetPool, TransientImageGuard,
 };
-use kiri_math::{vec3, vec4, BoundingBox, BoundingSphere, Mat4, Vec3, Vec3A};
+use kiri_math::{vec3, vec4, BoundingBox, Bounds, Camera, Mat4, Plane, Vec3, Vec3A};
 use kiri_resources::{
     PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
 };
@@ -127,17 +127,25 @@ pub struct SceneRenderer {
     tonemapping: PipelineHandle,
 }
 
-struct NullCuller {}
+struct FrustrumCuller {
+    planes: [Plane; 6],
+}
 
-impl SceneCuller for NullCuller {
-    fn cull(&self, _bounds: BoundingBox) -> bool {
-        true
+impl FrustrumCuller {
+    pub fn new(planes: [Plane; 6]) -> Self {
+        Self { planes }
+    }
+}
+
+impl SceneCuller for FrustrumCuller {
+    fn visible(&self, bounds: BoundingBox) -> bool {
+        bounds.is_visible(&self.planes)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct Camera {
+pub struct GpuCamera {
     pub view: Mat4,
     pub projection: Mat4,
 }
@@ -208,7 +216,6 @@ pub struct HemisphericalAmbient {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderEnviroment {
-    pub camera: Camera,
     pub lights: [DirectionalLight; 3],
     pub ambient: HemisphericalAmbient,
     pub expouse: f32,
@@ -263,11 +270,12 @@ impl SceneRenderer {
     pub fn render(
         &self,
         scene: &Scene,
+        camera: impl Camera,
         env: RenderEnviroment,
         context: &RenderContext,
     ) -> Result<(), Error> {
         puffin::profile_function!();
-        let color_target = self.render_geometry(scene, &env, context)?;
+        let color_target = self.render_geometry(scene, camera, &env, context)?;
         let post = self.tonemapping(color_target.handle, &env, context)?;
 
         context.submit(Box::new(FinalCompositionPassDispatcher::new(post.handle)));
@@ -315,6 +323,7 @@ impl SceneRenderer {
     fn render_geometry(
         &self,
         scene: &Scene,
+        camera: impl Camera,
         env: &RenderEnviroment,
         context: &RenderContext,
     ) -> Result<TransientImageGuard, Error> {
@@ -324,13 +333,15 @@ impl SceneRenderer {
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
         )?;
+        let view = camera.view();
+        let projection = camera.projection();
         let depth_target = self.target_pool.get_image(
             vk::Format::D24_UNORM_S8_UINT,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
                 | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
         )?;
-        let projection = env.camera.projection
+        let projection = projection
             * Mat4::from_cols(
                 vec4(1.0, 0.0, 0.0, 0.0),
                 vec4(0.0, -1.0, 0.0, 0.0),
@@ -338,10 +349,10 @@ impl SceneRenderer {
                 vec4(0.0, 0.0, 0.5, 1.0),
             );
         let pass_data = context.push_dynamic_data(&[RenderPassGpuData {
-            view: env.camera.view,
+            view,
             projection,
-            view_projection: projection * env.camera.view,
-            eye_position: env.camera.view.transform_point3(Vec3::default()),
+            view_projection: projection * view,
+            eye_position: view.transform_point3(Vec3::default()),
             lights: env.lights,
             ambient: env.ambient,
         }])?;
@@ -377,9 +388,10 @@ impl SceneRenderer {
         );
         let mut render_data = Vec::with_capacity(64536);
         let mut render_ops = Vec::with_capacity(64536);
+        let frustum = camera.frustum();
         {
             puffin::profile_scope!("Generate renderops");
-            for (tr, mesh) in scene.cull(&NullCuller {}, &resolver) {
+            for (tr, mesh) in scene.cull(&FrustrumCuller::new(frustum), &resolver) {
                 let decompress_mat = Mat4::from_scale(vec3(
                     mesh.position_scale,
                     mesh.position_scale,

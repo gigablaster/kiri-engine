@@ -15,7 +15,7 @@
 
 use std::mem;
 
-use kiri_math::{BoundingBox, Vec3};
+use kiri_math::BoundingBox;
 
 use crate::{
     MeshAssetMaterial, MeshSurfaceAsset, MeshVertexAttributes, MeshVertexPositions, StaticMeshAsset,

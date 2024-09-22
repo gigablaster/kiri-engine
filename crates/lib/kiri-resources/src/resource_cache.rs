@@ -30,7 +30,7 @@ use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
 };
-use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Quat, Vec3};
+use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
 use kiri_vfs::{vfs_load, AssetReference};
 use log::debug;
 #[cfg(feature = "devel")]

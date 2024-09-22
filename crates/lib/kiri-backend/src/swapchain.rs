@@ -193,7 +193,7 @@ impl Swapchain {
                     .raw
                     .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
             }?;
-            device.set_object_name(acquire_semaphore, &format!("Acquire {index}"));
+            device.set_object_name(acquire_semaphore, format!("Acquire {index}"));
             acquire_semaphores.push(acquire_semaphore);
         }
         Ok(Self {

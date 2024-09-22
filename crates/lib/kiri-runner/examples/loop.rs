@@ -4,10 +4,8 @@ use std::{error::Error, fmt::Display, sync::Arc};
 
 use kiri_common::Handle;
 use kiri_gfx::{RenderContext, Renderer};
-use kiri_math::{vec3, vec3a, Affine3A, Mat4, Quat, Vec3};
-use kiri_render::{
-    Camera, DirectionalLight, HemisphericalAmbient, RenderEnviroment, SceneRenderer,
-};
+use kiri_math::{vec3, vec3a, Affine3A, PerspectiveCamera, Quat, Vec3};
+use kiri_render::{DirectionalLight, HemisphericalAmbient, RenderEnviroment, SceneRenderer};
 use kiri_resources::{PipelineCache, ResourceCache};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 use kiri_scene::{NodeHandle, NodeValue, Scene};
@@ -83,12 +81,16 @@ impl GameClient<LoopError> for Loop {
 
     fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) {
         self.resources.tick().unwrap();
-        let camera = Camera {
-            view: Mat4::look_at_lh(vec3(0.0, 0.75, -2.0), vec3(0.0, 0.5, 0.0), Vec3::Y),
-            projection: Mat4::perspective_lh(1.0, context.backbuffer.desc.aspect(), 0.1, 1000.0),
-        };
+        let camera = PerspectiveCamera::new(
+            vec3(0.0, 0.75, -2.0),
+            Vec3::Z,
+            Vec3::Y,
+            1.0,
+            context.backbuffer.desc.aspect(),
+            0.1,
+            1000.0,
+        );
         let env = RenderEnviroment {
-            camera,
             lights: [
                 DirectionalLight {
                     direction: vec3a(3.0, -1.5, 0.5).normalize(),
@@ -110,7 +112,9 @@ impl GameClient<LoopError> for Loop {
             },
             expouse: 0.1,
         };
-        self.render.render(&self.scene, env, context).unwrap()
+        self.render
+            .render(&self.scene, camera, env, context)
+            .unwrap()
     }
 
     fn swapchain_created(&mut self) -> Result<(), GameError<LoopError>> {

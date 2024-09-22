@@ -17,6 +17,12 @@ use glam::{Mat4, Vec3};
 
 use crate::Plane;
 
+pub trait Camera {
+    fn view(&self) -> Mat4;
+    fn projection(&self) -> Mat4;
+    fn frustum(&self) -> [Plane; 6];
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PerspectiveCamera {
     pub origin: Vec3,
@@ -40,7 +46,7 @@ impl PerspectiveCamera {
     ) -> Self {
         Self {
             origin,
-            forward,
+            forward: forward.normalize(),
             up,
             fov,
             aspect,
@@ -48,16 +54,18 @@ impl PerspectiveCamera {
             zfar,
         }
     }
+}
 
-    pub fn view(self) -> Mat4 {
+impl Camera for PerspectiveCamera {
+    fn view(&self) -> Mat4 {
         Mat4::look_to_lh(self.origin, self.forward, self.up)
     }
 
-    pub fn projection(self) -> Mat4 {
+    fn projection(&self) -> Mat4 {
         Mat4::perspective_lh(self.fov, self.aspect, self.znear, self.zfar)
     }
 
-    pub fn to_frustum(self) -> [Plane; 6] {
+    fn frustum(&self) -> [Plane; 6] {
         let half_vside = self.zfar * (self.fov * 0.5).tan();
         let half_hside = half_vside * self.aspect;
         let far = self.zfar * self.forward;

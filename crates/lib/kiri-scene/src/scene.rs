@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use kiri_common::{Handle, HotColdPool, NodeIndex};
-use kiri_math::{Affine3A, BoundingBox, BoundingSphere, Bounds};
+use kiri_math::{Affine3A, BoundingBox, Bounds};
 use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +48,7 @@ pub struct SceneNode {
 
 /// Интерфейс для получения данных из сцены
 pub trait SceneCuller: Send + Sync {
-    fn cull(&self, bounds: BoundingBox) -> bool;
+    fn visible(&self, bounds: BoundingBox) -> bool;
 }
 
 const MAX_SCENE_NODES: usize = 0xfffff;
@@ -133,7 +133,7 @@ impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a,
                     self.index += 1;
                     // It's a mesh. Check if it's really exist, cull and return
                     if let Some(mesh) = self.resolver.resolve_static_mesh(model, index) {
-                        if self.culler.cull(self.bounds[current_index]) {
+                        if self.culler.visible(self.bounds[current_index]) {
                             return Some((self.transforms[current_index], mesh));
                         }
                     }
@@ -152,7 +152,7 @@ impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a,
                             let transform =
                                 self.transforms[current_index] * model.world_transforms[node_index];
                             let bounds = model.bounds_per_mesh[mesh_index].transform(transform);
-                            if self.culler.cull(bounds) {
+                            if self.culler.visible(bounds) {
                                 let mesh = &model.meshes[mesh_index];
                                 return Some((transform, mesh));
                             }
