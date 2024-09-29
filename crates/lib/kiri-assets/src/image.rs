@@ -15,11 +15,11 @@
 
 use std::time::SystemTime;
 
-use ash::vk;
 #[cfg(feature = "devel")]
 use image::{imageops::FilterType, ImageBuffer};
 #[cfg(feature = "devel")]
 use intel_tex_2::{bc5, bc7};
+use kiri_backend::ash::vk;
 use kiri_vfs::AssetReference;
 use speedy::{Context, Readable, Writable};
 use uuid::uuid;

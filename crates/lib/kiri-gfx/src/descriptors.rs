@@ -13,8 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk;
-use kiri_backend::{DescriptorSetCount, DescriptorSetLayoutDesc, RenderDevice};
+use kiri_backend::{ash::vk, DescriptorSetCount, DescriptorSetLayoutDesc, RenderDevice};
 
 use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
 

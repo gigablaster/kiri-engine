@@ -143,9 +143,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "bevy_tasks"
-version = "0.14.1"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84f5414c3f49c96e02ceccf5fa12fb6cfbf8b271d2a820902d6f622e9c2fa681"
+checksum = "77865f310b1fc48fb05b7c4adbe76607ec01d0c14f8ab4caba4d714c86439946"
 dependencies = [
  "async-channel",
  "async-executor",
@@ -793,7 +793,6 @@ name = "kiri"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "ash",
  "bevy_tasks",
  "kiri-assets",
  "kiri-backend",
@@ -813,7 +812,6 @@ dependencies = [
 name = "kiri-assets"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bytes",
  "gltf",
  "image",
@@ -865,7 +863,6 @@ name = "kiri-gfx"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "ash",
  "bevy_tasks",
  "byteorder",
  "kiri-backend",
@@ -887,7 +884,6 @@ dependencies = [
 name = "kiri-render"
 version = "0.1.0"
 dependencies = [
- "ash",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",
@@ -906,7 +902,6 @@ name = "kiri-resources"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "ash",
  "bevy_tasks",
  "bytes",
  "kiri-assets",
@@ -924,7 +919,6 @@ dependencies = [
 name = "kiri-runner"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bevy_tasks",
  "directories",
  "kiri",

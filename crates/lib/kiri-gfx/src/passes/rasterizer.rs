@@ -14,8 +14,13 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, Rect2D};
-use kiri_backend::{ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
+use kiri_backend::{
+    ash::{
+        self,
+        vk::{self, Rect2D},
+    },
+    ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+};
 
 use crate::{DrawStream, Error, ImageHandle, ImagePool, PassDispatcher, RenderResourceResolver};
 

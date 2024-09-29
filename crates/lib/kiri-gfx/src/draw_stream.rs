@@ -17,9 +17,14 @@ use std::io::{self, Cursor, Read};
 
 use crate::{BufferPointer, DescriptorHandle, Error, PipelineHandle, RenderResourceResolver};
 use arrayvec::ArrayVec;
-use ash::vk::{self, Rect2D};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use kiri_backend::{DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS};
+use kiri_backend::{
+    ash::{
+        self,
+        vk::{self, Rect2D},
+    },
+    DYNAMIC_BINDING_SLOT, MAX_DESCRIPTOR_SETS,
+};
 
 const MAX_VERTEX_STREAMS: usize = 2;
 const MAX_DYNAMIC_OFFSETS: usize = 2;

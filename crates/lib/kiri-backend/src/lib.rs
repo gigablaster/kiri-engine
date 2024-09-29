@@ -25,6 +25,7 @@ mod program;
 mod render_device;
 mod swapchain;
 
+pub use ash;
 use ash::vk;
 pub use buffer::*;
 use drop_list::*;

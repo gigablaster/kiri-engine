@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk;
+use kiri_backend::ash::vk;
 use thiserror::Error;
 
 use crate::{BufferHandle, DescriptorHandle, ImageHandle, PipelineHandle, ProgramHandle};

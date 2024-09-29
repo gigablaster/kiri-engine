@@ -13,8 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk::{self};
-use kiri_backend::Image;
+use kiri_backend::{
+    ash::{self, vk},
+    Image,
+};
 
 use crate::{
     BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, Error, ImageHandle, ImagePool,

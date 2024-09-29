@@ -16,8 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{ImageHandle, Renderer};
-use ash::vk::{self};
-use kiri_backend::ImageCreateDesc;
+use kiri_backend::{ash::vk, ImageCreateDesc};
 use log::debug;
 use parking_lot::Mutex;
 

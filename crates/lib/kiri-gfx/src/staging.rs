@@ -20,8 +20,7 @@ use std::{
     sync::Arc,
 };
 
-use ash::vk::{self};
-use kiri_backend::{Buffer, BufferCreateDesc, ImageDesc, RenderDevice};
+use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, ImageDesc, RenderDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{Error, ImageUploadData};

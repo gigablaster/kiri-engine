@@ -10,7 +10,6 @@ kiri-assets = { path = "../kiri-assets" }
 kiri-vfs = { path = "../kiri-vfs" }
 kiri-gfx = { path = "../kiri-gfx" }
 kiri-math = { path = "../kiri-math" }
-ash = "0.38.0"
 parking_lot = "0.12.3"
 bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
 thiserror = "1.0.61"

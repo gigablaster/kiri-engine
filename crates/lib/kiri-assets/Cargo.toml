@@ -33,7 +33,6 @@ gltf = { version = "1.4.1", features = [
 ], optional = true }
 thiserror = "1.0.61"
 shader-prepper = { version = "0.3.0-pre.3", optional = true }
-ash = "0.38.0"
 uuid = { version = "1.10.0", features = ["v4"] }
 log = "0.4.20"
 

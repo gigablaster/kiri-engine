@@ -20,8 +20,7 @@ use std::{
     time::SystemTime,
 };
 
-use ash::vk;
-use kiri_backend::{InputVertexAttrubute, InputVertexStreamLayout};
+use kiri_backend::{ash::vk, InputVertexAttrubute, InputVertexStreamLayout};
 use kiri_common::NodeIndex;
 use speedy::{Readable, Writable};
 use uuid::uuid;

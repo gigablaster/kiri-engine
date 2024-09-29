@@ -15,7 +15,6 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, mem, sync::Arc};
 
-use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 #[cfg(feature = "devel")]
 use kiri_assets::{
@@ -25,7 +24,9 @@ use kiri_assets::{
     load_asset, Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial,
     MeshVertexAttributes, MeshVertexPositions, ModelAsset, ModelSource,
 };
-use kiri_backend::{BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc};
+use kiri_backend::{
+    ash::vk, BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc,
+};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,

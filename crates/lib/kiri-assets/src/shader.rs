@@ -19,7 +19,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use ash::vk;
+use kiri_backend::ash::vk;
 use kiri_vfs::{AssetReference, ROOT_SOURCE_ASSETS_PATH};
 #[cfg(feature = "devel")]
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};

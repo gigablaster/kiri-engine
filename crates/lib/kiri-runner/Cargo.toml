@@ -13,7 +13,6 @@ kiri-resources = { path = "../kiri-resources" }
 kiri-render = { path = "../kiri-render" }
 kiri-scene = { path = "../kiri-scene" }
 kiri-math = { path = "../kiri-math" }
-ash = "0.38.0"
 thiserror = "1.0.61"
 directories = "5.0.1"
 raw-window-handle = "0.6.2"

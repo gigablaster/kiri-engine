@@ -11,7 +11,6 @@ kiri-gfx = { path = "../kiri-gfx" }
 kiri-resources = { path = "../kiri-resources" }
 kiri-scene = { path = "../kiri-scene" }
 kiri-math = { path = "../kiri-math" }
-ash = "0.38.0"
 thiserror = "1.0.61"
 log = "0.4.20"
 puffin = "0.19.0"

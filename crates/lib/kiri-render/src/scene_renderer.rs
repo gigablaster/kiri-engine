@@ -19,12 +19,11 @@ use crate::{
     gpu::{GpuInstanceData, RenderPassGpuData},
     Error,
 };
-use ash::vk::{self};
 use kiri_assets::STATIC_MESH_INPUT_LAYOUT;
 use kiri_backend::{
-    DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
-    RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT, MATERIAL_BINDING_SLOT,
-    PASS_BINDING_SLOT,
+    ash::vk, DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute,
+    InputVertexStreamLayout, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
+    MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     passes::{
