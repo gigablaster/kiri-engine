@@ -40,13 +40,11 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
 #[cfg(feature = "devel")]
 use std::{fs::File, io};
 
-use crate::{
-    ConstUniformBuffer, Error, RenderMaterial, RenderMeshSurface, RenderModel, StaticRenderMesh,
-};
+use crate::{ConstUniformBuffer, Error, Model, RenderMaterialBase, StaticMesh, SubMesh};
 
-pub type ModelHandle = Handle<RenderModel>;
+pub type ModelHandle = Handle<Model>;
 
-type ModelPool = Pool<RenderModel>;
+type ModelPool = Pool<Model>;
 
 type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset, ImageSource), Error>>;
 type SceneLoadingTask = Task<Result<(ModelHandle, ModelAsset, ModelSource), Error>>;
@@ -114,8 +112,8 @@ struct MeshMaterialData {
 
 /// Interaface to resource access
 pub trait ResourceResolver {
-    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh>;
-    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel>;
+    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticMesh>;
+    fn resolve_model(&self, handle: ModelHandle) -> Option<&Model>;
 }
 
 /// Keeps normalized asset name -> asset + ref count.
@@ -338,7 +336,7 @@ impl ResourceCache {
                 )
                 .bind_uniform_buffer(
                     0,
-                    self.material_uniforms.push(MeshMaterialData {
+                    self.material_uniforms.allocate(MeshMaterialData {
                         alpha_cutoff: material.blend.get_alpha_cut(),
                         emissive_power: material.emissive_power,
                     })?,
@@ -382,7 +380,7 @@ impl ResourceCache {
     }
 
     fn load_scene_impl(&self, source: &ModelSource) -> Result<ModelHandle, Error> {
-        let handle = self.scene_assets.write().push(RenderModel::default());
+        let handle = self.scene_assets.write().push(Model::default());
         self.scene_loading_tasks
             .lock()
             .push(IoTaskPool::get().spawn(Self::load_scene(handle, source.clone())));
@@ -397,7 +395,7 @@ impl ResourceCache {
     ) -> Result<(), Error> {
         let mut materials = Vec::new();
         for material in &asset.materials {
-            materials.push(RenderMaterial {
+            materials.push(RenderMaterialBase {
                 ds: self.get_or_load_material(material)?,
                 ty: material.blend.into(),
             });
@@ -446,14 +444,14 @@ impl ResourceCache {
             let surfaces = mesh
                 .surfaces
                 .into_iter()
-                .map(|x| RenderMeshSurface {
+                .map(|x| SubMesh {
                     first_index: x.first_index + mesh.first_index as u32,
                     index_count: x.index_count,
                     vertex_offset: mesh.first_vertex as u32,
                     material: materials[x.material as usize],
                 })
                 .collect::<Vec<_>>();
-            let mesh = StaticRenderMesh {
+            let mesh = StaticMesh {
                 vertex_positions: BufferPointer::new(vertex_positions, 0),
                 vertex_attributes: BufferPointer::new(vertex_attributes, 0),
                 index_buffer: BufferPointer::new(indices, 0),
@@ -465,7 +463,7 @@ impl ResourceCache {
             bounds.push(mesh.bounds);
             meshes.push(mesh);
         }
-        let mut scene = RenderModel {
+        let mut scene = Model {
             vertex_positions,
             vertex_attributes,
             indices,
@@ -532,12 +530,12 @@ pub struct ResourceCacheMeshResolver<'a> {
 }
 
 impl<'a> ResourceResolver for ResourceCacheMeshResolver<'a> {
-    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticRenderMesh> {
+    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticMesh> {
         let scene = self.scens.get(handle)?;
         Some(&scene.meshes[index as usize])
     }
 
-    fn resolve_model(&self, handle: ModelHandle) -> Option<&RenderModel> {
+    fn resolve_model(&self, handle: ModelHandle) -> Option<&Model> {
         self.scens.get(handle)
     }
 }

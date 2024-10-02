@@ -15,7 +15,7 @@
 
 use kiri_common::{Handle, HotColdPool, NodeIndex};
 use kiri_math::{Affine3A, BoundingBox, Bounds};
-use kiri_resources::{ModelHandle, ResourceResolver, StaticRenderMesh};
+use kiri_resources::{ModelHandle, ResourceResolver, StaticMesh};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeValue {
@@ -68,7 +68,7 @@ pub struct Scene {
 
 #[derive(Debug)]
 pub struct CullResult<'a> {
-    pub static_meshes: Vec<(Affine3A, &'a StaticRenderMesh)>,
+    pub static_meshes: Vec<(Affine3A, &'a StaticMesh)>,
 }
 
 impl Default for Scene {
@@ -118,7 +118,7 @@ impl<'a, T: ResourceResolver, C: SceneCuller> SceneCullIterator<'a, T, C> {
 }
 
 impl<'a, T: ResourceResolver, C: SceneCuller> Iterator for SceneCullIterator<'a, T, C> {
-    type Item = (Affine3A, &'a StaticRenderMesh);
+    type Item = (Affine3A, &'a StaticMesh);
 
     fn next(&mut self) -> Option<Self::Item> {
         // Check current node, skip empty nodes and process nodes with content
@@ -289,7 +289,7 @@ impl Scene {
         &'a self,
         culler: &'a T,
         resolver: &'a U,
-    ) -> impl Iterator<Item = (Affine3A, &'a StaticRenderMesh)> {
+    ) -> impl Iterator<Item = (Affine3A, &'a StaticMesh)> {
         puffin::profile_function!();
         assert!(
             !self.rebuild_scene && self.update_bounds.is_empty() && !self.recalculate_transforms,
@@ -308,7 +308,7 @@ impl Scene {
 #[cfg(test)]
 mod test {
     use kiri_math::{Vec3, Vec3A};
-    use kiri_resources::{RenderModel, StaticRenderMesh};
+    use kiri_resources::{Model, StaticMesh};
 
     use super::*;
 
@@ -316,15 +316,11 @@ mod test {
     struct DummyResolver {}
 
     impl ResourceResolver for DummyResolver {
-        fn resolve_static_mesh(
-            &self,
-            _handle: ModelHandle,
-            _index: u32,
-        ) -> Option<&StaticRenderMesh> {
+        fn resolve_static_mesh(&self, _handle: ModelHandle, _index: u32) -> Option<&StaticMesh> {
             None
         }
 
-        fn resolve_model(&self, _handle: ModelHandle) -> Option<&RenderModel> {
+        fn resolve_model(&self, _handle: ModelHandle) -> Option<&Model> {
             None
         }
     }

@@ -903,6 +903,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "bevy_tasks",
+ "byte-slice-cast",
  "bytes",
  "kiri-assets",
  "kiri-backend",
