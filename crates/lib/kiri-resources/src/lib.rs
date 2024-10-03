@@ -12,16 +12,20 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+mod material;
 mod mesh;
 mod pipeline_cache;
 mod resource_cache;
+mod texture;
 mod uniforms;
 
 use std::io;
 
+pub use material::*;
 pub use mesh::*;
 pub use pipeline_cache::*;
 pub use resource_cache::*;
+pub use texture::*;
 use thiserror::Error;
 use uniforms::*;
 

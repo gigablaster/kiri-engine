@@ -13,59 +13,93 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 
 use kiri_backend::BufferCreateDesc;
-use kiri_common::BumpAllocator;
-use kiri_gfx::{BufferHandle, BufferPointer, BufferSlice, Renderer};
+use kiri_common::BlockAllocator;
+use kiri_gfx::{BufferHandle, BufferSlice, Renderer};
+use parking_lot::Mutex;
 
 use crate::Error;
 
+const MATERIALS_PER_PAGE: u64 = 256;
+
+#[derive(Debug)]
+struct ConstUniformBufferPage {
+    pub buffer: BufferHandle,
+    allocator: BlockAllocator,
+}
 /// Static uniform allocator
 ///
 /// Allocate uniforms of single type.
 #[derive(Debug)]
 pub struct ConstUniformBuffer {
     renderer: Arc<Renderer>,
-    pub buffer: BufferHandle,
-    allocator: BumpAllocator,
+    item_size: u64,
+    pages: Mutex<Vec<ConstUniformBufferPage>>,
 }
 
 impl Drop for ConstUniformBuffer {
     fn drop(&mut self) {
-        self.renderer.destroy_buffer(self.buffer);
+        self.pages
+            .lock()
+            .drain(..)
+            .for_each(|x| self.renderer.destroy_buffer(x.buffer));
     }
 }
 
 impl ConstUniformBuffer {
-    pub fn new(renderer: &Arc<Renderer>, size: u64) -> Result<Self, Error> {
-        let buffer = renderer.create_buffer(
-            BufferCreateDesc::gpu(size)
-                .uniform_buffer()
-                .transfer_destination(),
-        )?;
-        Ok(Self {
+    pub fn new(renderer: &Arc<Renderer>, item_size: u64) -> Self {
+        Self {
             renderer: renderer.clone(),
-            buffer,
-            allocator: BumpAllocator::new(size),
-        })
+            item_size,
+            pages: Default::default(),
+        }
     }
 
-    pub fn push<T: Copy>(&self, data: T) -> Result<BufferSlice, Error> {
-        let aligment = self
-            .renderer
-            .device
-            .physical_device
-            .properties
-            .limits
-            .min_uniform_buffer_offset_alignment;
-        let size = mem::size_of::<T>() as u64;
-        let offset = self
-            .allocator
-            .allocate(size, aligment)
-            .ok_or(Error::TooManyUniforms)?;
-        self.renderer
-            .upload_buffer(BufferPointer::new(self.buffer, offset), &[data])?;
-        Ok(BufferSlice::new(self.buffer, offset, size))
+    pub fn allocate(&self, data: &[u8]) -> Result<BufferSlice, kiri_gfx::Error> {
+        let mut pages = self.pages.lock();
+        let allocated = pages
+            .iter_mut()
+            .find_map(|x| {
+                x.allocator
+                    .allocate()
+                    .map(|offset| BufferSlice::new(x.buffer, offset, self.item_size))
+            })
+            .unwrap_or_else(|| {
+                let chunk_size = self
+                    .renderer
+                    .device
+                    .physical_device
+                    .properties
+                    .limits
+                    .min_uniform_buffer_offset_alignment
+                    .max(self.item_size);
+                // Fixme:: unwrap
+                let buffer = self
+                    .renderer
+                    .create_buffer(
+                        BufferCreateDesc::gpu(chunk_size * MATERIALS_PER_PAGE)
+                            .transfer_destination()
+                            .uniform_buffer(),
+                    )
+                    .unwrap();
+                let mut allocator = BlockAllocator::new(chunk_size, MATERIALS_PER_PAGE);
+                let offset = allocator.allocate().unwrap();
+                pages.push(ConstUniformBufferPage { buffer, allocator });
+                BufferSlice::new(buffer, offset, self.item_size)
+            });
+        drop(pages);
+        self.renderer.upload_buffer(allocated.into(), data)?;
+        Ok(allocated)
+    }
+
+    pub fn free(&self, data: BufferSlice) {
+        let mut pages = self.pages.lock();
+        let page = pages
+            .iter_mut()
+            .find(|page| page.buffer == data.handle)
+            .expect("Uniform must be freed from it's own alloactor");
+        page.allocator.dealloc(data.offset);
     }
 }

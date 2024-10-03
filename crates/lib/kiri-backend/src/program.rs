@@ -122,6 +122,12 @@ impl<'a> DescriptorSetLayoutDesc<'a> {
         self.layout.iter().any(|(x, _)| *x == index)
     }
 
+    pub fn get_slot(&self, name: &str) -> Option<u32> {
+        self.layout
+            .iter()
+            .find_map(|(slot, desc)| (desc.name == name).then_some(*slot))
+    }
+
     pub fn get_desc(&self, slot: u32) -> Option<&DescriptorSetDesc> {
         self.layout
             .iter()
