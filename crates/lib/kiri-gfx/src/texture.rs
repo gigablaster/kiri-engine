@@ -15,8 +15,8 @@
 
 use std::sync::Arc;
 
+use crate::{Error, ImageHandle, ImageUploadData, Renderer};
 use kiri_backend::{ash::vk, ImageCreateDesc};
-use kiri_gfx::{ImageHandle, ImageUploadData, Renderer};
 
 #[derive(Debug)]
 pub struct Texture {
@@ -57,7 +57,7 @@ impl<'a> TexureBuilder<'a> {
         self
     }
 
-    pub fn build(self, renderer: &Arc<Renderer>) -> Result<Texture, kiri_gfx::Error> {
+    pub fn build(self, renderer: &Arc<Renderer>) -> Result<Texture, Error> {
         let mut desc = ImageCreateDesc::texture(self.format, self.dims)
             .sampled()
             .transfer_desitnation();
@@ -72,7 +72,7 @@ impl<'a> TexureBuilder<'a> {
 }
 
 impl Texture {
-    pub fn update(&self, builder: TexureBuilder) -> Result<(), kiri_gfx::Error> {
+    pub fn update(&self, builder: TexureBuilder) -> Result<(), Error> {
         let mut desc = ImageCreateDesc::texture(builder.format, builder.dims)
             .sampled()
             .transfer_desitnation();

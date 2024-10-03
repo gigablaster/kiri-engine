@@ -15,16 +15,16 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
+use crate::{BufferSlice, DescriptorHandle, DescriptorSetBuilder, PipelineHandle, Renderer};
 use byte_slice_cast::AsByteSlice;
 use kiri_backend::{
     ash::vk::{self},
     DescriptorSetLayoutDesc,
 };
 use kiri_common::Align;
-use kiri_gfx::{BufferSlice, DescriptorHandle, DescriptorSetBuilder, PipelineHandle, Renderer};
 use kiri_math::Vec4;
 
-use crate::{ConstUniformBuffer, Texture};
+use crate::{ConstUniformBuffer, Error, Texture};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderMaterialOrder {
@@ -102,7 +102,7 @@ pub trait RenderMaterial {
     fn create_instance(
         &self,
         desc: RenderMaterialInstanceDesc,
-    ) -> Result<RenderMaterialInstance, kiri_gfx::Error>;
+    ) -> Result<RenderMaterialInstance, Error>;
 }
 
 #[derive(Debug)]
@@ -158,7 +158,7 @@ impl RenderMaterialBuilder {
         self
     }
 
-    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderMaterialBase, kiri_gfx::Error> {
+    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderMaterialBase, Error> {
         Ok(RenderMaterialBase {
             renderer: renderer.clone(),
             unifroms: ConstUniformBuffer::new(
@@ -178,7 +178,7 @@ impl RenderMaterial for Arc<RenderMaterialBase> {
     fn create_instance(
         &self,
         desc: RenderMaterialInstanceDesc,
-    ) -> Result<RenderMaterialInstance, kiri_gfx::Error> {
+    ) -> Result<RenderMaterialInstance, Error> {
         let data = desc.write(&self.uniform_layout);
         let mut descriptor =
             DescriptorSetBuilder::new(vk::ShaderStageFlags::ALL_GRAPHICS, self.descriptor_layout);

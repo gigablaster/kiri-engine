@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 kiri-common = { path = "../kiri-common" }
 kiri-backend = { path = "../kiri-backend" }
+kiri-math = { path = "../kiri-math" }
 puffin = "0.19.0"
 thiserror = "1.0.61"
 arrayvec = "0.7.4"
@@ -13,3 +14,4 @@ parking_lot = "0.12.3"
 bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
 log = "0.4.22"
 byteorder = "1.5.0"
+byte-slice-cast = "1.2.2"

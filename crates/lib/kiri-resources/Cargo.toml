@@ -16,7 +16,6 @@ thiserror = "1.0.61"
 log = "0.4.20"
 arrayvec = "0.7.4"
 bytes = "1.6.0"
-byte-slice-cast = "1.2.2"
 
 [features]
 devel = ["kiri-assets/devel"]

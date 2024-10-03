@@ -15,12 +15,10 @@
 
 use std::sync::Arc;
 
+use crate::{BufferHandle, BufferSlice, Error, Renderer};
 use kiri_backend::BufferCreateDesc;
 use kiri_common::BlockAllocator;
-use kiri_gfx::{BufferHandle, BufferSlice, Renderer};
 use parking_lot::Mutex;
-
-use crate::Error;
 
 const MATERIALS_PER_PAGE: u64 = 256;
 
@@ -57,7 +55,7 @@ impl ConstUniformBuffer {
         }
     }
 
-    pub fn allocate(&self, data: &[u8]) -> Result<BufferSlice, kiri_gfx::Error> {
+    pub fn allocate(&self, data: &[u8]) -> Result<BufferSlice, Error> {
         let mut pages = self.pages.lock();
         let allocated = pages
             .iter_mut()

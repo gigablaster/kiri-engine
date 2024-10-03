@@ -15,18 +15,17 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use kiri_assets::{MeshMaterialBlend, ModelAsset};
+use crate::{BufferHandle, BufferPointer, Error, ImageHandle, RenderMaterialInstance, Renderer};
 use kiri_backend::BufferCreateDesc;
 use kiri_common::NodeIndex;
-use kiri_gfx::{BufferHandle, BufferPointer, DescriptorHandle, ImageHandle, Renderer};
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
     pub vertex_offset: u32,
-    pub material: RenderMaterial,
+    pub material: Arc<RenderMaterialInstance>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,22 +43,6 @@ pub enum RenderMaterialType {
     Opaque,
     Masked,
     Transparent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RenderMaterial {
-    pub ds: DescriptorHandle,
-    pub ty: RenderMaterialType,
-}
-
-impl From<MeshMaterialBlend> for RenderMaterialType {
-    fn from(value: MeshMaterialBlend) -> Self {
-        match value {
-            MeshMaterialBlend::Opaque => Self::Opaque,
-            MeshMaterialBlend::AlphaBlend => Self::Transparent,
-            MeshMaterialBlend::AlphaTest(_) => Self::Masked,
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -110,12 +93,17 @@ impl RenderMeshBuilder {
         }
     }
 
-    pub fn surface(&mut self, first_index: u32, index_count: u32, material: RenderMaterial) {
+    pub fn surface(
+        &mut self,
+        first_index: u32,
+        index_count: u32,
+        material: &Arc<RenderMaterialInstance>,
+    ) {
         self.surfaces.push(RenderMeshSurface {
             first_index,
             index_count,
             vertex_offset: self.vertex_offset as u32,
-            material,
+            material: material.clone(),
         });
     }
 
@@ -161,13 +149,13 @@ struct NodeBuilder {
 }
 
 pub struct RenderModelBuilder<'a, T: Copy, U: Copy> {
-    pub positions: &'a [T],
-    pub attributes: &'a [U],
-    pub indices: &'a [u16],
-    pub nodes: Vec<NodeBuilder>,
-    pub meshes: Vec<RenderMesh>,
-    pub attached_meshes: Vec<(u32, u32)>,
-    pub name: Option<&'a str>,
+    positions: &'a [T],
+    attributes: &'a [U],
+    indices: &'a [u16],
+    nodes: Vec<NodeBuilder>,
+    meshes: Vec<RenderMesh>,
+    attached_meshes: Vec<(u32, u32)>,
+    name: Option<&'a str>,
 }
 
 impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
@@ -222,7 +210,7 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         self
     }
 
-    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderModel, kiri_gfx::Error> {
+    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderModel, Error> {
         assert!(!self.meshes.is_empty(), "Model must have at least one mesh");
         assert!(!self.nodes.is_empty(), "Model must have at least one node");
         let name = self.name.unwrap_or("Mesh");

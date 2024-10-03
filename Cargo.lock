@@ -864,9 +864,11 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "bevy_tasks",
+ "byte-slice-cast",
  "byteorder",
  "kiri-backend",
  "kiri-common",
+ "kiri-math",
  "log",
  "parking_lot",
  "puffin",
@@ -903,7 +905,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "bevy_tasks",
- "byte-slice-cast",
  "bytes",
  "kiri-assets",
  "kiri-backend",
