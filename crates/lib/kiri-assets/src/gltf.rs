@@ -137,7 +137,7 @@ pub struct MeshAssetMaterial {
     pub metallic_roughness: ImageSource,
     pub occlusion: ImageSource,
     pub emissive: ImageSource,
-    pub emissive_power: f32, // Value * 1000
+    pub emissive_power: f32,
     pub blend: MeshMaterialBlend,
 }
 

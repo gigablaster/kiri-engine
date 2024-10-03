@@ -217,18 +217,21 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         let positions = renderer.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.positions) as _)
                 .transfer_destination()
+                .veretex_buffer()
                 .device_address()
                 .name(&format!("{} positions", name)),
         )?;
         let attributes = renderer.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.attributes) as _)
                 .transfer_destination()
+                .veretex_buffer()
                 .device_address()
                 .name(&format!("{} attributes", name)),
         )?;
         let indices = renderer.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.indices) as _)
                 .transfer_destination()
+                .index_buffer()
                 .device_address()
                 .name(&format!("{} indices", name)),
         )?;
