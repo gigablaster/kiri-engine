@@ -11,7 +11,6 @@ kiri-assets = { path = "../kiri-assets" }
 kiri-gfx = { path = "../kiri-gfx" }
 kiri-resources = { path = "../kiri-resources" }
 kiri-render = { path = "../kiri-render" }
-kiri-scene = { path = "../kiri-scene" }
 kiri-math = { path = "../kiri-math" }
 thiserror = "1.0.61"
 directories = "5.0.1"
@@ -31,9 +30,4 @@ puffin_http = "0.16.1"
 name = "loop"
 
 [features]
-devel = [
-    "kiri-assets/devel",
-    "kiri-resources/devel",
-    "kiri-scene/devel",
-    "kiri-render/devel",
-]
+devel = ["kiri-assets/devel", "kiri-resources/devel", "kiri-render/devel"]
