@@ -120,9 +120,18 @@ pub struct RenderMaterialBase {
 #[derive(Debug)]
 pub struct RenderMaterialInstance {
     material: Arc<RenderMaterialBase>,
-    desc: RenderMaterialInstanceDesc,
+    pub desc: RenderMaterialInstanceDesc,
     pub ds: DescriptorHandle,
     pub uniform: Option<BufferSlice>,
+}
+
+impl Drop for RenderMaterialInstance {
+    fn drop(&mut self) {
+        if let Some(uniform) = self.uniform.take() {
+            self.material.renderer.destroy_descriptor_set(self.ds);
+            self.material.unifroms.free(uniform);
+        }
+    }
 }
 
 #[derive(Debug)]
