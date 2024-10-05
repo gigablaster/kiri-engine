@@ -34,12 +34,12 @@ pub enum RenderMaterialOrder {
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderMaterialUniformLayout {
-    pub scalars: HashMap<String, usize>,
-    pub vectors: HashMap<String, usize>,
+pub struct RenderMaterialUniformLayout<'a> {
+    pub scalars: &'a [(&'a str, usize)],
+    pub vectors: &'a [(&'a str, usize)],
 }
 
-impl RenderMaterialUniformLayout {
+impl<'a> RenderMaterialUniformLayout<'a> {
     pub fn count(&self) -> usize {
         let mut max = self
             .scalars
@@ -69,20 +69,21 @@ impl RenderMaterialInstanceDesc {
     pub fn write(&self, layout: &RenderMaterialUniformLayout) -> Vec<f32> {
         let count = layout.count();
         let mut data = vec![0f32; count];
-        for (name, value) in &self.scalars {
-            let offset = layout
+        for (name, offset) in layout.scalars.iter().copied() {
+            let value = self
                 .scalars
                 .get(name)
-                .expect(&format!("Scalar paramter {} not in uniform layout", name));
-            Self::write_f32(&mut data, *offset, *value);
+                .expect(&format!("Scalar value {} isn't found", name));
+            Self::write_f32(&mut data, offset, *value);
         }
-        for (name, value) in &self.vectors {
-            let offset = layout
-                .scalars
+        for (name, offset) in layout.vectors.iter().copied() {
+            let value = self
+                .vectors
                 .get(name)
-                .expect(&format!("Vector paramter {} not in uniform layout", name));
-            Self::write_vec(&mut data, *offset, *value);
+                .expect(&format!("Vector value {} isn't found", name));
+            Self::write_vec(&mut data, offset, *value);
         }
+
         data
     }
 
@@ -108,7 +109,7 @@ pub trait RenderMaterial {
 #[derive(Debug)]
 pub struct RenderMaterialBase {
     renderer: Arc<Renderer>,
-    uniform_layout: RenderMaterialUniformLayout,
+    uniform_layout: RenderMaterialUniformLayout<'static>,
     descriptor_layout: DescriptorSetLayoutDesc<'static>,
     depth: Option<PipelineHandle>,
     main: PipelineHandle,
@@ -126,7 +127,7 @@ pub struct RenderMaterialInstance {
 
 #[derive(Debug)]
 pub struct RenderMaterialBuilder {
-    pub uniform_layout: RenderMaterialUniformLayout,
+    pub uniform_layout: RenderMaterialUniformLayout<'static>,
     pub descriptor_layout: DescriptorSetLayoutDesc<'static>,
     pub order: RenderMaterialOrder,
     pub depth: Option<PipelineHandle>,
@@ -135,7 +136,7 @@ pub struct RenderMaterialBuilder {
 
 impl RenderMaterialBuilder {
     pub fn new(
-        uniform_layout: RenderMaterialUniformLayout,
+        uniform_layout: RenderMaterialUniformLayout<'static>,
         descriptor_layout: DescriptorSetLayoutDesc<'static>,
         main: PipelineHandle,
     ) -> Self {

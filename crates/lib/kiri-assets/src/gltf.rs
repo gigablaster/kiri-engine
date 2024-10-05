@@ -132,23 +132,29 @@ impl MeshMaterialBlend {
 
 #[derive(Debug, Clone, Readable, Writable, PartialEq)]
 pub struct MeshAssetMaterial {
-    pub base_color: ImageSource,
-    pub normals: ImageSource,
-    pub metallic_roughness: ImageSource,
-    pub occlusion: ImageSource,
-    pub emissive: ImageSource,
-    pub emissive_power: f32,
+    pub images: HashMap<String, ImageSource>,
+    pub scalars: HashMap<String, f32>,
+    pub vectors: HashMap<String, [f32; 4]>,
     pub blend: MeshMaterialBlend,
 }
 
 impl Hash for MeshAssetMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.base_color.hash(state);
-        self.normals.hash(state);
-        self.metallic_roughness.hash(state);
-        self.occlusion.hash(state);
-        self.emissive.hash(state);
-        ((self.emissive_power * 1000.0) as u64).hash(state);
+        self.images.iter().for_each(|(name, texture)| {
+            name.hash(state);
+            texture.hash(state);
+        });
+        self.scalars.iter().for_each(|(name, value)| {
+            name.hash(state);
+            ((value * 100000.0) as u64).hash(state);
+        });
+        self.vectors.iter().for_each(|(name, [x, y, z, w])| {
+            name.hash(state);
+            ((x * 100000.0) as u64).hash(state);
+            ((y * 100000.0) as u64).hash(state);
+            ((z * 100000.0) as u64).hash(state);
+            ((w * 100000.0) as u64).hash(state);
+        });
         self.blend.hash(state);
     }
 }
@@ -157,11 +163,9 @@ impl Eq for MeshAssetMaterial {}
 
 impl MeshAssetMaterial {
     fn collect_images<'a>(&'a self, images: &mut HashSet<&'a ImageSource>) {
-        images.insert(&self.base_color);
-        images.insert(&self.normals);
-        images.insert(&self.metallic_roughness);
-        images.insert(&self.occlusion);
-        images.insert(&self.emissive);
+        self.images.iter().for_each(|(_, image)| {
+            images.insert(image);
+        });
     }
 }
 
@@ -339,13 +343,21 @@ mod import {
             ]))
         };
         MeshAssetMaterial {
-            emissive_power: material.emissive_strength().unwrap_or(0.0),
+            images: [
+                ("base_color".to_owned(), base_color),
+                ("normals".to_owned(), normals),
+                ("metallic_roughness".to_owned(), metallic_roughness),
+                ("occlusion".to_owned(), occlusion),
+                ("emissive".to_owned(), emissive),
+            ]
+            .into(),
+            scalars: [(
+                "emissive_power".to_owned(),
+                material.emissive_strength().unwrap_or(0.0),
+            )]
+            .into(),
             blend: process_blend(&material),
-            base_color,
-            normals,
-            metallic_roughness,
-            occlusion,
-            emissive,
+            vectors: Default::default(),
         }
     }
 
