@@ -191,3 +191,45 @@ pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<Syste
     }
     None
 }
+
+#[cfg(not(feature = "devel"))]
+pub(crate) fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
+    source: &T,
+) -> Result<U, Error> {
+    let reference = source.reference();
+    let reader = vfs_load(reference)?;
+    Ok(load_asset(reader)?)
+}
+
+#[cfg(feature = "devel")]
+pub fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
+    source: &T,
+) -> Result<U, Error> {
+    use kiri_vfs::vfs_load;
+    use log::{debug, warn};
+
+    let reference = source.reference();
+    let newer = get_compiled_asset_change_time(reference)
+        .map(|x| source.changed(x))
+        .unwrap_or(false);
+    if !newer {
+        if let Ok(reader) = vfs_load(reference) {
+            debug!("Loading asset: {:?}", source);
+            return Ok(load_asset(reader)?);
+        }
+    }
+    // There's no compiled asset, so compile it in runtime
+    warn!("Compile asset: {:?}", source);
+    let asset = source.import()?;
+    if let Err(err) = try_save_asset(reference, &asset) {
+        warn!("Failed to save compiled asset to cache: {}", err);
+    }
+    Ok(asset)
+}
+
+#[cfg(feature = "devel")]
+fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
+    use std::fs::File;
+
+    save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
+}

@@ -42,6 +42,8 @@ pub enum Error {
     InvalidDescriptorHandle(DescriptorHandle),
     #[error("Invalid program handle {0}")]
     InvalidProgramHandle(ProgramHandle),
+    #[error("Asset compilation failed {0}")]
+    AssetCompilationFailed(#[from] kiri_assets::Error),
 }
 
 impl From<vk::Result> for Error {

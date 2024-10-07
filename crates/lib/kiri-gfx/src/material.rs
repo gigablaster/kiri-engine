@@ -13,13 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, mem, sync::Arc};
 
-use crate::{BufferSlice, DescriptorHandle, DescriptorSetBuilder, PipelineHandle, Renderer};
+use crate::{
+    BufferSlice, DescriptorHandle, DescriptorSetBuilder, PipelineCache, PipelineHandle,
+    RasterPipelineDesc, Renderer,
+};
 use byte_slice_cast::AsByteSlice;
 use kiri_backend::{
     ash::vk::{self},
-    DescriptorSetLayoutDesc,
+    DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
+    MATERIAL_BINDING_SLOT,
 };
 use kiri_common::Align;
 use kiri_math::Vec4;
@@ -99,7 +103,7 @@ impl RenderMaterialInstanceDesc {
     }
 }
 
-pub trait RenderMaterial {
+pub trait RenderMaterial: Debug + Send + Sync {
     fn create_instance(
         &self,
         desc: RenderMaterialInstanceDesc,
@@ -109,86 +113,57 @@ pub trait RenderMaterial {
 #[derive(Debug)]
 pub struct RenderMaterialBase {
     renderer: Arc<Renderer>,
+    pub depth: Option<MaterialShader>,
+    pub main: MaterialShader,
+    pub order: RenderMaterialOrder,
+}
+
+#[derive(Debug)]
+pub struct MaterialShader {
+    pub pipeline: PipelineHandle,
     uniform_layout: RenderMaterialUniformLayout<'static>,
     descriptor_layout: DescriptorSetLayoutDesc<'static>,
-    depth: Option<PipelineHandle>,
-    main: PipelineHandle,
-    order: RenderMaterialOrder,
     unifroms: ConstUniformBuffer,
 }
 
 #[derive(Debug)]
-pub struct RenderMaterialInstance {
-    material: Arc<RenderMaterialBase>,
-    pub desc: RenderMaterialInstanceDesc,
-    pub ds: DescriptorHandle,
-    pub uniform: Option<BufferSlice>,
-}
-
-impl Drop for RenderMaterialInstance {
-    fn drop(&mut self) {
-        if let Some(uniform) = self.uniform.take() {
-            self.material.renderer.destroy_descriptor_set(self.ds);
-            self.material.unifroms.free(uniform);
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct RenderMaterialBuilder {
+pub struct MaterialShaderDesc<'a> {
+    pub vertex_shader: &'a str,
+    pub fragment_shader: &'a str,
+    pub render_pass: &'static RenderPassLayout<'static>,
+    pub input_layout: &'static [InputVertexStreamLayout<'static>],
+    pub descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
     pub uniform_layout: RenderMaterialUniformLayout<'static>,
-    pub descriptor_layout: DescriptorSetLayoutDesc<'static>,
-    pub order: RenderMaterialOrder,
-    pub depth: Option<PipelineHandle>,
-    pub main: PipelineHandle,
+    pub raster_desc: RasterPipelineCreateDesc,
 }
 
-impl RenderMaterialBuilder {
-    pub fn new(
-        uniform_layout: RenderMaterialUniformLayout<'static>,
-        descriptor_layout: DescriptorSetLayoutDesc<'static>,
-        main: PipelineHandle,
-    ) -> Self {
-        Self {
-            uniform_layout,
-            descriptor_layout,
-            order: RenderMaterialOrder::Opaque,
-            depth: None,
-            main,
-        }
-    }
-
-    pub fn depth(mut self, pipeline: PipelineHandle) -> Self {
-        self.depth = Some(pipeline);
-        self
-    }
-
-    pub fn order(mut self, order: RenderMaterialOrder) -> Self {
-        self.order = order;
-        self
-    }
-
-    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderMaterialBase, Error> {
-        Ok(RenderMaterialBase {
-            renderer: renderer.clone(),
+impl MaterialShader {
+    fn new(cache: &PipelineCache, desc: MaterialShaderDesc) -> Result<Self, Error> {
+        Ok(Self {
+            pipeline: cache.get_or_create_raster_pipeline(
+                RasterPipelineDesc::new(
+                    desc.vertex_shader,
+                    desc.fragment_shader,
+                    desc.render_pass,
+                    desc.input_layout,
+                    desc.descriptor_layout,
+                )
+                .pipeline_desc(desc.raster_desc),
+            )?,
             unifroms: ConstUniformBuffer::new(
-                renderer,
-                (self.uniform_layout.count() * mem::size_of::<f32>()) as _,
+                &cache.renderer,
+                (desc.uniform_layout.count() * mem::size_of::<f32>()) as u64,
             ),
-            uniform_layout: self.uniform_layout,
-            descriptor_layout: self.descriptor_layout,
-            depth: self.depth,
-            main: self.main,
-            order: self.order,
+            uniform_layout: desc.uniform_layout,
+            descriptor_layout: desc.descriptor_layout[MATERIAL_BINDING_SLOT],
         })
     }
-}
 
-impl RenderMaterial for Arc<RenderMaterialBase> {
-    fn create_instance(
+    fn create_shader_instance(
         &self,
-        desc: RenderMaterialInstanceDesc,
-    ) -> Result<RenderMaterialInstance, Error> {
+        renderer: &Renderer,
+        desc: &RenderMaterialInstanceDesc,
+    ) -> Result<MaterialShaderInstance, Error> {
         let data = desc.write(&self.uniform_layout);
         let mut descriptor =
             DescriptorSetBuilder::new(vk::ShaderStageFlags::ALL_GRAPHICS, self.descriptor_layout);
@@ -209,12 +184,100 @@ impl RenderMaterial for Arc<RenderMaterialBase> {
                 descriptor = descriptor.bind_image(slot, texture.image, vk::ImageAspectFlags::COLOR)
             }
         }
-        let ds = self.renderer.create_descriptor_set(descriptor)?;
+        Ok(MaterialShaderInstance {
+            ds: renderer.create_descriptor_set(descriptor)?,
+            uniform,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct MaterialShaderInstance {
+    ds: DescriptorHandle,
+    uniform: Option<BufferSlice>,
+}
+
+impl MaterialShaderInstance {
+    pub fn free(&mut self, renderer: &Renderer, shader: &MaterialShader) {
+        if let Some(uniform) = self.uniform.take() {
+            shader.unifroms.free(uniform);
+        }
+        renderer.destroy_descriptor_set(self.ds);
+    }
+}
+
+pub struct RenderMaterialBuilder<'a> {
+    pub main: MaterialShaderDesc<'a>,
+    pub depth: Option<MaterialShaderDesc<'a>>,
+    pub order: RenderMaterialOrder,
+}
+
+impl<'a> RenderMaterialBuilder<'a> {
+    pub fn new(main: MaterialShaderDesc<'a>) -> Self {
+        Self {
+            main,
+            depth: None,
+            order: RenderMaterialOrder::Opaque,
+        }
+    }
+
+    pub fn depth(mut self, depth: MaterialShaderDesc<'a>) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    pub fn order(mut self, order: RenderMaterialOrder) -> Self {
+        self.order = order;
+        self
+    }
+
+    pub fn build(self, cache: &Arc<PipelineCache>) -> Result<RenderMaterialBase, Error> {
+        let depth = if let Some(depth) = self.depth {
+            Some(MaterialShader::new(cache, depth)?)
+        } else {
+            None
+        };
+        Ok(RenderMaterialBase {
+            renderer: cache.renderer.clone(),
+            main: MaterialShader::new(cache, self.main)?,
+            depth: depth,
+            order: self.order,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct RenderMaterialInstance {
+    material: Arc<RenderMaterialBase>,
+    main: MaterialShaderInstance,
+    depth: Option<MaterialShaderInstance>,
+}
+
+impl Drop for RenderMaterialInstance {
+    fn drop(&mut self) {
+        self.main.free(&self.material.renderer, &self.material.main);
+        if let Some(depth) = &self.material.depth {
+            self.depth
+                .iter_mut()
+                .for_each(|x| x.free(&self.material.renderer, depth));
+        }
+    }
+}
+
+impl RenderMaterial for Arc<RenderMaterialBase> {
+    fn create_instance(
+        &self,
+        desc: RenderMaterialInstanceDesc,
+    ) -> Result<RenderMaterialInstance, Error> {
+        let depth = if let Some(depth) = &self.depth {
+            Some(depth.create_shader_instance(&self.renderer, &desc)?)
+        } else {
+            None
+        };
         Ok(RenderMaterialInstance {
             material: self.clone(),
-            desc,
-            ds,
-            uniform,
+            main: self.main.create_shader_instance(&self.renderer, &desc)?,
+            depth,
         })
     }
 }

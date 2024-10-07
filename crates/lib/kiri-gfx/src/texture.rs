@@ -30,14 +30,14 @@ impl Drop for Texture {
     }
 }
 
-pub struct TexureBuilder<'a> {
+pub struct TextureBuilder<'a> {
     pub format: vk::Format,
     pub dims: [u32; 2],
     pub data: Option<&'a [ImageUploadData<'a>]>,
     pub name: Option<&'a str>,
 }
 
-impl<'a> TexureBuilder<'a> {
+impl<'a> TextureBuilder<'a> {
     pub fn new(format: vk::Format, dims: [u32; 2]) -> Self {
         Self {
             format,
@@ -72,7 +72,7 @@ impl<'a> TexureBuilder<'a> {
 }
 
 impl Texture {
-    pub fn update(&self, builder: TexureBuilder) -> Result<(), Error> {
+    pub fn update(&self, builder: TextureBuilder) -> Result<(), Error> {
         let mut desc = ImageCreateDesc::texture(builder.format, builder.dims)
             .sampled()
             .transfer_desitnation();

@@ -23,6 +23,7 @@ mod image_pool;
 mod material;
 mod mesh;
 pub mod passes;
+mod pipeline_cache;
 mod renderer;
 mod staging;
 mod texture;
@@ -37,6 +38,7 @@ pub use error::*;
 pub use image_pool::*;
 pub use material::*;
 pub use mesh::*;
+pub use pipeline_cache::*;
 pub use renderer::*;
 use staging::*;
 pub use texture::*;
@@ -45,4 +47,10 @@ use uniforms::*;
 #[derive(Debug, Clone, Copy)]
 pub struct ImageUploadData<'a> {
     pub data: &'a [u8],
+}
+
+impl<'a> ImageUploadData<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
 }
