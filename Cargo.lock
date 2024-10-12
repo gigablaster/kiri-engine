@@ -1053,6 +1053,8 @@ dependencies = [
  "bevy_tasks",
  "byte-slice-cast",
  "byteorder",
+ "bytes",
+ "kiri-assets",
  "kiri-backend",
  "kiri-common",
  "kiri-math",
@@ -1067,22 +1069,6 @@ name = "kiri-math"
 version = "0.1.0"
 dependencies = [
  "glam 0.29.0",
-]
-
-[[package]]
-name = "kiri-render"
-version = "0.1.0"
-dependencies = [
- "kiri-assets",
- "kiri-backend",
- "kiri-common",
- "kiri-gfx",
- "kiri-math",
- "kiri-resources",
- "log",
- "puffin",
- "radsort",
- "thiserror",
 ]
 
 [[package]]
@@ -1115,7 +1101,6 @@ dependencies = [
  "kiri-common",
  "kiri-gfx",
  "kiri-math",
- "kiri-render",
  "kiri-resources",
  "log",
  "puffin",

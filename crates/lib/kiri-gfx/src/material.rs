@@ -180,7 +180,7 @@ impl MaterialShader {
             None
         };
         for (name, texture) in &desc.textures {
-            if let Some(slot) = self.descriptor_layout.get_slot(&name) {
+            if let Some(slot) = self.descriptor_layout.get_slot(name) {
                 descriptor = descriptor.bind_image(slot, texture.image, vk::ImageAspectFlags::COLOR)
             }
         }
@@ -240,7 +240,7 @@ impl<'a> RenderMaterialBuilder<'a> {
         Ok(RenderMaterialBase {
             renderer: cache.renderer.clone(),
             main: MaterialShader::new(cache, self.main)?,
-            depth: depth,
+            depth,
             order: self.order,
         })
     }

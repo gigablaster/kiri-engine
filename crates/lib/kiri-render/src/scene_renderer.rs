@@ -34,7 +34,7 @@ use kiri_gfx::{
 };
 use kiri_math::{vec3, vec4, BoundingBox, Bounds, Camera, Mat4, Plane, Vec3, Vec3A};
 use kiri_resources::{
-    PipelineCache, RasterPipelineDesc, ResourceCache, MATERIAL_DESCRIPTOR_LAYOUT,
+    PipelineCache, RasterPipelineDesc, ResourceManager, MATERIAL_DESCRIPTOR_LAYOUT,
 };
 use kiri_scene::{Scene, SceneCuller};
 
@@ -120,7 +120,7 @@ const POSTPROCESS_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStrea
 #[derive(Debug)]
 pub struct SceneRenderer {
     target_pool: RenderTargetPool,
-    resources: Arc<ResourceCache>,
+    resources: Arc<ResourceManager>,
     _pipelines: Arc<PipelineCache>,
     main_material: PipelineHandle,
     tonemapping: PipelineHandle,
@@ -228,7 +228,7 @@ struct TonemappingParams {
 
 impl SceneRenderer {
     pub fn new(
-        resource_cache: &Arc<ResourceCache>,
+        resource_cache: &Arc<ResourceManager>,
         pipeline_cache: &Arc<PipelineCache>,
     ) -> Result<Self, Error> {
         let renderer: &Arc<kiri_gfx::Renderer> = &resource_cache.renderer;

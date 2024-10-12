@@ -60,6 +60,7 @@ impl<'a> TextureBuilder<'a> {
     pub fn build(self, renderer: &Arc<Renderer>) -> Result<Texture, Error> {
         let mut desc = ImageCreateDesc::texture(self.format, self.dims)
             .sampled()
+            .mip_levels(self.data.map(|x| x.len() as u32).unwrap_or(1))
             .transfer_desitnation();
         if let Some(name) = self.name {
             desc = desc.name(name);

@@ -79,6 +79,10 @@ impl Default for NodeIndex {
 }
 
 impl NodeIndex {
+    pub fn none() -> NodeIndex {
+        Self::default()
+    }
+
     pub fn new(index: u32) -> NodeIndex {
         Self(index)
     }

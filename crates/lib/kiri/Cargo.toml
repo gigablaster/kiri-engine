@@ -13,6 +13,7 @@ kiri-math = { path = "../kiri-math" }
 kiri-resources = { path = "../kiri-resources" }
 parking_lot = "0.12.3"
 bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
+bevy_ecs = "0.14.1"
 thiserror = "1.0.61"
 log = "0.4.20"
 arrayvec = "0.7.4"
@@ -20,4 +21,4 @@ puffin = "0.19.0"
 radsort = "0.1.1"
 
 [features]
-devel = ["kiri-assets/devel"]
+devel = ["kiri-assets/devel", "kiri-gfx/devel"]

@@ -13,41 +13,40 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, mem, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use bevy_tasks::{block_on, IoTaskPool, Task};
+use bevy_tasks::{
+    block_on, futures_lite::future::yield_now, AsyncComputeTaskPool, IoTaskPool, Task,
+};
 #[cfg(feature = "devel")]
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, save_asset, ImportAsset,
 };
 use kiri_assets::{
-    load_asset, Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial,
-    MeshVertexAttributes, MeshVertexPositions, ModelAsset, ModelSource,
+    Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource,
 };
-use kiri_backend::{
-    ash::vk, BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, ImageCreateDesc,
-};
+use kiri_backend::{ash::vk, DescriptorSetDesc, DescriptorSetLayoutDesc};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, ImageHandle, ImageUploadData, Renderer,
+    ImageUploadData, PipelineCache, RenderMaterialInstance, RenderMaterialInstanceDesc,
+    RenderMeshBuilder, RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
 };
-use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
-use kiri_vfs::{vfs_load, AssetReference};
-use log::debug;
+use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 #[cfg(feature = "devel")]
 use log::warn;
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard};
+use log::{debug, error};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 #[cfg(feature = "devel")]
 use std::{fs::File, io};
 
-use crate::{ConstUniformBuffer, Error, Model, RenderMaterialBase, StaticMesh, SubMesh};
+use crate::Error;
 
-pub type ModelHandle = Handle<Model>;
+pub type ModelHandle = Handle<Resource<RenderModel>>;
+pub type TextureHandle = Handle<Resource<Texture>>;
+pub type MaterialHandle = Handle<Resource<RenderMaterialInstance>>;
 
-type ModelPool = Pool<Model>;
-
-type ImageLoadingTask = Task<Result<(ImageHandle, ImageAsset, ImageSource), Error>>;
-type SceneLoadingTask = Task<Result<(ModelHandle, ModelAsset, ModelSource), Error>>;
+type ImageLoadingTask = Task<Result<(TextureHandle, ImageAsset, ImageSource), Error>>;
+type ModelLoadingTask = Task<Result<(ModelHandle, ModelAsset, ModelSource), Error>>;
 
 pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
@@ -103,439 +102,296 @@ pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLay
     update_after_bind: false,
 };
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-struct MeshMaterialData {
-    pub alpha_cutoff: f32,
-    pub emissive_power: f32,
+const MAX_RESOURCES: usize = 0xffff;
+
+#[derive(Debug)]
+pub enum Resource<T: Debug + Send + Sync> {
+    Loading,
+    Failed,
+    Loaded(Arc<T>),
 }
 
-/// Interaface to resource access
-pub trait ResourceResolver {
-    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticMesh>;
-    fn resolve_model(&self, handle: ModelHandle) -> Option<&Model>;
+impl<T: Debug + Send + Sync> Clone for Resource<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Loading => Self::Loading,
+            Self::Failed => Self::Failed,
+            Self::Loaded(arg0) => Self::Loaded(arg0.clone()),
+        }
+    }
 }
 
-/// Keeps normalized asset name -> asset + ref count.
-///
-/// T must be a handle
-#[derive(Debug, Default)]
-struct AssetTracker<T: Copy + Hash + Eq> {
-    assets: RwLock<HashMap<AssetReference, T>>,
+#[derive(Debug)]
+pub struct ResourceType<K: Hash + Eq, T: Debug + Send + Sync> {
+    pool: Mutex<Pool<Resource<T>>>,
+    names: RwLock<HashMap<K, Handle<Resource<T>>>>,
+    loading: Mutex<Vec<(Handle<Resource<T>>, Task<Result<T, Error>>)>>,
 }
 
-impl<T: Copy + Hash + Eq> AssetTracker<T> {
-    /// Return asset if exists and increase ref count
-    fn get_or_load<U: AssetSource, LOAD: FnOnce(&U) -> Result<T, Error>>(
+impl<K: Hash + Eq, T: Debug + Send + Sync> Default for ResourceType<K, T> {
+    fn default() -> Self {
+        Self {
+            pool: Mutex::new(Pool::new(MAX_RESOURCES)),
+            names: Default::default(),
+            loading: Default::default(),
+        }
+    }
+}
+
+impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
+    fn get_or_load<LOAD: FnOnce() -> Task<Result<T, Error>>>(
         &self,
-        source: &U,
+        key: K,
         load: LOAD,
-    ) -> Result<T, Error> {
-        let assets = self.assets.upgradable_read();
-        let key = source.reference();
-        if let Some(asset) = assets.get(&key) {
-            Ok(*asset)
+    ) -> Handle<Resource<T>> {
+        let names = self.names.upgradable_read();
+        if let Some(handle) = names.get(&key) {
+            *handle
         } else {
-            let mut assets = RwLockUpgradableReadGuard::upgrade(assets);
-            if let Some(asset) = assets.get(&key) {
-                Ok(*asset)
+            let mut names = RwLockUpgradableReadGuard::upgrade(names);
+            if let Some(handle) = names.get(&key) {
+                *handle
             } else {
-                let asset = load(source)?;
-                assets.insert(key, asset);
-                Ok(asset)
+                let task = load();
+                let handle = self.pool.lock().push(Resource::Loading);
+                names.insert(key, handle);
+                self.loading.lock().push((handle, task));
+                handle
+            }
+        }
+    }
+
+    fn resolve(&self, handle: Handle<Resource<T>>) -> Option<Resource<T>> {
+        self.pool.lock().get(handle).cloned()
+    }
+
+    async fn wait(&self, handle: Handle<Resource<T>>) -> Result<Arc<T>, Error> {
+        loop {
+            if let Some(resource) = self.resolve(handle) {
+                match resource {
+                    Resource::Loading => yield_now().await,
+                    Resource::Failed => return Err(Error::ResourceLoadingFailed),
+                    Resource::Loaded(resource) => return Ok(resource),
+                }
+            }
+        }
+    }
+
+    fn tick(&self) {
+        let mut pool = self.pool.lock();
+        let mut loading = self.loading.lock();
+        let mut i = 0;
+        while i < loading.len() {
+            if loading[i].1.is_finished() {
+                let (handle, task) = loading.remove(i);
+                match block_on(task) {
+                    Ok(resource) => {
+                        pool.replace(handle, Resource::Loaded(Arc::new(resource)));
+                    }
+                    Err(err) => {
+                        error!("Failed to load asset: {}", err);
+                        pool.replace(handle, Resource::Failed);
+                    }
+                }
+            } else {
+                i += 1;
             }
         }
     }
 }
 
-#[cfg(not(feature = "devel"))]
-pub(crate) fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
-    source: &T,
-) -> Result<U, Error> {
-    let reference = source.reference();
-    let reader = vfs_load(reference)?;
-    Ok(load_asset(reader)?)
+pub trait ResourceLoader {
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>>;
+    fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>>;
 }
 
-#[cfg(feature = "devel")]
-pub(crate) fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + Debug, U: Asset>(
-    source: &T,
-) -> Result<U, Error> {
-    let reference = source.reference();
-    let newer = get_compiled_asset_change_time(reference)
-        .map(|x| source.changed(x))
-        .unwrap_or(false);
-    if !newer {
-        if let Ok(reader) = vfs_load(reference) {
-            debug!("Loading asset: {:?}", source);
-            return Ok(load_asset(reader)?);
-        }
-    }
-    // There's no compiled asset, so compile it in runtime
-    warn!("Compile asset: {:?}", source);
-    let asset = source.import()?;
-    if let Err(err) = try_save_asset(reference, &asset) {
-        warn!("Failed to save compiled asset to cache: {}", err);
-    }
-    Ok(asset)
+pub trait MaterialFactory: Debug + Send + Sync {
+    fn create_material_instance(
+        &self,
+        name: &str,
+        desc: &RenderMaterialInstanceDesc,
+    ) -> Result<Option<RenderMaterialInstance>, Error>;
 }
-
-#[cfg(feature = "devel")]
-fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
-    save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
-}
-
-const MATERIAL_BUFFER_SIZE: u64 = 2 * 1024 * 1024;
-const MAX_RESOURCES: usize = 0xffff;
 
 #[derive(Debug)]
-pub struct ResourceCache {
+pub struct ResourceManager {
     pub renderer: Arc<Renderer>,
-    // loading_tasks: Mutex<Vec<LoadingTask>>,
-    image_loading_tasks: Mutex<Vec<ImageLoadingTask>>,
-    scene_loading_tasks: Mutex<Vec<SceneLoadingTask>>,
-    images: AssetTracker<ImageHandle>,
-    scenes: AssetTracker<ModelHandle>,
-    scene_assets: RwLock<ModelPool>,
-    material_uniforms: ConstUniformBuffer,
-    materials: RwLock<HashMap<MeshAssetMaterial, DescriptorHandle>>,
+    pub pipeline_cache: Arc<PipelineCache>,
+    textures: ResourceType<ImageSource, Texture>,
+    materials: ResourceType<MeshAssetMaterial, RenderMaterialInstance>,
+    models: ResourceType<String, RenderModel>,
+    material_factory: Vec<Box<dyn MaterialFactory>>,
 }
 
-impl ResourceCache {
+impl ResourceLoader for Arc<ResourceManager> {
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>> {
+        let source = source.clone();
+        self.textures.get_or_load(source.clone(), || {
+            AsyncComputeTaskPool::get().spawn(ResourceManager::load_texture(self.clone(), source))
+        })
+    }
+
+    fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>> {
+        self.models.get_or_load(name.to_owned(), || {
+            AsyncComputeTaskPool::get()
+                .spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
+        })
+    }
+}
+
+impl ResourceManager {
     pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource manager");
         Ok(Arc::new(Self {
             renderer: renderer.clone(),
-            // loading_tasks: Default::default(),
-            image_loading_tasks: Default::default(),
-            scene_loading_tasks: Default::default(),
-            images: Default::default(),
+            pipeline_cache: PipelineCache::new(renderer),
+            textures: Default::default(),
             materials: Default::default(),
-            material_uniforms: ConstUniformBuffer::new(renderer, MATERIAL_BUFFER_SIZE)?,
-            scenes: Default::default(),
-            scene_assets: RwLock::new(ModelPool::new(MAX_RESOURCES)),
+            models: Default::default(),
+            material_factory: Default::default(),
         }))
     }
 
-    pub fn tick(&self) -> Result<(), Error> {
-        {
-            let mut loading = self.scene_loading_tasks.lock();
-            let mut i = 0;
-            while i < loading.len() {
-                if loading[i].is_finished() {
-                    let task = loading.remove(i);
-                    let (handle, asset, source) = block_on(task)?;
-                    self.process_scene(handle, asset, source)?;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-        {
-            let mut loading = self.image_loading_tasks.lock();
-            let mut i = 0;
-            while i < loading.len() {
-                if loading[i].is_finished() {
-                    let task = loading.remove(i);
-                    let (handle, asset, source) = block_on(task)?;
-                    self.process_image(handle, asset, source)?;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-
-        Ok(())
+    pub fn tick(&self) {
+        self.textures.tick();
+        self.materials.tick();
+        self.models.tick();
     }
 
-    pub fn resolve(&self) -> ResourceCacheMeshResolver {
-        ResourceCacheMeshResolver {
-            scens: self.scene_assets.read(),
-        }
+    #[cfg(feature = "devel")]
+    async fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
+        source: T,
+    ) -> Result<U, Error> {
+        use kiri_assets::load_or_compile_asset;
+
+        Ok(load_or_compile_asset(&source)?)
     }
 
-    pub fn get_or_load_image(
-        &self,
-        source: &ImageSource,
-        default_color: [u8; 4],
-    ) -> Result<ImageHandle, Error> {
-        let source = source.clone();
-        self.images.get_or_load(&source, |source| {
-            self.load_image_impl(source, default_color)
-        })
+    #[cfg(not(feature = "devel"))]
+    async fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
+        source: T,
+    ) -> Result<U, Error> {
+        use kiri_assets::load_asset;
+        use kiri_vfs::vfs_load;
+
+        let reference = source.reference();
+        let reader = vfs_load(reference)?;
+        Ok(load_asset(reader)?)
     }
 
-    fn load_image_impl(
-        &self,
-        source: &ImageSource,
-        default_color: [u8; 4],
-    ) -> Result<ImageHandle, Error> {
-        let handle = match &source.data {
-            kiri_assets::ImageData::Path(_) => {
-                let handle = self.renderer.create_image(
-                    ImageCreateDesc::texture(source.uncompressed_format(), [1, 1])
-                        .name(&format!("{:?} - DUMMY", source)),
-                    Some(&[ImageUploadData {
-                        data: &default_color,
-                    }]),
-                )?;
-                self.image_loading_tasks
-                    .lock()
-                    .push(IoTaskPool::get().spawn(Self::load_image(handle, source.clone())));
-                handle
-            }
-            kiri_assets::ImageData::Color(color) => self.renderer.create_image(
-                ImageCreateDesc::texture(source.uncompressed_format(), [1, 1])
-                    .name(&format!("{:?}", source)),
-                Some(&[ImageUploadData { data: color }]),
-            )?,
-        };
-
-        Ok(handle)
-    }
-
-    fn process_image(
-        &self,
-        handle: ImageHandle,
-        asset: ImageAsset,
+    async fn load_texture(
+        manager: Arc<ResourceManager>,
         source: ImageSource,
-    ) -> Result<(), Error> {
-        let upload = asset
-            .mips
-            .iter()
-            .map(|x| ImageUploadData { data: x })
-            .collect::<Vec<_>>();
-        self.renderer.update_image(
-            handle,
-            ImageCreateDesc::texture(asset.format, asset.dims)
-                .mip_levels(asset.mips.len() as _)
-                .name(&format!("{:?}", source)),
-            Some(&upload),
-        )?;
-        Ok(())
-    }
-
-    pub fn get_or_load_material(
-        &self,
-        material: &MeshAssetMaterial,
-    ) -> Result<DescriptorHandle, Error> {
-        let materials = self.materials.upgradable_read();
-        if let Some(material) = materials.get(material) {
-            Ok(*material)
-        } else {
-            let mut materials = RwLockUpgradableReadGuard::upgrade(materials);
-            if let Some(material) = materials.get(material) {
-                Ok(*material)
-            } else {
-                // Get all images
-
-                // Allocate and copy uniform data
-                let builder = DescriptorSetBuilder::new(
-                    vk::ShaderStageFlags::ALL_GRAPHICS,
-                    MATERIAL_DESCRIPTOR_LAYOUT,
-                )
-                .bind_uniform_buffer(
-                    0,
-                    self.material_uniforms.allocate(MeshMaterialData {
-                        alpha_cutoff: material.blend.get_alpha_cut(),
-                        emissive_power: material.emissive_power,
-                    })?,
-                )
-                .bind_image(
-                    1,
-                    self.get_or_load_image(&material.base_color, [127, 127, 127, 255])?,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                .bind_image(
-                    2,
-                    self.get_or_load_image(&material.normals, [127, 127, 255, 255])?,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                .bind_image(
-                    3,
-                    self.get_or_load_image(&material.metallic_roughness, [0, 255, 0, 255])?,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                .bind_image(
-                    4,
-                    self.get_or_load_image(&material.occlusion, [0, 0, 0, 0])?,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                .bind_image(
-                    5,
-                    self.get_or_load_image(&material.emissive, [0, 0, 0, 0])?,
-                    vk::ImageAspectFlags::COLOR,
-                );
-                let descriptor_set = self.renderer.create_descriptor_set(builder)?;
-                materials.insert(material.clone(), descriptor_set);
-                Ok(descriptor_set)
+    ) -> Result<Texture, Error> {
+        match &source.data {
+            kiri_assets::ImageData::Path(path) => {
+                let asset: ImageAsset = IoTaskPool::get()
+                    .spawn(Self::load_or_compile_asset(source.clone()))
+                    .await?;
+                let mips = asset
+                    .mips
+                    .iter()
+                    .map(|x| ImageUploadData::new(x))
+                    .collect::<Vec<_>>();
+                debug!("Create texture {:?}", source);
+                Ok(TextureBuilder::new(asset.format, asset.dims)
+                    .name(path)
+                    .data(&mips)
+                    .build(&manager.renderer)?)
+            }
+            kiri_assets::ImageData::Color(color) => {
+                Ok(TextureBuilder::new(source.uncompressed_format(), [1, 1])
+                    .data(&[ImageUploadData::new(color)])
+                    .build(&manager.renderer)?)
             }
         }
     }
 
-    pub fn get_or_load_scene(&self, name: &str) -> Result<ModelHandle, Error> {
-        let source = ModelSource::new(name);
-        self.scenes
-            .get_or_load(&source, |source| self.load_scene_impl(source))
-    }
-
-    fn load_scene_impl(&self, source: &ModelSource) -> Result<ModelHandle, Error> {
-        let handle = self.scene_assets.write().push(Model::default());
-        self.scene_loading_tasks
-            .lock()
-            .push(IoTaskPool::get().spawn(Self::load_scene(handle, source.clone())));
-        Ok(handle)
-    }
-
-    fn process_scene(
-        &self,
-        handle: ModelHandle,
-        asset: ModelAsset,
-        source: ModelSource,
-    ) -> Result<(), Error> {
-        let mut materials = Vec::new();
-        for material in &asset.materials {
-            materials.push(RenderMaterialBase {
-                ds: self.get_or_load_material(material)?,
-                ty: material.blend.into(),
-            });
+    async fn load_material(
+        manager: Arc<ResourceManager>,
+        source: MeshAssetMaterial,
+    ) -> Result<RenderMaterialInstance, Error> {
+        let loading_textures = source
+            .images
+            .into_iter()
+            .map(|(slot, source)| (slot, manager.get_or_load_texture(&source)))
+            .collect::<HashMap<_, _>>();
+        let mut textures = HashMap::new();
+        for (name, handle) in loading_textures {
+            textures.insert(name, manager.textures.wait(handle).await?);
         }
-
-        // Create buffers
-        let vertex_positions = self.renderer.create_buffer(
-            BufferCreateDesc::gpu(
-                (mem::size_of::<MeshVertexPositions>() * asset.vertex_positions.len()) as _,
-            )
-            .veretex_buffer()
-            .transfer_destination()
-            .name(&format!("{:?} - VB Pos", source)),
-        )?;
-        let vertex_attributes = self.renderer.create_buffer(
-            BufferCreateDesc::gpu(
-                (mem::size_of::<MeshVertexAttributes>() * asset.vertex_positions.len()) as _,
-            )
-            .veretex_buffer()
-            .transfer_destination()
-            .name(&format!("{:?} - VB Attr", source)),
-        )?;
-        let indices = self.renderer.create_buffer(
-            BufferCreateDesc::gpu((mem::size_of::<u16>() * asset.indices.len()) as _)
-                .index_buffer()
-                .transfer_destination()
-                .name(&format!("{:?} - IB", source)),
-        )?;
-
-        // Upload buffers
-        self.renderer.upload_buffer(
-            BufferPointer::new(vertex_positions, 0),
-            &asset.vertex_positions,
-        )?;
-        self.renderer.upload_buffer(
-            BufferPointer::new(vertex_attributes, 0),
-            &asset.vertex_attributes,
-        )?;
-        self.renderer
-            .upload_buffer(BufferPointer::new(indices, 0), &asset.indices)?;
-
-        // Create meshes
-        let mut meshes = Vec::new();
-        let mut bounds = Vec::new();
-        for mesh in asset.meshes {
-            let surfaces = mesh
-                .surfaces
+        let desc = RenderMaterialInstanceDesc {
+            textures,
+            scalars: source.scalars,
+            vectors: source
+                .vectors
                 .into_iter()
-                .map(|x| SubMesh {
-                    first_index: x.first_index + mesh.first_index as u32,
-                    index_count: x.index_count,
-                    vertex_offset: mesh.first_vertex as u32,
-                    material: materials[x.material as usize],
-                })
-                .collect::<Vec<_>>();
-            let mesh = StaticMesh {
-                vertex_positions: BufferPointer::new(vertex_positions, 0),
-                vertex_attributes: BufferPointer::new(vertex_attributes, 0),
-                index_buffer: BufferPointer::new(indices, 0),
-                surfaces,
-                bounds: BoundingBox::from_extent_array(mesh.bounds.0, mesh.bounds.1),
-                position_scale: mesh.position_scale,
-                uv_scale: mesh.uv_scale,
-            };
-            bounds.push(mesh.bounds);
-            meshes.push(mesh);
-        }
-        let mut scene = Model {
-            vertex_positions,
-            vertex_attributes,
-            indices,
-            meshes,
-            bounds_per_mesh: bounds,
-            names: asset.name_to_mesh,
-            parents: asset.nodes.iter().map(|x| x.parent).collect(),
-            local_transforms: asset
-                .nodes
-                .iter()
-                .map(|x| {
-                    Affine3A::from_scale_rotation_translation(
-                        Vec3::from_array(x.scale),
-                        Quat::from_array(x.rotation),
-                        Vec3::from_array(x.translation),
-                    )
-                })
+                .map(|(name, value)| (name, Vec4::from_array(value)))
                 .collect(),
-            world_transforms: asset.nodes.iter().map(|_| Affine3A::IDENTITY).collect(),
-            node_to_mesh: asset.node_to_mesh,
-            mesh_names: asset.mesh_names,
-            bounds: Default::default(),
         };
-        scene.update_world_transforms();
-        self.scene_assets.write().replace(handle, scene);
-        Ok(())
+        let mut material = None;
+        for factory in &manager.material_factory {
+            if let Some(new_material) = factory.create_material_instance(&source.name, &desc)? {
+                material = Some(new_material);
+                break;
+            }
+        }
+        Ok(material.ok_or(Error::MaterialNotFound)?)
     }
 
-    async fn load_image(
-        handle: ImageHandle,
-        source: ImageSource,
-    ) -> Result<(ImageHandle, ImageAsset, ImageSource), Error> {
-        Ok((handle, load_or_compile_asset(&source)?, source))
-    }
-
-    async fn load_scene(
-        handle: ModelHandle,
-        source: ModelSource,
-    ) -> Result<(ModelHandle, ModelAsset, ModelSource), Error> {
-        Ok((handle, load_or_compile_asset(&source)?, source))
-    }
-}
-
-impl Drop for ResourceCache {
-    fn drop(&mut self) {
-        self.images
-            .assets
-            .write()
-            .drain()
-            .for_each(|(_, handle)| self.renderer.destroy_image(handle));
-        self.scene_assets.write().drain().for_each(|scene| {
-            self.renderer.destroy_buffer(scene.vertex_positions);
-            self.renderer.destroy_buffer(scene.vertex_positions);
+    async fn load_model(manager: Arc<ResourceManager>, name: String) -> Result<RenderModel, Error> {
+        let asset: ModelAsset = IoTaskPool::get()
+            .spawn(Self::load_or_compile_asset(ModelSource::new(&name)))
+            .await?;
+        let mut builder = RenderModelBuilder::new(
+            &asset.vertex_positions,
+            &asset.vertex_attributes,
+            &asset.indices,
+        )
+        .name(&name);
+        let materials = asset
+            .materials
+            .into_iter()
+            .map(|x| {
+                manager.materials.get_or_load(x.clone(), || {
+                    AsyncComputeTaskPool::get().spawn(Self::load_material(manager.clone(), x))
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut loaded_materials = Vec::default();
+        for material in materials {
+            loaded_materials.push(Arc::new(manager.materials.wait(material).await?));
+        }
+        for mesh in asset.meshes {
+            let mut mesh_builder = RenderMeshBuilder::new(mesh.first_vertex, mesh.first_index)
+                .bounds(BoundingBox::from_arrays(mesh.bounds.0, mesh.bounds.1))
+                .position_scale(mesh.position_scale)
+                .uv_scale(mesh.uv_scale);
+            for surface in mesh.surfaces {
+                mesh_builder.surface(
+                    surface.first_index,
+                    surface.index_count,
+                    &loaded_materials[surface.material as usize],
+                );
+            }
+            builder.add_mesh(mesh_builder);
+        }
+        asset.nodes.into_iter().for_each(|x| {
+            builder.add_node(
+                x.parent,
+                &x.name,
+                Affine3A::from_scale_rotation_translation(
+                    Vec3::from_array(x.scale),
+                    Quat::from_array(x.rotation),
+                    Vec3::from_array(x.translation),
+                ),
+            );
         });
-        self.materials
-            .write()
-            .drain()
-            .for_each(|(_, ds)| self.renderer.destroy_descriptor_set(ds));
-    }
-}
-
-pub struct ResourceCacheMeshResolver<'a> {
-    scens: RwLockReadGuard<'a, ModelPool>,
-}
-
-impl<'a> ResourceResolver for ResourceCacheMeshResolver<'a> {
-    fn resolve_static_mesh(&self, handle: ModelHandle, index: u32) -> Option<&StaticMesh> {
-        let scene = self.scens.get(handle)?;
-        Some(&scene.meshes[index as usize])
-    }
-
-    fn resolve_model(&self, handle: ModelHandle) -> Option<&Model> {
-        self.scens.get(handle)
+        asset
+            .node_to_mesh
+            .into_iter()
+            .for_each(|(node, mesh)| builder.attach_mesh(node, mesh));
+        debug!("Create model {}", name);
+        Ok(builder.build(&manager.renderer)?)
     }
 }

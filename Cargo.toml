@@ -9,7 +9,6 @@ members = [
     "crates/lib/kiri",
     "crates/lib/kiri-gfx",
     "crates/lib/kiri-resources",
-    "crates/lib/kiri-render",
     "crates/lib/kiri-math",
 ]
 

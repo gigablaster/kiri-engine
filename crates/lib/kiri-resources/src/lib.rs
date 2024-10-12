@@ -12,12 +12,10 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-mod pipeline_cache;
 mod resource_cache;
 
 use std::io;
 
-pub use pipeline_cache::*;
 pub use resource_cache::*;
 use thiserror::Error;
 
@@ -35,4 +33,10 @@ pub enum Error {
     OutOfMeshMemory,
     #[error("Too many uniforms")]
     TooManyUniforms,
+    #[error("Failed to create material")]
+    MaterialCreationFailed,
+    #[error("Resource loading failed")]
+    ResourceLoadingFailed,
+    #[error("Material not found")]
+    MaterialNotFound,
 }

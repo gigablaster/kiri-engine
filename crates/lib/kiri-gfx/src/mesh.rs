@@ -153,7 +153,7 @@ pub struct RenderModelBuilder<'a, T: Copy, U: Copy> {
     attributes: &'a [U],
     indices: &'a [u16],
     nodes: Vec<NodeBuilder>,
-    meshes: Vec<RenderMesh>,
+    meshes: Vec<RenderMeshBuilder>,
     attached_meshes: Vec<(u32, u32)>,
     name: Option<&'a str>,
 }
@@ -171,7 +171,7 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         }
     }
 
-    pub fn add_mesh(&mut self, mesh: RenderMesh) -> u32 {
+    pub fn add_mesh(&mut self, mesh: RenderMeshBuilder) -> u32 {
         let index = self.meshes.len() as u32;
         self.meshes.push(mesh);
         index
@@ -197,12 +197,8 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         NodeIndex::new(index)
     }
 
-    pub fn attach_mesh(&mut self, node: NodeIndex, mesh: u32) {
-        self.attached_meshes.push((
-            node.index()
-                .expect("Can't attach mesh to non-existing node"),
-            mesh,
-        ));
+    pub fn attach_mesh(&mut self, node: u32, mesh: u32) {
+        self.attached_meshes.push((node, mesh));
     }
 
     pub fn name(mut self, name: &'a str) -> Self {
@@ -245,7 +241,11 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
             attributes,
             indices,
             bounds_per_mesh: self.meshes.iter().map(|x| x.bounds).collect(),
-            meshes: self.meshes,
+            meshes: self
+                .meshes
+                .into_iter()
+                .map(|x| x.build(positions, attributes, indices))
+                .collect(),
             names: self
                 .nodes
                 .iter()

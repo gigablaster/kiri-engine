@@ -132,6 +132,7 @@ impl MeshMaterialBlend {
 
 #[derive(Debug, Clone, Readable, Writable, PartialEq)]
 pub struct MeshAssetMaterial {
+    pub name: String,
     pub images: HashMap<String, ImageSource>,
     pub scalars: HashMap<String, f32>,
     pub vectors: HashMap<String, [f32; 4]>,
@@ -140,6 +141,7 @@ pub struct MeshAssetMaterial {
 
 impl Hash for MeshAssetMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
         self.images.iter().for_each(|(name, texture)| {
             name.hash(state);
             texture.hash(state);
@@ -343,6 +345,7 @@ mod import {
             ]))
         };
         MeshAssetMaterial {
+            name: material.name().unwrap_or("default").to_string(),
             images: [
                 ("base_color".to_owned(), base_color),
                 ("normals".to_owned(), normals),

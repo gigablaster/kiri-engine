@@ -18,4 +18,4 @@ arrayvec = "0.7.4"
 bytes = "1.6.0"
 
 [features]
-devel = ["kiri-assets/devel"]
+devel = ["kiri-assets/devel", "kiri-gfx/devel"]
