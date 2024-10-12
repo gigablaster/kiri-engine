@@ -45,9 +45,6 @@ pub type ModelHandle = Handle<Resource<RenderModel>>;
 pub type TextureHandle = Handle<Resource<Texture>>;
 pub type MaterialHandle = Handle<Resource<RenderMaterialInstance>>;
 
-type ImageLoadingTask = Task<Result<(TextureHandle, ImageAsset, ImageSource), Error>>;
-type ModelLoadingTask = Task<Result<(ModelHandle, ModelAsset, ModelSource), Error>>;
-
 pub const MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
         (
@@ -177,6 +174,24 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
         }
     }
 
+    fn purge(&self) {
+        let mut pool = self.pool.lock();
+        let mut to_delete = Vec::default();
+        for (handle, resource) in pool.enumerate() {
+            if let Resource::Loaded(resource) = resource {
+                if Arc::strong_count(resource) == 1 {
+                    to_delete.push(handle);
+                }
+            }
+        }
+        for handle in to_delete {
+            pool.remove(handle);
+        }
+        self.names
+            .write()
+            .retain(|_, handle| pool.is_handle_valid(*handle));
+    }
+
     fn tick(&self) {
         let mut pool = self.pool.lock();
         let mut loading = self.loading.lock();
@@ -256,6 +271,12 @@ impl ResourceManager {
         self.textures.tick();
         self.materials.tick();
         self.models.tick();
+    }
+
+    pub fn purge(&self) {
+        self.models.purge();
+        self.materials.purge();
+        self.textures.purge();
     }
 
     #[cfg(feature = "devel")]
