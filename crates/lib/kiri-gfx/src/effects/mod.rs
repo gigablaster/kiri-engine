@@ -101,10 +101,8 @@ pub const INSTANCE_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLay
     update_after_bind: false,
 };
 
-pub const EFFECT_PASS_GBUFFER: &str = "gbuffer";
-pub const EFFECT_PASS_GBUFFER_MASKED: &str = "gbuffer_masked";
-pub const EFFECT_PASS_TRANSPARENT: &str = "transparent";
 pub const EFFECT_PASS_OPAQUE: &str = "opaque";
 pub const EFFECT_PASS_OPAQUE_MASKED: &str = "opaque_masked";
-pub const EFFECT_PASS_SHADOW: &str = "shadow";
-pub const EFFECT_PASS_SHADOW_MASKED: &str = "shadow_masked";
+pub const EFFECT_PASS_TRANSPARENT: &str = "transparent";
+pub const EFFECT_PASS_DEPTH: &str = "depth";
+pub const EFFECT_PASS_DEPTH_MASKED: &str = "depth_masked";

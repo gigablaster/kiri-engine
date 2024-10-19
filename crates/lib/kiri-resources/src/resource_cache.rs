@@ -29,12 +29,12 @@ use kiri_assets::{
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     effects::{
-        BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, EFFECT_PASS_GBUFFER,
-        EFFECT_PASS_GBUFFER_MASKED, EFFECT_PASS_SHADOW, EFFECT_PASS_SHADOW_MASKED,
+        BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, EFFECT_PASS_DEPTH,
+        EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
         EFFECT_PASS_TRANSPARENT,
     },
     ImageUploadData, PipelineCache, PipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
-    RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder, GBUFFER_RENDER_PASS_LAYOUT,
+    RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder, MAIN_RENDER_PASS_LAYOUT,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 #[cfg(feature = "devel")]
@@ -323,20 +323,18 @@ impl ResourceManager {
         for factory in manager.effect_factory.read().iter() {
             if let Some(effect) = factory.get_or_create(
                 &source.name,
-                &GBUFFER_RENDER_PASS_LAYOUT,
+                &MAIN_RENDER_PASS_LAYOUT,
                 &STATIC_MESH_INPUT_LAYOUT,
             )? {
                 let instance = effect.create_instance(&desc)?;
-                let gbuffer = match source.blend {
-                    kiri_assets::MeshMaterialBlend::Opaque => {
-                        instance.pipeline(EFFECT_PASS_GBUFFER).ok_or(
-                            Error::EffectPipelineNotFound(EFFECT_PASS_GBUFFER.to_owned()),
-                        )?
-                    }
+                let main = match source.blend {
+                    kiri_assets::MeshMaterialBlend::Opaque => instance
+                        .pipeline(EFFECT_PASS_OPAQUE)
+                        .ok_or(Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE.to_owned()))?,
                     kiri_assets::MeshMaterialBlend::AlphaBlend => PipelineHandle::invalid(),
                     kiri_assets::MeshMaterialBlend::AlphaTest(_) => {
-                        instance.pipeline(EFFECT_PASS_GBUFFER_MASKED).ok_or(
-                            Error::EffectPipelineNotFound(EFFECT_PASS_GBUFFER_MASKED.to_owned()),
+                        instance.pipeline(EFFECT_PASS_OPAQUE_MASKED).ok_or(
+                            Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE_MASKED.to_owned()),
                         )?
                     }
                 };
@@ -351,16 +349,16 @@ impl ResourceManager {
                 };
                 let shadow = match source.blend {
                     kiri_assets::MeshMaterialBlend::Opaque => {
-                        instance.pipeline(EFFECT_PASS_SHADOW).unwrap_or_default()
+                        instance.pipeline(EFFECT_PASS_DEPTH).unwrap_or_default()
                     }
                     kiri_assets::MeshMaterialBlend::AlphaBlend => PipelineHandle::invalid(),
                     kiri_assets::MeshMaterialBlend::AlphaTest(_) => instance
-                        .pipeline(EFFECT_PASS_SHADOW_MASKED)
+                        .pipeline(EFFECT_PASS_DEPTH_MASKED)
                         .unwrap_or_default(),
                 };
                 material = Some(RenderMeshMaterial {
                     instance,
-                    gbuffer,
+                    main,
                     transparent,
                     shadow,
                     effect,

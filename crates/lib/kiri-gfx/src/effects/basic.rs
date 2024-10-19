@@ -30,8 +30,8 @@ use crate::{
 
 use super::{
     fill_descriptor_with_textures, Effect, EffectInstance, EffectInstanceDesc, MeshEffectFactory,
-    EFFECT_PASS_GBUFFER, EFFECT_PASS_GBUFFER_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
-    EFFECT_PASS_SHADOW, EFFECT_PASS_SHADOW_MASKED, EFFECT_PASS_TRANSPARENT,
+    EFFECT_PASS_DEPTH, EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
+    EFFECT_PASS_TRANSPARENT,
 };
 
 const BASIC_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
@@ -110,24 +110,6 @@ impl BasicEffect {
         pass: &'static RenderPassLayout<'static>,
         input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Arc<dyn Effect>, Error> {
-        let gbuffer = Self::create_pipeline(
-            cache,
-            "shaders/basic.vert",
-            "shaders/gbuffer.frag",
-            pass,
-            RasterPipelineCreateDesc::default(),
-            input_layout,
-            false,
-        )?;
-        let gbuffer_masked = Self::create_pipeline(
-            cache,
-            "shaders/basic.vert",
-            "shaders/gbuffer.frag",
-            pass,
-            RasterPipelineCreateDesc::default(),
-            input_layout,
-            true,
-        )?;
         let transparent = Self::create_pipeline(
             cache,
             "shaders/basic.vert",
@@ -159,8 +141,8 @@ impl BasicEffect {
         )?;
         let shadow = Self::create_pipeline(
             cache,
-            "shaders/shadow.vert",
-            "shaders/shadow.frag",
+            "shaders/depth.vert",
+            "shaders/depth.frag",
             pass,
             RasterPipelineCreateDesc::default(),
             input_layout,
@@ -168,8 +150,8 @@ impl BasicEffect {
         )?;
         let shadow_masked = Self::create_pipeline(
             cache,
-            "shaders/shadow.vert",
-            "shaders/shadow.frag",
+            "shaders/depth.vert",
+            "shaders/depth.frag",
             pass,
             RasterPipelineCreateDesc::default(),
             input_layout,
@@ -179,13 +161,11 @@ impl BasicEffect {
             cache: cache.clone(),
             uniforms: ConstUniformBuffer::new(&cache.renderer),
             pipelines: [
-                ((EFFECT_PASS_GBUFFER, input_layout), gbuffer),
-                ((EFFECT_PASS_GBUFFER_MASKED, input_layout), gbuffer_masked),
                 ((EFFECT_PASS_TRANSPARENT, input_layout), transparent),
                 ((EFFECT_PASS_OPAQUE, input_layout), opaque),
                 ((EFFECT_PASS_OPAQUE_MASKED, input_layout), opaque_masked),
-                ((EFFECT_PASS_SHADOW, input_layout), shadow),
-                ((EFFECT_PASS_SHADOW_MASKED, input_layout), shadow_masked),
+                ((EFFECT_PASS_DEPTH, input_layout), shadow),
+                ((EFFECT_PASS_DEPTH_MASKED, input_layout), shadow_masked),
             ]
             .into(),
         }))

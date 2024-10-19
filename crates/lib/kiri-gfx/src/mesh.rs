@@ -27,7 +27,7 @@ use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 pub struct RenderMeshMaterial {
     pub effect: Arc<dyn Effect>,
     pub instance: EffectInstance,
-    pub gbuffer: PipelineHandle,
+    pub main: PipelineHandle,
     pub transparent: PipelineHandle,
     pub shadow: PipelineHandle,
 }

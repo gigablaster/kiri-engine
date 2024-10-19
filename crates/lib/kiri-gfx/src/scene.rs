@@ -18,13 +18,8 @@ use kiri_backend::{
     RenderPassLayout,
 };
 
-pub const GBUFFER_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color: &[
-        vk::Format::A2R10G10B10_UNORM_PACK32,
-        vk::Format::A2R10G10B10_UNORM_PACK32,
-        vk::Format::A2R10G10B10_UNORM_PACK32,
-        vk::Format::R16G16B16A16_SFLOAT,
-    ],
+pub const MAIN_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::R16G16B16A16_SFLOAT],
     depth: Some(vk::Format::X8_D24_UNORM_PACK32),
 };
 
