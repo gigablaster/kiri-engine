@@ -18,13 +18,14 @@ mod descriptors;
 mod dispatch;
 mod draw_stream;
 mod dynamic;
+pub mod effects;
 mod error;
 mod image_pool;
-mod material;
 mod mesh;
 pub mod passes;
 mod pipeline_cache;
 mod renderer;
+mod scene;
 mod staging;
 mod texture;
 mod uniforms;
@@ -36,13 +37,12 @@ pub use draw_stream::*;
 use dynamic::*;
 pub use error::*;
 pub use image_pool::*;
-pub use material::*;
 pub use mesh::*;
 pub use pipeline_cache::*;
 pub use renderer::*;
+pub use scene::*;
 use staging::*;
 pub use texture::*;
-use uniforms::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ImageUploadData<'a> {

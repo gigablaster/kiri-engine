@@ -147,8 +147,8 @@ impl RasterPipelineCreateDesc {
         self
     }
 
-    pub fn depth_write(mut self) -> Self {
-        self.depth_write = true;
+    pub fn depth_write(mut self, value: bool) -> Self {
+        self.depth_write = value;
 
         self
     }

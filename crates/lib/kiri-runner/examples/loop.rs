@@ -9,7 +9,6 @@ use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 #[derive(Debug)]
 struct Loop {
     resources: Arc<ResourceManager>,
-    time: f32,
 }
 
 #[derive(Debug)]
@@ -20,28 +19,26 @@ impl Display for LoopError {
         f.write_str("LoopError")
     }
 }
+
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let resources = ResourceManager::new(renderer)?;
         resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf");
-        Ok(Self {
-            resources,
-            time: 0.0,
-        })
+        Ok(Self { resources })
     }
     fn title(&self) -> &str {
         "Loop Demo"
     }
 
-    fn update(&mut self, time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
+    fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
         self.resources.tick();
         thread::sleep(Duration::from_millis(16));
         Ok(GameTickState::Continue)
     }
 
-    fn render(&self, _time: kiri_common::GameTime, context: &RenderContext) {
+    fn render(&self, _time: kiri_common::GameTime, _context: &RenderContext) {
         self.resources.tick();
     }
 

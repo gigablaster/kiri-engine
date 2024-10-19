@@ -39,4 +39,10 @@ pub enum Error {
     ResourceLoadingFailed,
     #[error("Material not found")]
     MaterialNotFound,
+    #[error("Invalud model handle {0}")]
+    InvalidModelHandle(ModelHandle),
+    #[error("Invalid texture handle {0}")]
+    InvalidTextureHandle(TextureHandle),
+    #[error("Pipeline {0} not found in effect")]
+    EffectPipelineNotFound(String),
 }

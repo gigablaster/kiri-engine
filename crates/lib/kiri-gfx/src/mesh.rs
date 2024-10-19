@@ -15,34 +15,35 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, Error, ImageHandle, RenderMaterialInstance, Renderer};
+use crate::{
+    effects::{Effect, EffectInstance},
+    BufferHandle, BufferPointer, Error, PipelineHandle, Renderer,
+};
 use kiri_backend::BufferCreateDesc;
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
+
+#[derive(Debug)]
+pub struct RenderMeshMaterial {
+    pub effect: Arc<dyn Effect>,
+    pub instance: EffectInstance,
+    pub gbuffer: PipelineHandle,
+    pub transparent: PipelineHandle,
+    pub shadow: PipelineHandle,
+}
+
+impl Drop for RenderMeshMaterial {
+    fn drop(&mut self) {
+        self.effect.free_instance(&mut self.instance);
+    }
+}
 
 #[derive(Debug)]
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
     pub vertex_offset: u32,
-    pub material: Arc<RenderMaterialInstance>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RenderMeshMaterialData {
-    pub base_color: ImageHandle,
-    pub normals: ImageHandle,
-    pub metallic_roughness: ImageHandle,
-    pub occlusion: ImageHandle,
-    pub emissive: ImageHandle,
-    pub emissive_power: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RenderMaterialType {
-    Opaque,
-    Masked,
-    Transparent,
+    pub material: Arc<RenderMeshMaterial>,
 }
 
 #[derive(Debug, Default)]
@@ -97,7 +98,7 @@ impl RenderMeshBuilder {
         &mut self,
         first_index: u32,
         index_count: u32,
-        material: &Arc<RenderMaterialInstance>,
+        material: &Arc<RenderMeshMaterial>,
     ) {
         self.surfaces.push(RenderMeshSurface {
             first_index,
@@ -186,7 +187,7 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         let index = self.nodes.len() as u32;
         let parent_transform = parent
             .index()
-            .and_then(|index| Some(self.nodes[index as usize].world_transform))
+            .map(|index| self.nodes[index as usize].world_transform)
             .unwrap_or_default();
         self.nodes.push(NodeBuilder {
             parent,

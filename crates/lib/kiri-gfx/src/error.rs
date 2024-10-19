@@ -44,6 +44,10 @@ pub enum Error {
     InvalidProgramHandle(ProgramHandle),
     #[error("Asset compilation failed {0}")]
     AssetCompilationFailed(#[from] kiri_assets::Error),
+    #[error("Texture slot {0} not found")]
+    TextureSlotNotFound(String),
+    #[error("Effect pass {0} doesn't exist in this effect")]
+    PassNotFound(String),
 }
 
 impl From<vk::Result> for Error {

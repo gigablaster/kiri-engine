@@ -13,31 +13,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
+use std::{marker::PhantomData, mem, sync::Arc};
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};
 use kiri_backend::BufferCreateDesc;
-use kiri_common::BlockAllocator;
+use kiri_common::{Align, BlockAllocator};
 use parking_lot::Mutex;
 
 const MATERIALS_PER_PAGE: u64 = 256;
 
 #[derive(Debug)]
 struct ConstUniformBufferPage {
-    pub buffer: BufferHandle,
+    buffer: BufferHandle,
     allocator: BlockAllocator,
 }
 /// Static uniform allocator
 ///
 /// Allocate uniforms of single type.
 #[derive(Debug)]
-pub struct ConstUniformBuffer {
+pub struct ConstUniformBuffer<T: Copy> {
     renderer: Arc<Renderer>,
-    item_size: u64,
     pages: Mutex<Vec<ConstUniformBufferPage>>,
+    _phantom: PhantomData<T>,
 }
 
-impl Drop for ConstUniformBuffer {
+impl<T: Copy> Drop for ConstUniformBuffer<T> {
     fn drop(&mut self) {
         self.pages
             .lock()
@@ -46,33 +46,34 @@ impl Drop for ConstUniformBuffer {
     }
 }
 
-impl ConstUniformBuffer {
-    pub fn new(renderer: &Arc<Renderer>, item_size: u64) -> Self {
+impl<T: Copy> ConstUniformBuffer<T> {
+    pub fn new(renderer: &Arc<Renderer>) -> Self {
         Self {
             renderer: renderer.clone(),
-            item_size,
             pages: Default::default(),
+            _phantom: PhantomData,
         }
     }
 
-    pub fn allocate(&self, data: &[u8]) -> Result<BufferSlice, Error> {
+    pub fn allocate(&self, data: T) -> Result<BufferSlice, Error> {
         let mut pages = self.pages.lock();
+        let item_size = mem::size_of::<T>() as u64;
         let allocated = pages
             .iter_mut()
             .find_map(|x| {
                 x.allocator
                     .allocate()
-                    .map(|offset| BufferSlice::new(x.buffer, offset, self.item_size))
+                    .map(|offset| BufferSlice::new(x.buffer, offset, item_size))
             })
             .unwrap_or_else(|| {
-                let chunk_size = self
-                    .renderer
-                    .device
-                    .physical_device
-                    .properties
-                    .limits
-                    .min_uniform_buffer_offset_alignment
-                    .max(self.item_size);
+                let chunk_size = item_size.align(
+                    self.renderer
+                        .device
+                        .physical_device
+                        .properties
+                        .limits
+                        .min_uniform_buffer_offset_alignment,
+                );
                 // Fixme:: unwrap
                 let buffer = self
                     .renderer
@@ -85,10 +86,10 @@ impl ConstUniformBuffer {
                 let mut allocator = BlockAllocator::new(chunk_size, MATERIALS_PER_PAGE);
                 let offset = allocator.allocate().unwrap();
                 pages.push(ConstUniformBufferPage { buffer, allocator });
-                BufferSlice::new(buffer, offset, self.item_size)
+                BufferSlice::new(buffer, offset, item_size)
             });
         drop(pages);
-        self.renderer.upload_buffer(allocated.into(), data)?;
+        self.renderer.upload_buffer(allocated.into(), &[data])?;
         Ok(allocated)
     }
 
@@ -97,7 +98,7 @@ impl ConstUniformBuffer {
         let page = pages
             .iter_mut()
             .find(|page| page.buffer == data.handle)
-            .expect("Uniform must be freed from it's own alloactor");
+            .expect("Uniform must be freed from it's own allocator");
         page.allocator.dealloc(data.offset);
     }
 }
