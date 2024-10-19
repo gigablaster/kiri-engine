@@ -106,3 +106,13 @@ pub const EFFECT_PASS_OPAQUE_MASKED: &str = "opaque_masked";
 pub const EFFECT_PASS_TRANSPARENT: &str = "transparent";
 pub const EFFECT_PASS_DEPTH: &str = "depth";
 pub const EFFECT_PASS_DEPTH_MASKED: &str = "depth_masked";
+
+pub const MAIN_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::R16G16B16A16_SFLOAT],
+    depth: Some(vk::Format::X8_D24_UNORM_PACK32),
+};
+
+pub const DEPTH_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[],
+    depth: Some(vk::Format::X8_D24_UNORM_PACK32),
+};

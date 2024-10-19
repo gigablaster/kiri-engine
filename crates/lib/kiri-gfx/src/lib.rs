@@ -25,7 +25,6 @@ mod mesh;
 pub mod passes;
 mod pipeline_cache;
 mod renderer;
-mod scene;
 mod staging;
 mod texture;
 mod uniforms;
@@ -40,7 +39,6 @@ pub use image_pool::*;
 pub use mesh::*;
 pub use pipeline_cache::*;
 pub use renderer::*;
-pub use scene::*;
 use staging::*;
 pub use texture::*;
 

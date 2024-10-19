@@ -31,10 +31,10 @@ use kiri_gfx::{
     effects::{
         BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, EFFECT_PASS_DEPTH,
         EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
-        EFFECT_PASS_TRANSPARENT,
+        EFFECT_PASS_TRANSPARENT, MAIN_RENDER_PASS_LAYOUT,
     },
     ImageUploadData, PipelineCache, PipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
-    RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder, MAIN_RENDER_PASS_LAYOUT,
+    RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 #[cfg(feature = "devel")]
