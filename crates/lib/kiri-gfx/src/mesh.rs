@@ -29,7 +29,7 @@ pub struct RenderMeshMaterial {
     pub instance: EffectInstance,
     pub main: PipelineHandle,
     pub transparent: PipelineHandle,
-    pub shadow: PipelineHandle,
+    pub depth: PipelineHandle,
 }
 
 impl Drop for RenderMeshMaterial {

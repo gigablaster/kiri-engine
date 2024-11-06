@@ -13,13 +13,29 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use bevy_ecs::component::Component;
-use kiri_math::Affine3A;
-use thiserror::Error;
-pub mod render;
+use std::sync::Arc;
 
-#[derive(Debug, Error)]
-pub enum Error {}
+use bevy_ecs::component::Component;
+use kiri_gfx::RenderModel;
+use kiri_math::Vec3;
+use kiri_resources::ModelHandle;
 
 #[derive(Debug, Component)]
-pub struct Transform(pub Affine3A);
+pub struct Model(pub Arc<RenderModel>);
+
+#[derive(Debug, Component)]
+pub struct PendingModel(pub ModelHandle);
+
+#[derive(Debug, Default, Clone, Copy, Component)]
+pub struct DirectionalLight {
+    pub direction: Vec3,
+    pub color: Vec3,
+}
+
+#[derive(Debug, Default, Clone, Copy, Component)]
+pub struct PerspectiveCamera {
+    pub fov: f32,
+    pub aspect: f32,
+    pub znear: f32,
+    pub zfar: f32,
+}

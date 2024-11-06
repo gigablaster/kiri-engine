@@ -360,7 +360,7 @@ impl ResourceManager {
                     instance,
                     main,
                     transparent,
-                    shadow,
+                    depth: shadow,
                     effect,
                 });
                 break;

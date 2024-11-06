@@ -126,7 +126,9 @@ impl BasicEffect {
             "shaders/basic.vert",
             "shaders/basic.frag",
             pass,
-            RasterPipelineCreateDesc::default(),
+            RasterPipelineCreateDesc::default()
+                .depth_write(false)
+                .depth_test(vk::CompareOp::EQUAL),
             input_layout,
             false,
         )?;
@@ -135,11 +137,13 @@ impl BasicEffect {
             "shaders/basic.vert",
             "shaders/basic.frag",
             pass,
-            RasterPipelineCreateDesc::default(),
+            RasterPipelineCreateDesc::default()
+                .depth_write(false)
+                .depth_test(vk::CompareOp::EQUAL),
             input_layout,
             true,
         )?;
-        let shadow = Self::create_pipeline(
+        let depth = Self::create_pipeline(
             cache,
             "shaders/depth.vert",
             "shaders/depth.frag",
@@ -148,7 +152,7 @@ impl BasicEffect {
             input_layout,
             false,
         )?;
-        let shadow_masked = Self::create_pipeline(
+        let depth_masked = Self::create_pipeline(
             cache,
             "shaders/depth.vert",
             "shaders/depth.frag",
@@ -164,8 +168,8 @@ impl BasicEffect {
                 ((EFFECT_PASS_TRANSPARENT, input_layout), transparent),
                 ((EFFECT_PASS_OPAQUE, input_layout), opaque),
                 ((EFFECT_PASS_OPAQUE_MASKED, input_layout), opaque_masked),
-                ((EFFECT_PASS_DEPTH, input_layout), shadow),
-                ((EFFECT_PASS_DEPTH_MASKED, input_layout), shadow_masked),
+                ((EFFECT_PASS_DEPTH, input_layout), depth),
+                ((EFFECT_PASS_DEPTH_MASKED, input_layout), depth_masked),
             ]
             .into(),
         }))
