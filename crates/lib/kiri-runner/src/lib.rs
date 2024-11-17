@@ -18,7 +18,7 @@ mod runner;
 use std::{error::Error, sync::Arc};
 
 use kiri_common::GameTime;
-use kiri_gfx::{RenderContext, Renderer};
+use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
 pub use runner::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +41,10 @@ pub trait GameClient<E: Error>: Sized + Send + Sync {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<E>>;
     fn title(&self) -> &str;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
-    fn render(&self, time: GameTime, context: &RenderContext);
-    fn swapchain_created(&mut self) -> Result<(), GameError<E>>;
+    fn render(
+        &mut self,
+        time: GameTime,
+        context: &RenderContext,
+        pool: &RenderTargetPool,
+    ) -> Result<(), kiri_gfx::Error>;
 }

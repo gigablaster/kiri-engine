@@ -35,7 +35,6 @@ pub struct DirectionalLight {
 #[derive(Debug, Default, Clone, Copy, Component)]
 pub struct PerspectiveCamera {
     pub fov: f32,
-    pub aspect: f32,
     pub znear: f32,
     pub zfar: f32,
 }

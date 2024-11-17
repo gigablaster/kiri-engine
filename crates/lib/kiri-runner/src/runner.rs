@@ -24,7 +24,7 @@ use crate::{GameClient, GameError, GameTickState};
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::{GameTime, TimeFilter};
-use kiri_gfx::{FrameState, Renderer};
+use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::{
     event::{Event, WindowEvent},
@@ -52,6 +52,7 @@ fn main_loop<E: Error, G: GameClient<E>>(
 ) -> Result<(), GameError<E>> {
     let mut swapchain = None;
     let renderer = Renderer::new(device)?;
+    let pool = RenderTargetPool::new(&renderer);
     let mut game = G::new(&renderer)?;
     let mut event_pump = sdl.event_pump()?;
     let mut last_time = Instant::now();
@@ -96,15 +97,15 @@ fn main_loop<E: Error, G: GameClient<E>>(
         if w > 0 && h > 0 {
             if swapchain.is_none() {
                 swapchain = Some(Swapchain::new(device, surface, [w, h])?);
-                game.swapchain_created()?;
             }
             let current_swapchain = swapchain.as_ref().unwrap();
             if FrameState::NeedRecreateSwapchain
                 == renderer.render(current_swapchain, |context| {
-                    game.render(GameTime::default(), context)
+                    game.render(GameTime::default(), context, &pool)
                 })?
             {
                 swapchain = None;
+                pool.purge();
             }
         } else {
             // Sleep for a while to let OS to do other things

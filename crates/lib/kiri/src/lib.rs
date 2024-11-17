@@ -21,5 +21,5 @@ pub mod render;
 #[derive(Debug, Error)]
 pub enum Error {}
 
-#[derive(Debug, Component)]
+#[derive(Debug, Default, Clone, Copy, Component)]
 pub struct Transform(pub Affine3A);

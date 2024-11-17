@@ -1093,6 +1093,7 @@ dependencies = [
 name = "kiri-runner"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bevy_tasks",
  "directories",
  "kiri",

@@ -15,10 +15,7 @@
 
 use std::mem;
 
-use bevy_ecs::{
-    entity::Entity,
-    system::{Commands, Query, Res},
-};
+use bevy_ecs::{entity::Entity, world::World};
 use kiri_backend::{
     ash::vk, DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute,
     InputVertexStreamLayout, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
@@ -30,110 +27,20 @@ use kiri_gfx::{
         FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
     },
     BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
-    FrameState, ImageHandle, PipelineCache, PipelineHandle, RasterPipelineDesc, RenderContext,
-    RenderMesh, RenderTargetPool, TransientImageGuard,
+    ImageHandle, PipelineCache, PipelineHandle, RasterPipelineDesc, RenderContext,
+    RenderTargetPool, TransientImageGuard,
 };
-use kiri_math::{Affine3A, Bounds, Camera, Mat4, Vec3, Vec3A};
-use kiri_resources::Resource;
+use kiri_math::{Bounds, Camera, Mat4, Vec3, Vec3A};
+use kiri_resources::{Resource, ResourceManager};
 
 use crate::Transform;
 
 use super::{
     DirectionalLight, HemisphericalLight, Model, PendingModel, PerspectiveCamera, Postprocess,
-    RenderTargetPoolWrapper, RendererWrapper, ResourceManagerWrapper, SwapchainWrapper,
 };
 
-pub fn process_model_loading(
-    mut commands: Commands,
-    resources: Res<ResourceManagerWrapper>,
-    query: Query<(Entity, &PendingModel)>,
-) {
-    for (entity, pending) in query.iter() {
-        if let Some(model) = resources.0.get_model(pending.0) {
-            match model {
-                Resource::Loading => {}
-                Resource::Failed => {
-                    commands.entity(entity).remove::<PendingModel>();
-                }
-                Resource::Loaded(model) => {
-                    commands
-                        .entity(entity)
-                        .remove::<PendingModel>()
-                        .insert(Model(model));
-                }
-            }
-        } else {
-            commands.entity(entity).remove::<PendingModel>();
-        }
-    }
-}
-
 // Enough for most if not all scenes
-const DEFAULT_RENDER_OP_CAPACITY: usize = 65536;
-
-pub fn render_world<'a>(
-    mut commands: Commands,
-    renderer: Res<RendererWrapper>,
-    swpachain: Res<SwapchainWrapper>,
-    pool: Res<RenderTargetPoolWrapper>,
-    ambient: Res<HemisphericalLight>,
-    postprocess: Res<Postprocess>,
-    resource_manager: Res<ResourceManagerWrapper>,
-    models: Query<(&Transform, &Model)>,
-    directional_lights: Query<&DirectionalLight>,
-    camera: Query<(&Transform, &PerspectiveCamera)>,
-) {
-    let mut to_render = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
-    let (camera_transform, camera_props) = camera.single();
-    let camera = kiri_math::PerspectiveCamera::new(
-        camera_transform.0.translation.into(),
-        camera_transform.0.transform_vector3(Vec3::Z),
-        camera_transform.0.transform_vector3(Vec3::Y),
-        camera_props.fov,
-        camera_props.aspect,
-        camera_props.znear,
-        camera_props.zfar,
-    );
-    let frustum = camera.frustum();
-    let ambient = ambient.into_inner();
-    let light = directional_lights.single();
-    {
-        puffin::profile_scope!("Culling");
-        for (transform, model) in models.iter() {
-            let bbox = model.0.bounds.transform(transform.0);
-            if bbox.is_visible(&frustum) {
-                for (node, mesh) in model.0.node_to_mesh.iter().copied() {
-                    let transform = transform.0 * model.0.world_transforms[node as usize];
-                    let bbox = model.0.bounds_per_mesh[mesh as usize].transform(transform);
-                    if bbox.is_visible(&frustum) {
-                        to_render.push((transform, &model.0.meshes[mesh as usize]));
-                    }
-                }
-            }
-        }
-    }
-
-    if FrameState::NeedRecreateSwapchain
-        == renderer
-            .0
-            .render(&swpachain.0, |context| {
-                render_frame(
-                    to_render,
-                    context,
-                    &pool.0,
-                    &camera,
-                    light,
-                    ambient,
-                    postprocess.into_inner(),
-                    &resource_manager.0.pipeline_cache,
-                )
-                .unwrap()
-            })
-            .unwrap()
-    {
-        commands.remove_resource::<SwapchainWrapper>();
-    }
-}
+const DEFAULT_RENDER_OP_CAPACITY: usize = 100000;
 
 trait RenderOp {
     fn render_data(&self) -> (PipelineHandle, DescriptorHandle);
@@ -209,76 +116,125 @@ struct GpuInstanceData {
     pub uv_scale: f32,
 }
 
-const DRAWS_PER_STREAM: usize = 512;
-
-fn render_frame(
-    to_render: Vec<(Affine3A, &RenderMesh)>,
-    context: &RenderContext,
-    pool: &RenderTargetPool,
-    camera: &impl Camera,
-    light: &DirectionalLight,
-    ambient: &HemisphericalLight,
-    postprocess: &Postprocess,
-    pipeline_cache: &PipelineCache,
-) -> Result<(), kiri_gfx::Error> {
-    // Prepare data
-    // It can be multithreaded with relative ease, do it once it became a bottleneck
+fn update_loading_models(world: &mut World, resource_manager: &ResourceManager) {
     puffin::profile_function!();
+    let mut loading = world.query::<(Entity, &PendingModel)>();
+    let mut to_remove = Vec::new();
+    let mut to_replace = Vec::new();
+    for (entity, pending) in loading.iter(world) {
+        if let Some(model) = resource_manager.get_model(pending.0) {
+            match model {
+                Resource::Loading => {}
+                Resource::Failed => {
+                    to_remove.push(entity);
+                }
+                Resource::Loaded(model) => {
+                    to_replace.push((entity, model));
+                }
+            }
+        } else {
+            to_remove.push(entity);
+        }
+    }
+    let mut commands = world.commands();
+    for entity in to_remove {
+        commands.entity(entity).remove::<PendingModel>();
+    }
+    for (entity, model) in to_replace {
+        commands
+            .entity(entity)
+            .remove::<PendingModel>()
+            .insert(Model(model));
+    }
+    world.flush();
+}
+
+// Big dumb function that renders the world wit postprocessing and stuff
+pub fn render_world(
+    world: &mut World,
+    context: &RenderContext,
+    resource_manager: &ResourceManager,
+    pool: &RenderTargetPool,
+) -> Result<(), kiri_gfx::Error> {
+    update_loading_models(world, resource_manager);
+    let (camera_transform, camera_props) = world
+        .query::<(&Transform, &PerspectiveCamera)>()
+        .single(world);
+    let camera = kiri_math::PerspectiveCamera::new(
+        camera_transform.0.translation.into(),
+        camera_transform.0.transform_vector3(Vec3::Z),
+        camera_transform.0.transform_vector3(Vec3::Y),
+        camera_props.fov,
+        context.backbuffer.desc.aspect(),
+        camera_props.znear,
+        camera_props.zfar,
+    );
+    let frustum = camera.frustum();
     let mut render_ops = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
     let mut prepass_bin = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
     let mut opaque_bin = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
     let mut transparent_bin = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
+
     {
-        puffin::profile_scope!("Generate render ops");
-        for (transform, mesh) in to_render {
-            for surface in &mesh.surfaces {
-                let index = render_ops.len();
-                render_ops.push(RenderOpData {
-                    model: transform.into(),
-                    vertex_positions: mesh.positions,
-                    vertex_attributes: mesh.attributes,
-                    index_buffer: mesh.index_buffer,
-                    first_index: surface.first_index,
-                    index_count: surface.index_count,
-                    vertex_offset: surface.vertex_offset,
-                    uv_scale: mesh.uv_scale,
-                });
-                let depth = surface.material.depth;
-                if depth.is_valid() {
-                    prepass_bin.push((
-                        index,
-                        OpaqueOp {
-                            pipeline: depth,
-                            ds: surface.material.instance.ds,
-                        },
-                    ));
-                }
-                let opaque = surface.material.main;
-                if opaque.is_valid() {
-                    opaque_bin.push((
-                        index,
-                        OpaqueOp {
-                            pipeline: opaque,
-                            ds: surface.material.instance.ds,
-                        },
-                    ));
-                }
-                let transparent = surface.material.transparent;
-                if transparent.is_valid() {
-                    // Fixme: depth
-                    transparent_bin.push((
-                        index,
-                        TransparentOp {
-                            pipeline: transparent,
-                            ds: surface.material.instance.ds,
-                            depth: 0,
-                        },
-                    ));
+        puffin::profile_scope!("Culling and generating render ops");
+        for (transform, model) in world.query::<(&Transform, &Model)>().iter(world) {
+            let bbox = model.0.bounds.transform(transform.0);
+            if bbox.is_visible(&frustum) {
+                for mesh in &model.0.meshes {
+                    for surface in &mesh.surfaces {
+                        let index = render_ops.len();
+                        render_ops.push(RenderOpData {
+                            model: transform.0.into(),
+                            vertex_positions: mesh.positions,
+                            vertex_attributes: mesh.attributes,
+                            index_buffer: mesh.index_buffer,
+                            first_index: surface.first_index,
+                            index_count: surface.index_count,
+                            vertex_offset: surface.vertex_offset,
+                            uv_scale: mesh.uv_scale,
+                        });
+                        let depth = surface.material.depth;
+                        if depth.is_valid() {
+                            prepass_bin.push((
+                                index,
+                                OpaqueOp {
+                                    pipeline: depth,
+                                    ds: surface.material.instance.ds,
+                                },
+                            ));
+                        }
+                        let opaque = surface.material.main;
+                        if opaque.is_valid() {
+                            opaque_bin.push((
+                                index,
+                                OpaqueOp {
+                                    pipeline: opaque,
+                                    ds: surface.material.instance.ds,
+                                },
+                            ));
+                        }
+                        let transparent = surface.material.transparent;
+                        if transparent.is_valid() {
+                            // Fixme: depth
+                            transparent_bin.push((
+                                index,
+                                TransparentOp {
+                                    pipeline: transparent,
+                                    ds: surface.material.instance.ds,
+                                    depth: 0,
+                                },
+                            ));
+                        }
+                    }
                 }
             }
         }
     }
-    // Sort
+
+    let postprocess = *world.get_resource::<Postprocess>().unwrap();
+    let ambient = *world.get_resource::<HemisphericalLight>().unwrap();
+    let light = *world.query::<&DirectionalLight>().single(world);
+
     {
         puffin::profile_scope!("Sort render ops");
         radsort::sort_by_cached_key(&mut prepass_bin, |op| {
@@ -289,7 +245,7 @@ fn render_frame(
         });
         radsort::sort_by_cached_key(&mut transparent_bin, |op| op.1.depth);
     }
-    // Execute rendering
+
     let color = pool.get_image(
         vk::Format::R16G16B16A16_SFLOAT,
         context.backbuffer.desc.dims,
@@ -298,7 +254,7 @@ fn render_frame(
     {
         puffin::profile_scope!("Generate and submit command buffers");
         let depth = pool.get_image(
-            vk::Format::X8_D24_UNORM_PACK32,
+            vk::Format::D24_UNORM_S8_UINT,
             context.backbuffer.desc.dims,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         )?;
@@ -342,8 +298,7 @@ fn render_frame(
             "Main",
             &[RenderTarget::new(color.handle)
                 .clear_color([0.0, 0.0, 0.0, 1.0])
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
+                .initial_layout(vk::ImageLayout::UNDEFINED)],
             Some(RenderTarget::new(depth.handle).load().discard()),
         );
         generate_commands(context, &mut main_pass, &render_ops, &opaque_bin, pass_ds)?;
@@ -357,12 +312,20 @@ fn render_frame(
         context.submit(depth_pass.build());
         context.submit(main_pass.build());
     }
-    let post = tonemapping(color.handle, &postprocess, context, &pool, &pipeline_cache)?;
+    let post = tonemapping(
+        color.handle,
+        &postprocess,
+        context,
+        pool,
+        &resource_manager.pipeline_cache,
+    )?;
 
     context.submit(Box::new(FinalCompositionPassDispatcher::new(post.handle)));
 
     Ok(())
 }
+
+const DRAWS_PER_STREAM: usize = 512;
 
 fn generate_commands<T: RenderOp + Copy>(
     context: &RenderContext,

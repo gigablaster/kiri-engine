@@ -24,6 +24,7 @@ sdl2 = { version = "0.37.0", default-features = false, features = [
 [dev-dependencies]
 simple_logger = "5.0.0"
 puffin_http = "0.16.1"
+bevy_ecs = "0.14.1"
 
 [[example]]
 name = "loop"

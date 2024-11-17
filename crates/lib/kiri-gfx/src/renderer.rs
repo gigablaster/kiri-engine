@@ -302,7 +302,7 @@ impl Renderer {
         self.programs.write().remove(handle);
     }
 
-    pub fn render<RenderCB: FnOnce(&RenderContext)>(
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
         &self,
         swapchain: &Swapchain,
         render: RenderCB,
@@ -320,7 +320,7 @@ impl Renderer {
 
         // Generate render streams
         let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
-        render(&context);
+        render(&context)?;
 
         // Prepare
         let staging_wait = self.staging.lock().upload()?;

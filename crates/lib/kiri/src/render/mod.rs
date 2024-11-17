@@ -16,21 +16,10 @@
 mod components;
 mod systems;
 
-use std::sync::Arc;
-
 use bevy_ecs::system::Resource;
 pub use components::*;
-use kiri_backend::Swapchain;
-use kiri_gfx::{RenderTargetPool, Renderer};
 use kiri_math::Vec3;
-use kiri_resources::ResourceManager;
 pub use systems::*;
-
-#[derive(Debug, Resource)]
-pub struct ResourceManagerWrapper(pub Arc<ResourceManager>);
-
-#[derive(Debug, Resource)]
-pub struct RendererWrapper(pub Arc<Renderer>);
 
 #[derive(Debug, Default, Clone, Copy, Resource)]
 pub struct HemisphericalLight {
@@ -39,13 +28,7 @@ pub struct HemisphericalLight {
     pub bottom: Vec3,
 }
 
-#[derive(Debug, Resource)]
-pub struct RenderTargetPoolWrapper(pub RenderTargetPool);
-
-#[derive(Resource)]
-pub struct SwapchainWrapper(pub Arc<Swapchain>);
-
-#[derive(Debug, Resource)]
+#[derive(Debug, Clone, Copy, Resource)]
 pub struct Postprocess {
     pub expouse: f32,
 }
