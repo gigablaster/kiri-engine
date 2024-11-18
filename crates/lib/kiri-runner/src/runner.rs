@@ -96,7 +96,6 @@ fn main_loop<E: Error, G: GameClient<E>>(
         }
         if w > 0 && h > 0 && !window.is_minimized() {
             if swapchain.is_none() {
-                dbg!(w, h);
                 swapchain = Some(Swapchain::new(device, surface, [w, h])?);
             }
             let current_swapchain = swapchain.as_ref().unwrap();
