@@ -54,7 +54,8 @@ pub trait MeshEffectFactory: Debug + Send + Sync {
     fn get_or_create(
         &self,
         name: &str,
-        pass_layout: &'static RenderPassLayout<'static>,
+        depth_pass_layout: &'static RenderPassLayout<'static>,
+        color_pass_layout: &'static RenderPassLayout<'static>,
         input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Option<Arc<dyn Effect>>, Error>;
 }
@@ -109,10 +110,10 @@ pub const EFFECT_PASS_DEPTH_MASKED: &str = "depth_masked";
 
 pub const MAIN_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color: &[vk::Format::R16G16B16A16_SFLOAT],
-    depth: Some(vk::Format::X8_D24_UNORM_PACK32),
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
 };
 
 pub const DEPTH_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color: &[],
-    depth: Some(vk::Format::X8_D24_UNORM_PACK32),
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
 };

@@ -29,8 +29,8 @@ use kiri_assets::{
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     effects::{
-        BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, EFFECT_PASS_DEPTH,
-        EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
+        BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, DEPTH_RENDER_PASS_LAYOUT,
+        EFFECT_PASS_DEPTH, EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
         EFFECT_PASS_TRANSPARENT, MAIN_RENDER_PASS_LAYOUT,
     },
     ImageUploadData, PipelineCache, PipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
@@ -323,6 +323,7 @@ impl ResourceManager {
         for factory in manager.effect_factory.read().iter() {
             if let Some(effect) = factory.get_or_create(
                 &source.name,
+                &DEPTH_RENDER_PASS_LAYOUT,
                 &MAIN_RENDER_PASS_LAYOUT,
                 &STATIC_MESH_INPUT_LAYOUT,
             )? {

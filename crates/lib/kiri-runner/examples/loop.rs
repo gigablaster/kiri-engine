@@ -36,13 +36,23 @@ impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let resources = ResourceManager::new(renderer)?;
         let mut world = World::new();
-        world.spawn((
-            Transform::default(),
-            PendingModel(resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf")),
-        ));
+        for x in -10..10 {
+            for y in -10..10 {
+                for z in -10..10 {
+                    world.spawn((
+                        Transform(Affine3A::from_translation(vec3(
+                            0.5 * x as f32,
+                            0.5 * y as f32,
+                            0.5 * z as f32,
+                        ))),
+                        PendingModel(resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf")),
+                    ));
+                }
+            }
+        }
         world.spawn(DirectionalLight {
             direction: Vec3::Z,
-            color: vec3(1.0, 1.0, 1.0),
+            color: vec3(1.0, 1.0, 1.25),
         });
         world.spawn((
             PerspectiveCamera {
@@ -51,7 +61,7 @@ impl GameClient<LoopError> for Loop {
                 zfar: 100.0,
             },
             Transform(Affine3A::look_at_lh(
-                vec3(1.0, 1.0, 1.0),
+                vec3(0.0, -0.25, 1.0),
                 Vec3::ZERO,
                 Vec3::Y,
             )),
@@ -81,5 +91,10 @@ impl GameClient<LoopError> for Loop {
 }
 fn main() {
     simple_logger::init().unwrap();
+    let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
+    let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
+    eprintln!("Serving demo profile data on {server_addr}. Run `puffin_viewer` to view it.");
+    puffin::set_scopes_on(true);
+
     run_game::<LoopError, Loop>().unwrap();
 }

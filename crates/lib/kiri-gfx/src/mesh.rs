@@ -19,6 +19,7 @@ use crate::{
     effects::{Effect, EffectInstance},
     BufferHandle, BufferPointer, Error, PipelineHandle, Renderer,
 };
+use kiri_assets::{MeshVertexAttributes, MeshVertexPositions};
 use kiri_backend::BufferCreateDesc;
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
@@ -74,8 +75,8 @@ pub struct RenderModel {
 }
 
 pub struct RenderMeshBuilder {
-    pub vertex_offset: u64,
-    pub index_offset: u64,
+    pub first_vertex: u64,
+    pub first_index: u64,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: BoundingBox,
     pub position_scale: f32,
@@ -85,8 +86,8 @@ pub struct RenderMeshBuilder {
 impl RenderMeshBuilder {
     pub fn new(vertex_offset: u64, index_offset: u64) -> Self {
         Self {
-            vertex_offset,
-            index_offset,
+            first_vertex: vertex_offset,
+            first_index: index_offset,
             bounds: BoundingBox::default(),
             position_scale: 1.0,
             uv_scale: 1.0,
@@ -103,7 +104,7 @@ impl RenderMeshBuilder {
         self.surfaces.push(RenderMeshSurface {
             first_index,
             index_count,
-            vertex_offset: self.vertex_offset as u32,
+            vertex_offset: self.first_vertex as u32,
             material: material.clone(),
         });
     }
@@ -130,9 +131,18 @@ impl RenderMeshBuilder {
         indices: BufferHandle,
     ) -> RenderMesh {
         RenderMesh {
-            positions: BufferPointer::new(positions, self.vertex_offset),
-            attributes: BufferPointer::new(attributes, self.vertex_offset),
-            index_buffer: BufferPointer::new(indices, self.index_offset),
+            positions: BufferPointer::new(
+                positions,
+                self.first_vertex * mem::size_of::<MeshVertexPositions>() as u64,
+            ),
+            attributes: BufferPointer::new(
+                attributes,
+                self.first_vertex * mem::size_of::<MeshVertexAttributes>() as u64,
+            ),
+            index_buffer: BufferPointer::new(
+                indices,
+                self.first_index * mem::size_of::<u16>() as u64,
+            ),
             bounds: self.bounds,
             surfaces: self.surfaces,
             position_scale: self.position_scale,

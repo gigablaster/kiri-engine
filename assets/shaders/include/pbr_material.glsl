@@ -1,10 +1,6 @@
 layout(set = 2, binding = 0) uniform MaterialData {
-    vec4 base_color;
-    vec4 emissive_color;
-    float metallic;
-    float roughness;
-    float alpha_cutoff;
     float emissie_power;
+    float alpha_cutoff;
 } material;
 
 layout(set = 2, binding = 1) uniform sampler2D base_color;

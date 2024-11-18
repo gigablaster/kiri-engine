@@ -30,7 +30,7 @@ use kiri_gfx::{
     ImageHandle, PipelineCache, PipelineHandle, RasterPipelineDesc, RenderContext,
     RenderTargetPool, TransientImageGuard,
 };
-use kiri_math::{Bounds, Camera, Mat4, Vec3, Vec3A};
+use kiri_math::{vec3, vec4, Bounds, Camera, Mat4, Vec3, Vec3A};
 use kiri_resources::{Resource, ResourceManager};
 
 use crate::Transform;
@@ -180,50 +180,61 @@ pub fn render_world(
         for (transform, model) in world.query::<(&Transform, &Model)>().iter(world) {
             let bbox = model.0.bounds.transform(transform.0);
             if bbox.is_visible(&frustum) {
-                for mesh in &model.0.meshes {
-                    for surface in &mesh.surfaces {
-                        let index = render_ops.len();
-                        render_ops.push(RenderOpData {
-                            model: transform.0.into(),
-                            vertex_positions: mesh.positions,
-                            vertex_attributes: mesh.attributes,
-                            index_buffer: mesh.index_buffer,
-                            first_index: surface.first_index,
-                            index_count: surface.index_count,
-                            vertex_offset: surface.vertex_offset,
-                            uv_scale: mesh.uv_scale,
-                        });
-                        let depth = surface.material.depth;
-                        if depth.is_valid() {
-                            prepass_bin.push((
-                                index,
-                                OpaqueOp {
-                                    pipeline: depth,
-                                    ds: surface.material.instance.ds,
-                                },
-                            ));
-                        }
-                        let opaque = surface.material.main;
-                        if opaque.is_valid() {
-                            opaque_bin.push((
-                                index,
-                                OpaqueOp {
-                                    pipeline: opaque,
-                                    ds: surface.material.instance.ds,
-                                },
-                            ));
-                        }
-                        let transparent = surface.material.transparent;
-                        if transparent.is_valid() {
-                            // Fixme: depth
-                            transparent_bin.push((
-                                index,
-                                TransparentOp {
-                                    pipeline: transparent,
-                                    ds: surface.material.instance.ds,
-                                    depth: 0,
-                                },
-                            ));
+                for (node_index, mesh_index) in model.0.node_to_mesh.iter().copied() {
+                    let transform = model.0.world_transforms[node_index as usize] * transform.0;
+                    let bbox = model.0.bounds_per_mesh[mesh_index as usize].transform(transform);
+                    if bbox.is_visible(&frustum) {
+                        let mesh = &model.0.meshes[mesh_index as usize];
+                        let decompress_mat = Mat4::from_scale(vec3(
+                            mesh.position_scale,
+                            mesh.position_scale,
+                            mesh.position_scale,
+                        ));
+                        for surface in &mesh.surfaces {
+                            let index = render_ops.len();
+                            let model: Mat4 = transform.into();
+                            render_ops.push(RenderOpData {
+                                model: model * decompress_mat,
+                                vertex_positions: mesh.positions,
+                                vertex_attributes: mesh.attributes,
+                                index_buffer: mesh.index_buffer,
+                                first_index: surface.first_index,
+                                index_count: surface.index_count,
+                                vertex_offset: 0,
+                                uv_scale: mesh.uv_scale,
+                            });
+                            let depth = surface.material.depth;
+                            if depth.is_valid() {
+                                prepass_bin.push((
+                                    index,
+                                    OpaqueOp {
+                                        pipeline: depth,
+                                        ds: surface.material.instance.ds,
+                                    },
+                                ));
+                            }
+                            let opaque = surface.material.main;
+                            if opaque.is_valid() {
+                                opaque_bin.push((
+                                    index,
+                                    OpaqueOp {
+                                        pipeline: opaque,
+                                        ds: surface.material.instance.ds,
+                                    },
+                                ));
+                            }
+                            let transparent = surface.material.transparent;
+                            if transparent.is_valid() {
+                                // Fixme: depth
+                                transparent_bin.push((
+                                    index,
+                                    TransparentOp {
+                                        pipeline: transparent,
+                                        ds: surface.material.instance.ds,
+                                        depth: 0,
+                                    },
+                                ));
+                            }
                         }
                     }
                 }
@@ -268,7 +279,12 @@ pub fn render_world(
             ),
         );
         let view = camera.view();
-        let projection = camera.projection();
+        let projection = Mat4::from_cols(
+            vec4(1.0, 0.0, 0.0, 0.0),
+            vec4(0.0, -1.0, 0.0, 0.0),
+            vec4(0.0, 0.0, 0.5, 0.0),
+            vec4(0.0, 0.0, 0.5, 1.0),
+        ) * camera.projection();
         let view_projection = projection * view;
         let eye_position = view.transform_point3a(Vec3A::ZERO);
         let pass_data = context.push_dynamic_data(&[GpuPassData {

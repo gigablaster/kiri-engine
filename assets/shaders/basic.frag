@@ -12,8 +12,14 @@ layout(location = 3) in mat3 tbn;
 
 layout(location = 0) out vec4 out_color;
 
+layout(constant_id = 0) const int USE_DISCARD = 0;
+
 void main() {
-    vec3 base_color = texture(base_color, uv).rgb;
+    vec4 color = texture(base_color, uv);
+    vec3 base_color = color.rgb;
+    if (USE_DISCARD != 0 && color.a <= material.alpha_cutoff) {
+        discard;
+    }
     vec3 normal = unpack_normal(texture(normals, uv));
     vec3 mr = texture(metallic_roughness, uv).rgb;
     float ao = texture(occlusion, uv).r;
@@ -30,9 +36,7 @@ void main() {
     f0 = mix(f0, base_color, metallic);
 
     vec3 Lo = vec3(0, 0, 0);
-    for (int i = 0; i < 3; i++) {
-        Lo += bdrf(N, V, base_color, f0, metallic, roughness, ao, vec3(1.0, -1.0, 1.0) * per_pass.lights[i].direction, per_pass.lights[i].color);
-    }
+    Lo += bdrf(N, V, base_color, f0, metallic, roughness, ao, vec3(1.0, -1.0, 1.0) * per_pass.light.direction, per_pass.light.color);
     vec3 diffuse_ambient = ambient_light(N, per_pass.ambient);
     vec3 specular_ambient = ambient_light(-reflect(V, N), per_pass.ambient);
     vec3 ambient = mix(diffuse_ambient * base_color * ao, mix(specular_ambient, diffuse_ambient, roughness * roughness) * f0, metallic);

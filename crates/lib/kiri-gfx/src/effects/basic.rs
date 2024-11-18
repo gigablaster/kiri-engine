@@ -107,14 +107,15 @@ const BASIC_EFFECT_SPEC_DISCARD_INDEX: u32 = 0;
 impl BasicEffect {
     pub fn create(
         cache: &Arc<PipelineCache>,
-        pass: &'static RenderPassLayout<'static>,
+        depth_pass: &'static RenderPassLayout<'static>,
+        color_pass: &'static RenderPassLayout<'static>,
         input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Arc<dyn Effect>, Error> {
         let transparent = Self::create_pipeline(
             cache,
             "shaders/basic.vert",
             "shaders/basic.frag",
-            pass,
+            color_pass,
             RasterPipelineCreateDesc::default()
                 .premultiplied()
                 .depth_write(false),
@@ -125,7 +126,7 @@ impl BasicEffect {
             cache,
             "shaders/basic.vert",
             "shaders/basic.frag",
-            pass,
+            color_pass,
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
@@ -136,7 +137,7 @@ impl BasicEffect {
             cache,
             "shaders/basic.vert",
             "shaders/basic.frag",
-            pass,
+            color_pass,
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
@@ -147,7 +148,7 @@ impl BasicEffect {
             cache,
             "shaders/depth.vert",
             "shaders/depth.frag",
-            pass,
+            depth_pass,
             RasterPipelineCreateDesc::default(),
             input_layout,
             false,
@@ -156,7 +157,7 @@ impl BasicEffect {
             cache,
             "shaders/depth.vert",
             "shaders/depth.frag",
-            pass,
+            depth_pass,
             RasterPipelineCreateDesc::default(),
             input_layout,
             true,
@@ -269,19 +270,25 @@ impl MeshEffectFactory for BasicEffectFactory {
     fn get_or_create(
         &self,
         _name: &str,
-        pass_layout: &'static RenderPassLayout<'static>,
+        depth_pass_layout: &'static RenderPassLayout<'static>,
+        color_pass_layout: &'static RenderPassLayout<'static>,
         input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Option<Arc<dyn Effect>>, Error> {
         let effects = self.effects.upgradable_read();
-        if let Some(effect) = effects.get(&(pass_layout, input_layout)) {
+        if let Some(effect) = effects.get(&(color_pass_layout, input_layout)) {
             Ok(Some(effect.clone()))
         } else {
             let mut effects = RwLockUpgradableReadGuard::upgrade(effects);
-            if let Some(effect) = effects.get(&(pass_layout, input_layout)) {
+            if let Some(effect) = effects.get(&(color_pass_layout, input_layout)) {
                 Ok(Some(effect.clone()))
             } else {
-                let effect = BasicEffect::create(&self.cache, pass_layout, input_layout)?;
-                effects.insert((pass_layout, input_layout), effect.clone());
+                let effect = BasicEffect::create(
+                    &self.cache,
+                    depth_pass_layout,
+                    color_pass_layout,
+                    input_layout,
+                )?;
+                effects.insert((color_pass_layout, input_layout), effect.clone());
                 Ok(Some(effect))
             }
         }
