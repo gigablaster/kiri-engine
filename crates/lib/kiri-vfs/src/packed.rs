@@ -109,7 +109,7 @@ impl PackageBuilder {
                 },
             );
         } else {
-            let mut packer = lz4_flex::frame::FrameEncoder::new(Cursor::new(Vec::new()));
+            let mut packer = zstd::stream::Encoder::new(Cursor::new(Vec::new()), 19)?;
             packer.write_all(data)?;
             let packed = packer.finish()?.into_inner();
             self.file.write_all(&packed)?;
@@ -166,7 +166,7 @@ impl Archive for PackedArchive {
         if let Some(packed) = header.packed {
             let data = &self.mmap[header.offset as usize..(header.offset + packed) as usize];
             let data = Cursor::new(unsafe { slice::from_raw_parts(data.as_ptr(), data.len()) });
-            Ok(Box::new(lz4_flex::frame::FrameDecoder::new(data)))
+            Ok(Box::new(zstd::stream::Decoder::new(data)?))
         } else {
             let data = &self.mmap[header.offset as usize..(header.offset + header.size) as usize];
             Ok(Box::new(Cursor::new(unsafe {
