@@ -36,14 +36,14 @@ impl GameClient<LoopError> for Loop {
     fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let resources = ResourceManager::new(renderer)?;
         let mut world = World::new();
-        for x in -10..10 {
-            for y in -10..10 {
-                for z in -10..10 {
+        for x in -5..5 {
+            for y in -5..5 {
+                for z in -5..5 {
                     world.spawn((
                         Transform(Affine3A::from_translation(vec3(
-                            0.5 * x as f32,
-                            0.5 * y as f32,
-                            0.5 * z as f32,
+                            0.75 * x as f32,
+                            0.75 * y as f32,
+                            0.75 * z as f32,
                         ))),
                         PendingModel(resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf")),
                     ));
@@ -52,7 +52,7 @@ impl GameClient<LoopError> for Loop {
         }
         world.spawn(DirectionalLight {
             direction: Vec3::Z,
-            color: vec3(1.0, 1.0, 1.25),
+            color: vec3(15.0, 10.0, 13.0),
         });
         world.spawn((
             PerspectiveCamera {
@@ -61,13 +61,17 @@ impl GameClient<LoopError> for Loop {
                 zfar: 100.0,
             },
             Transform(Affine3A::look_at_lh(
-                vec3(0.0, -0.25, 1.0),
+                vec3(0.0, 0.5, 2.25),
                 Vec3::ZERO,
                 Vec3::Y,
             )),
         ));
-        world.insert_resource(HemisphericalLight::default());
-        world.insert_resource(Postprocess::default());
+        world.insert_resource(HemisphericalLight {
+            top: vec3(1.0, 1.0, 1.5),
+            middle: vec3(1.0, 0.5, 0.5),
+            bottom: vec3(0.5, 1.0, 0.5),
+        });
+        world.insert_resource(Postprocess { expouse: 0.2 });
         Ok(Self { resources, world })
     }
     fn title(&self) -> &str {
