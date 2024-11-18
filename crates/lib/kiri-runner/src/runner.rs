@@ -94,8 +94,9 @@ fn main_loop<E: Error, G: GameClient<E>>(
                 .set_title(game.title())
                 .map_err(|x| GameError::LoopError(x.to_string()))?;
         }
-        if w > 0 && h > 0 {
+        if w > 0 && h > 0 && !window.is_minimized() {
             if swapchain.is_none() {
+                dbg!(w, h);
                 swapchain = Some(Swapchain::new(device, surface, [w, h])?);
             }
             let current_swapchain = swapchain.as_ref().unwrap();
