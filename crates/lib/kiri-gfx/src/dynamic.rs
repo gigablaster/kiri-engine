@@ -149,7 +149,7 @@ pub struct DynamicWriter<'a, T: Copy> {
     _phantom: PhantomData<&'a T>,
 }
 
-impl<'a, T: Copy> DynamicWriter<'a, T> {
+impl<T: Copy> DynamicWriter<'_, T> {
     fn new(memory: *mut u8, offset: u64, count: usize) -> Self {
         Self {
             memory: unsafe { memory.add(offset as _) },

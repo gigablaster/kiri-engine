@@ -94,7 +94,7 @@ pub const EMPTY_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayout
     update_after_bind: false,
 };
 
-impl<'a> DescriptorSetLayoutDesc<'a> {
+impl DescriptorSetLayoutDesc<'_> {
     pub fn get_descriptor_count(&self) -> DescriptorSetCount {
         let mut count = DescriptorSetCount::default();
         for (_, data) in self.layout {

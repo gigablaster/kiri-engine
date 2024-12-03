@@ -346,7 +346,7 @@ pub struct DescriptorAllocatorContext<'a> {
     pool: &'a mut DescriptorAllocatorPool,
 }
 
-impl<'a> DescriptorAllocatorContext<'a> {
+impl DescriptorAllocatorContext<'_> {
     pub fn allocate(
         &mut self,
         layout: vk::DescriptorSetLayout,

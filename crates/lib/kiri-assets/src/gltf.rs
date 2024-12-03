@@ -60,7 +60,6 @@ pub struct MeshVertexPositions {
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 #[repr(C)]
-
 pub struct MeshVertexAttributes {
     pub normal_packed: u32,
     pub tangent_packed: u32,

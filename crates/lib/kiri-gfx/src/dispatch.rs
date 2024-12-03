@@ -33,7 +33,7 @@ pub struct RenderResourceResolver<'a> {
     pub backbuffer: &'a Image,
 }
 
-impl<'a> RenderResourceResolver<'a> {
+impl RenderResourceResolver<'_> {
     pub fn resolve_buffer(&self, handle: BufferHandle) -> Result<vk::Buffer, Error> {
         self.buffers
             .get(handle)

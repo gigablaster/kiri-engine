@@ -123,7 +123,7 @@ impl RenderTargetPool {
     }
 }
 
-impl<'a> Drop for TransientImageGuard<'a> {
+impl Drop for TransientImageGuard<'_> {
     fn drop(&mut self) {
         self.pool.recycle(self.handle, self.key);
     }

@@ -24,7 +24,7 @@ use std::{
 use crate::{GameClient, GameError, GameTickState};
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
-use kiri_common::{GameTime, TimeFilter};
+use kiri_common::TimeFilter;
 use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
@@ -43,7 +43,6 @@ impl<E: Error> From<String> for GameError<E> {
 
 struct RenderSystem<E: Error> {
     window: Window,
-    device: Arc<RenderDevice>,
     surface: Surface,
     renderer: Arc<Renderer>,
     pool: RenderTargetPool,
@@ -72,7 +71,6 @@ impl<E: Error> RenderSystem<E> {
         let pool = RenderTargetPool::new(&renderer);
         Ok(Self {
             window,
-            device,
             surface,
             renderer,
             pool,
@@ -149,7 +147,7 @@ where
                     if FrameState::NeedRecreateSwapchain
                         == render_system
                             .renderer
-                            .render(&swapchain, |context| {
+                            .render(swapchain, |context| {
                                 game.render(dt, context, &render_system.pool)
                             })
                             .unwrap()

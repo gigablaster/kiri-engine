@@ -151,7 +151,7 @@ struct TangentCalcContext<'a> {
     tangents: &'a mut [[f32; 4]],
 }
 
-impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
+impl mikktspace::Geometry for TangentCalcContext<'_> {
     fn num_faces(&self) -> usize {
         self.indices.len() / 3
     }

@@ -173,7 +173,7 @@ pub struct InputVertexStreamLayout<'a> {
     pub stride: u32,
 }
 
-impl<'a> InputVertexStreamLayout<'a> {
+impl InputVertexStreamLayout<'_> {
     fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
         let attributes = self
             .streams
