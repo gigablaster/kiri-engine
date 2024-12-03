@@ -33,7 +33,7 @@ impl Display for LoopError {
 impl Error for LoopError {}
 
 impl GameClient<LoopError> for Loop {
-    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
+    fn create(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
         let resources = ResourceManager::new(renderer)?;
         let mut world = World::new();
         for x in -5..5 {
@@ -74,9 +74,6 @@ impl GameClient<LoopError> for Loop {
         world.insert_resource(Postprocess { expouse: 0.2 });
         Ok(Self { resources, world })
     }
-    fn title(&self) -> &str {
-        "Loop Demo"
-    }
 
     fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
         self.resources.tick();
@@ -100,5 +97,5 @@ fn main() {
     eprintln!("Serving demo profile data on {server_addr}. Run `puffin_viewer` to view it.");
     puffin::set_scopes_on(true);
 
-    run_game::<LoopError, Loop>().unwrap();
+    run_game::<LoopError, Loop>();
 }

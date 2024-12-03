@@ -38,8 +38,7 @@ pub enum GameError<E: Error> {
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn new(renderer: &Arc<Renderer>) -> Result<Self, GameError<E>>;
-    fn title(&self) -> &str;
+    fn create(renderer: &Arc<Renderer>) -> Result<Self, GameError<E>>;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
     fn render(
         &mut self,
