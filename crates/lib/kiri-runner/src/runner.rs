@@ -30,9 +30,10 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::WindowEvent,
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowButtons},
+    keyboard::{KeyCode, PhysicalKey},
+    window::{Fullscreen, Window, WindowButtons},
 };
 
 impl<E: Error> From<String> for GameError<E> {
@@ -89,6 +90,7 @@ where
     render_system: Option<RenderSystem<E>>,
     time: TimeFilter,
     last_timestamp: Instant,
+    alt_pressed: bool,
     _phantom: PhantomData<E>,
 }
 
@@ -121,6 +123,29 @@ where
                 event_loop.exit();
             }
             WindowEvent::Resized(..) => self.swapchain = None,
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(KeyCode::Enter),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if self.alt_pressed => {
+                if let Some(render_system) = &self.render_system {
+                    match render_system.window.fullscreen() {
+                        Some(_) => render_system.window.set_fullscreen(None),
+                        None => render_system
+                            .window
+                            .set_fullscreen(Some(Fullscreen::Borderless(
+                                render_system.window.current_monitor(),
+                            ))),
+                    }
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.alt_pressed = modifiers.state().alt_key()
+            }
             WindowEvent::RedrawRequested => {
                 let render_system = self.render_system.as_ref().unwrap();
                 let game = self.game.as_mut().unwrap();
@@ -182,6 +207,7 @@ where
             swapchain: None,
             time: TimeFilter::default(),
             last_timestamp: Instant::now(),
+            alt_pressed: false,
             _phantom: PhantomData,
         }
     }
