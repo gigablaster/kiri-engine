@@ -14,16 +14,18 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{ptr::NonNull, sync::Arc};
+use std::{path::PathBuf, ptr::NonNull, sync::Arc};
 
 use bevy_tasks::ComputeTaskPool;
 use kiri_backend::{
-    ash::vk, compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc,
-    DescriptorSetCount, DescriptorSetLayoutDesc, Frame, Image, ImageCreateDesc, ImageViewDesc,
-    InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderDevice, RenderPassLayout,
-    ShaderDesc, Swapchain,
+    ash::vk::{self},
+    compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
+    Buffer, BufferCreateDesc, DescriptorSetCount, DescriptorSetLayoutDesc, Frame, Image,
+    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
+    RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
 };
-use kiri_common::{Handle, HotColdPool, Pool, TempList};
+use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
+use log::warn;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -125,6 +127,8 @@ pub struct Renderer {
     staging: Mutex<Staging>,
     pipelines_to_compile: Mutex<Vec<PipelineHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
+    pipeline_cache_path: Option<PathBuf>,
+    pipeline_cache: vk::PipelineCache,
 }
 
 unsafe impl Sync for Renderer {}
@@ -136,7 +140,14 @@ const MAX_PROGRAMS: usize = 1024;
 const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
-    pub fn new(device: &Arc<RenderDevice>) -> Result<Arc<Self>, Error> {
+    pub fn new(device: &Arc<RenderDevice>, config: &GameAppConfig) -> Result<Arc<Self>, Error> {
+        let pipeline_cache_path = config.cache();
+        let pipeline_cache = pipeline_cache_path
+            .clone()
+            .map(|path| {
+                load_or_create_pipeline_cache(device, &path).unwrap_or(vk::PipelineCache::null())
+            })
+            .unwrap_or(vk::PipelineCache::null());
         Ok(Arc::new(Self {
             device: device.clone(),
             staging: Mutex::new(Staging::new(device)?),
@@ -147,6 +158,8 @@ impl Renderer {
             programs: RwLock::new(ProgramPool::new(MAX_PROGRAMS)),
             pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
+            pipeline_cache_path,
+            pipeline_cache,
         }))
     }
 
@@ -428,7 +441,7 @@ impl Renderer {
             (
                 compile_raster_pipeline(
                     &self.device,
-                    vk::PipelineCache::null(),
+                    self.pipeline_cache,
                     program,
                     data.render_pass,
                     data.streams,
@@ -591,6 +604,18 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe { self.device.raw.device_wait_idle() }.unwrap();
+        if let Some(path) = &self.pipeline_cache_path {
+            save_pipeline_cache(&self.device, self.pipeline_cache, path)
+                .map_err(|x| {
+                    warn!("Failed to safe pipeline cache: {}", x);
+                })
+                .ok();
+            unsafe {
+                self.device
+                    .raw
+                    .destroy_pipeline_cache(self.pipeline_cache, None);
+            }
+        }
         self.pipelines
             .write()
             .drain()

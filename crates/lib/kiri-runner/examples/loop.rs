@@ -10,6 +10,7 @@ use kiri::{
     },
     Transform,
 };
+use kiri_common::GameAppConfig;
 use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
 use kiri_math::{vec3, Affine3A, Vec3};
 use kiri_resources::{ResourceLoader, ResourceManager};
@@ -31,6 +32,11 @@ impl Display for LoopError {
 }
 
 impl Error for LoopError {}
+
+static CONFIG: GameAppConfig = GameAppConfig {
+    developer: "kekgames",
+    name: "loop_example",
+};
 
 impl GameClient<LoopError> for Loop {
     fn create(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
@@ -89,7 +95,12 @@ impl GameClient<LoopError> for Loop {
     ) -> Result<(), kiri_gfx::Error> {
         render_world(&mut self.world, context, &self.resources, pool)
     }
+
+    fn config() -> &'static kiri_common::GameAppConfig<'static> {
+        &CONFIG
+    }
 }
+
 fn main() {
     simple_logger::init().unwrap();
     let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);

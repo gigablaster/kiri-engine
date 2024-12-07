@@ -18,7 +18,10 @@ mod memory;
 mod pool;
 mod time;
 
+use std::path::PathBuf;
+
 pub use chunky_list::*;
+use directories::ProjectDirs;
 pub use memory::*;
 pub use pool::*;
 use speedy::{Readable, Writable};
@@ -93,6 +96,17 @@ impl NodeIndex {
         } else {
             None
         }
+    }
+}
+
+pub struct GameAppConfig<'a> {
+    pub developer: &'a str,
+    pub name: &'a str,
+}
+
+impl GameAppConfig<'_> {
+    pub fn cache(&self) -> Option<PathBuf> {
+        ProjectDirs::from("com", self.developer, self.name).map(|dirs| dirs.cache_dir().into())
     }
 }
 

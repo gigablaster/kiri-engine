@@ -24,7 +24,7 @@ use std::{
 use crate::{GameClient, GameError, GameTickState};
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
-use kiri_common::TimeFilter;
+use kiri_common::{GameAppConfig, TimeFilter};
 use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
@@ -51,7 +51,7 @@ struct RenderSystem<E: Error> {
 }
 
 impl<E: Error> RenderSystem<E> {
-    fn new(event_loop: &ActiveEventLoop) -> Result<Self, GameError<E>> {
+    fn new(event_loop: &ActiveEventLoop, config: &GameAppConfig) -> Result<Self, GameError<E>> {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
@@ -68,7 +68,7 @@ impl<E: Error> RenderSystem<E> {
             &surface,
             &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
         )?;
-        let renderer = Renderer::new(&device)?;
+        let renderer = Renderer::new(&device, config)?;
         let pool = RenderTargetPool::new(&renderer);
         Ok(Self {
             window,
@@ -104,7 +104,7 @@ where
             self.last_timestamp = Instant::now();
             return;
         }
-        let render_system = RenderSystem::new(event_loop).unwrap();
+        let render_system = RenderSystem::new(event_loop, G::config()).unwrap();
 
         self.game = Some(G::create(&render_system.renderer).unwrap());
         self.render_system = Some(render_system);

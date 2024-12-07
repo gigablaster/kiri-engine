@@ -504,6 +504,9 @@ pub fn save_pipeline_cache<P: AsRef<Path>>(
     cache: vk::PipelineCache,
     path: P,
 ) -> io::Result<()> {
+    if cache == vk::PipelineCache::null() {
+        return Ok(());
+    }
     info!("Saving pipeline cache to {:?}", path.as_ref());
     let data = unsafe { device.raw.get_pipeline_cache_data(cache) }.map_err(|err| {
         io::Error::new(
