@@ -23,6 +23,7 @@ use kiri_assets::{
     Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource,
     STATIC_MESH_INPUT_LAYOUT,
 };
+use kiri_common::{block_on, spawn, spawn_io, yield_now, Task};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     effects::{
@@ -38,7 +39,6 @@ use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 use log::warn;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use smol::{block_on, future::yield_now, Task};
 #[cfg(feature = "devel")]
 use std::{fs::File, io};
 
@@ -185,13 +185,13 @@ impl ResourceLoader for Arc<ResourceManager> {
     fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>> {
         let source = source.clone();
         self.textures.get_or_load(source.clone(), || {
-            smol::spawn(ResourceManager::load_texture(self.clone(), source))
+            spawn(ResourceManager::load_texture(self.clone(), source))
         })
     }
 
     fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>> {
         self.models.get_or_load(name.to_owned(), || {
-            smol::spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
+            spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
         })
     }
 }
@@ -273,7 +273,7 @@ impl ResourceManager {
         match &source.data {
             kiri_assets::ImageData::Path(path) => {
                 let asset: ImageAsset =
-                    smol::spawn(Self::load_or_compile_asset(source.clone())).await?;
+                    spawn_io(Self::load_or_compile_asset(source.clone())).await?;
                 let mips = asset
                     .mips
                     .iter()
@@ -368,7 +368,7 @@ impl ResourceManager {
 
     async fn load_model(manager: Arc<ResourceManager>, name: String) -> Result<RenderModel, Error> {
         let asset: ModelAsset =
-            smol::spawn(Self::load_or_compile_asset(ModelSource::new(&name))).await?;
+            spawn_io(Self::load_or_compile_asset(ModelSource::new(&name))).await?;
         let mut builder = RenderModelBuilder::new(
             &asset.vertex_positions,
             &asset.vertex_attributes,
@@ -379,9 +379,9 @@ impl ResourceManager {
             .materials
             .into_iter()
             .map(|x| {
-                manager.materials.get_or_load(x.clone(), || {
-                    smol::spawn(Self::load_material(manager.clone(), x))
-                })
+                manager
+                    .materials
+                    .get_or_load(x.clone(), || spawn(Self::load_material(manager.clone(), x)))
             })
             .collect::<Vec<_>>();
         let mut loaded_materials = Vec::default();

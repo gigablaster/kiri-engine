@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod chunky_list;
+mod executors;
 mod memory;
 mod pool;
 mod time;
@@ -22,8 +23,12 @@ use std::path::PathBuf;
 
 pub use chunky_list::*;
 use directories::ProjectDirs;
+pub use executors::*;
 pub use memory::*;
 pub use pool::*;
+pub use smol::block_on;
+pub use smol::future::yield_now;
+pub use smol::Task;
 use speedy::{Readable, Writable};
 pub use time::*;
 

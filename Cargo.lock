@@ -1370,6 +1370,7 @@ version = "0.2.0"
 dependencies = [
  "arrayvec",
  "directories",
+ "smol",
  "speedy",
 ]
 
@@ -1413,7 +1414,6 @@ dependencies = [
  "kiri-vfs",
  "log",
  "parking_lot",
- "smol",
  "thiserror 2.0.9",
 ]
 
