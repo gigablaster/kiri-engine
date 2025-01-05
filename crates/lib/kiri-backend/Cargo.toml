@@ -1,6 +1,6 @@
 [package]
 name = "kiri-backend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -13,7 +13,7 @@ raw-window-handle = "0.6.2"
 log = "0.4.20"
 byte-slice-cast = "1.2.2"
 parking_lot = "0.12.3"
-thiserror = "1.0.61"
+thiserror = "2.0.9"
 byteorder = "1.5.0"
 gpu-alloc = "0.6.0"
 gpu-alloc-ash = "0.7.0"

@@ -1,6 +1,6 @@
 [package]
 name = "kiri-resources"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -12,7 +12,7 @@ kiri-gfx = { path = "../kiri-gfx" }
 kiri-math = { path = "../kiri-math" }
 parking_lot = "0.12.3"
 bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
-thiserror = "1.0.61"
+thiserror = "2.0.9"
 log = "0.4.20"
 arrayvec = "0.7.4"
 bytes = "1.6.0"

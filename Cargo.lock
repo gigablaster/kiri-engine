@@ -70,7 +70,7 @@ dependencies = [
  "ndk-context",
  "ndk-sys",
  "num_enum",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -237,7 +237,7 @@ dependencies = [
  "fixedbitset 0.5.7",
  "nonmax",
  "petgraph",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -283,7 +283,7 @@ dependencies = [
  "erased-serde",
  "serde",
  "smallvec",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy_tasks",
  "bytes",
@@ -436,7 +436,7 @@ dependencies = [
  "polling",
  "rustix",
  "slab",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -844,9 +844,9 @@ dependencies = [
 
 [[package]]
 name = "float-cmp"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+checksum = "b09cf3155332e944990140d967ff5eceb70df778b34f77d8075db46e4704e6d8"
 dependencies = [
  "num-traits",
 ]
@@ -1164,7 +1164,7 @@ dependencies = [
  "combine",
  "jni-sys",
  "log",
- "thiserror",
+ "thiserror 1.0.61",
  "walkdir",
  "windows-sys 0.45.0",
 ]
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "kiri"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "bevy_ecs",
@@ -1217,12 +1217,12 @@ dependencies = [
  "parking_lot",
  "puffin",
  "radsort",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
 name = "kiri-assets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "gltf",
@@ -1239,13 +1239,13 @@ dependencies = [
  "numquant",
  "shader-prepper",
  "speedy",
- "thiserror",
+ "thiserror 2.0.9",
  "uuid",
 ]
 
 [[package]]
 name = "kiri-backend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "ash",
@@ -1259,12 +1259,12 @@ dependencies = [
  "parking_lot",
  "puffin",
  "raw-window-handle",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
 name = "kiri-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "directories",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-gfx"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "byte-slice-cast",
@@ -1287,19 +1287,19 @@ dependencies = [
  "parking_lot",
  "puffin",
  "rayon",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
 name = "kiri-math"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glam 0.29.0",
 ]
 
 [[package]]
 name = "kiri-resources"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrayvec",
  "bevy_tasks",
@@ -1312,12 +1312,12 @@ dependencies = [
  "kiri-vfs",
  "log",
  "parking_lot",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
 name = "kiri-runner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy_ecs",
  "bevy_tasks",
@@ -1334,13 +1334,13 @@ dependencies = [
  "puffin_http",
  "raw-window-handle",
  "simple_logger",
- "thiserror",
+ "thiserror 2.0.9",
  "winit",
 ]
 
 [[package]]
 name = "kiri-vfs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "byteorder",
  "kiri-common",
@@ -1349,7 +1349,7 @@ dependencies = [
  "parking_lot",
  "siphasher",
  "speedy",
- "thiserror",
+ "thiserror 2.0.9",
  "uuid",
  "zstd",
 ]
@@ -1470,14 +1470,14 @@ dependencies = [
 
 [[package]]
 name = "meshopt"
-version = "0.3.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0cad96c96b1c198160517f5dc7c247ef36ebb9d49015c0cfca0c0ee8d7d1bbc"
+checksum = "4b87fa02c060ffe367138c480622816cd627418bec30fec71b20725fb9ba10a5"
 dependencies = [
  "bitflags 2.6.0",
  "cc",
  "float-cmp",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
@@ -1522,7 +1522,7 @@ dependencies = [
  "ndk-sys",
  "num_enum",
  "raw-window-handle",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -1996,9 +1996,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.86"
+version = "1.0.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e719e8df665df0d1c8fbfd238015744736151d4445ec0836b8e628aae103b77"
+checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
 dependencies = [
  "unicode-ident",
 ]
@@ -2127,7 +2127,7 @@ checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -2250,7 +2250,7 @@ version = "0.3.0-pre.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32f4c8898380bb21a998144ddb2a532b1c533b43c643fb75628fee2b01a9c041"
 dependencies = [
- "thiserror",
+ "thiserror 1.0.61",
 ]
 
 [[package]]
@@ -2306,7 +2306,7 @@ dependencies = [
  "log",
  "memmap2",
  "rustix",
- "thiserror",
+ "thiserror 1.0.61",
  "wayland-backend",
  "wayland-client",
  "wayland-csd-frame",
@@ -2361,9 +2361,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"
-version = "2.0.69"
+version = "2.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "201fcda3845c23e8212cd466bfebf0bd20694490fc0356ae8e428e0824a915a6"
+checksum = "46f71c0377baf4ef1cc3e3402ded576dccc315800fbc62dfc7fe04b009773b4a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2376,7 +2376,16 @@ version = "1.0.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c546c80d6be4bc6a00c0f01730c08df82eaa7a7a61f11d656526506112cc1709"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.61",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
+dependencies = [
+ "thiserror-impl 2.0.9",
 ]
 
 [[package]]
@@ -2384,6 +2393,17 @@ name = "thiserror-impl"
 version = "1.0.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46c3384250002a6d5af4d114f2845d37b57521033f30d5c3f46c4d70e1197533"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b50fa271071aae2e6ee85f842e2e28ba8cd2c5fb67f11fcb1fd70b276f9e7d4"
 dependencies = [
  "proc-macro2",
  "quote",

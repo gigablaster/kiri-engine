@@ -1,6 +1,6 @@
 [package]
 name = "kiri-assets"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -27,11 +27,11 @@ numquant = "0.2.0"
 mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
     "glam",
 ], default-features = false, optional = true }
-meshopt = { version = "0.3.0", optional = true }
+meshopt = { version = "0.4.1", optional = true }
 gltf = { version = "1.4.1", features = [
     "KHR_materials_emissive_strength",
 ], optional = true }
-thiserror = "1.0.61"
+thiserror = "2.0.9"
 shader-prepper = { version = "0.3.0-pre.3", optional = true }
 uuid = { version = "1.10.0", features = ["v4"] }
 log = "0.4.20"
