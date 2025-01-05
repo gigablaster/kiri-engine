@@ -15,9 +15,6 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use bevy_tasks::{
-    block_on, futures_lite::future::yield_now, AsyncComputeTaskPool, IoTaskPool, Task,
-};
 #[cfg(feature = "devel")]
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, save_asset, ImportAsset,
@@ -41,6 +38,7 @@ use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 use log::warn;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use smol::{block_on, future::yield_now, Task};
 #[cfg(feature = "devel")]
 use std::{fs::File, io};
 
@@ -187,14 +185,13 @@ impl ResourceLoader for Arc<ResourceManager> {
     fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>> {
         let source = source.clone();
         self.textures.get_or_load(source.clone(), || {
-            AsyncComputeTaskPool::get().spawn(ResourceManager::load_texture(self.clone(), source))
+            smol::spawn(ResourceManager::load_texture(self.clone(), source))
         })
     }
 
     fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>> {
         self.models.get_or_load(name.to_owned(), || {
-            AsyncComputeTaskPool::get()
-                .spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
+            smol::spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
         })
     }
 }
@@ -275,9 +272,8 @@ impl ResourceManager {
     ) -> Result<Texture, Error> {
         match &source.data {
             kiri_assets::ImageData::Path(path) => {
-                let asset: ImageAsset = IoTaskPool::get()
-                    .spawn(Self::load_or_compile_asset(source.clone()))
-                    .await?;
+                let asset: ImageAsset =
+                    smol::spawn(Self::load_or_compile_asset(source.clone())).await?;
                 let mips = asset
                     .mips
                     .iter()
@@ -371,9 +367,8 @@ impl ResourceManager {
     }
 
     async fn load_model(manager: Arc<ResourceManager>, name: String) -> Result<RenderModel, Error> {
-        let asset: ModelAsset = IoTaskPool::get()
-            .spawn(Self::load_or_compile_asset(ModelSource::new(&name)))
-            .await?;
+        let asset: ModelAsset =
+            smol::spawn(Self::load_or_compile_asset(ModelSource::new(&name))).await?;
         let mut builder = RenderModelBuilder::new(
             &asset.vertex_positions,
             &asset.vertex_attributes,
@@ -385,7 +380,7 @@ impl ResourceManager {
             .into_iter()
             .map(|x| {
                 manager.materials.get_or_load(x.clone(), || {
-                    AsyncComputeTaskPool::get().spawn(Self::load_material(manager.clone(), x))
+                    smol::spawn(Self::load_material(manager.clone(), x))
                 })
             })
             .collect::<Vec<_>>();

@@ -11,7 +11,7 @@ kiri-vfs = { path = "../kiri-vfs" }
 kiri-gfx = { path = "../kiri-gfx" }
 kiri-math = { path = "../kiri-math" }
 parking_lot = "0.12.3"
-bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
+smol = "2.0.2"
 thiserror = "2.0.9"
 log = "0.4.20"
 arrayvec = "0.7.4"
