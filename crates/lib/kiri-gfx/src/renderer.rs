@@ -430,7 +430,7 @@ impl Renderer {
         Ok(())
     }
 
-    fn compile_pipeline<'a>(
+    fn compile_pipeline(
         &self,
         handle: PipelineHandle,
         pipelines: &PipelinePool,
