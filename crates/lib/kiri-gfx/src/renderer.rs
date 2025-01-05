@@ -16,7 +16,6 @@
 use core::slice;
 use std::{path::PathBuf, ptr::NonNull, sync::Arc};
 
-use bevy_tasks::ComputeTaskPool;
 use kiri_backend::{
     ash::vk::{self},
     compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
@@ -26,7 +25,7 @@ use kiri_backend::{
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use log::warn;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
     DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, ImageUploadData,
@@ -410,20 +409,28 @@ impl Renderer {
     fn compile_pipelines(&self) -> Result<(), Error> {
         puffin::profile_function!();
         let programs = self.programs.read();
-        let mut pipelines = self.pipelines.write();
-        let mut result = ComputeTaskPool::get().scope(|s| {
+        let pipelines = self.pipelines.upgradable_read();
+        let result = Arc::new(Mutex::new(Vec::default()));
+        let pipelines_ref = &pipelines;
+        let programs_ref = &programs;
+        rayon::scope(|s| {
             for handle in self.pipelines_to_compile.lock().drain(..) {
-                s.spawn(self.compile_pipeline(handle, &pipelines, &programs));
+                let result = result.clone();
+                s.spawn(move |_| {
+                    let pipeline = self.compile_pipeline(handle, pipelines_ref, programs_ref);
+                    result.lock().push(pipeline);
+                });
             }
         });
-        for it in result.drain(..) {
+        let mut pipelines = RwLockUpgradableReadGuard::upgrade(pipelines);
+        for it in result.lock().drain(..) {
             let (handle, data) = it?;
             pipelines.replace(handle, data);
         }
         Ok(())
     }
 
-    async fn compile_pipeline<'a>(
+    fn compile_pipeline<'a>(
         &self,
         handle: PipelineHandle,
         pipelines: &PipelinePool,
