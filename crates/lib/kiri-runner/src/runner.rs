@@ -22,7 +22,6 @@ use std::{
 };
 
 use crate::{GameClient, GameError, GameTickState};
-use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::{GameAppConfig, TimeFilter};
 use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
@@ -214,10 +213,6 @@ where
 }
 
 pub fn run_game<E: Error, G: GameClient<E>>() {
-    ComputeTaskPool::get_or_init(TaskPool::new);
-    AsyncComputeTaskPool::get_or_init(TaskPool::new);
-    IoTaskPool::get_or_init(TaskPool::new);
-
     let even_loop = EventLoop::new().unwrap();
     even_loop.run_app(&mut GameApp::<G, E>::default()).unwrap();
 }

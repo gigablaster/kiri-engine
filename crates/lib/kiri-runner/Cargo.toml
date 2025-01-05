@@ -15,14 +15,12 @@ thiserror = "2.0.9"
 directories = "5.0.1"
 raw-window-handle = "0.6.2"
 log = "0.4.22"
-bevy_tasks = { version = "0.14.0", features = ["multi_threaded"] }
 puffin = "0.19.0"
 winit = "0.30.5"
 
 [dev-dependencies]
 simple_logger = "5.0.0"
 puffin_http = "0.16.1"
-bevy_ecs = "0.14.1"
 
 [[example]]
 name = "loop"
