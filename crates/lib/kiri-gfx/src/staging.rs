@@ -249,7 +249,7 @@ impl Staging {
             self.copy_buffers();
             self.copy_images();
             self.barriers_after();
-            self.device.end_labe(self.command_buffer);
+            self.device.end_label(self.command_buffer);
             self.device.raw.end_command_buffer(self.command_buffer)?;
         }
         self.allocator.reset();

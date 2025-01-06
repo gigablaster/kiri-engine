@@ -374,7 +374,7 @@ impl Renderer {
         for pass in passes {
             self.device.begin_label(command_buffer, pass.name());
             pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
-            self.device.end_labe(command_buffer);
+            self.device.end_label(command_buffer);
         }
         unsafe {
             self.device.raw.end_command_buffer(command_buffer)?;

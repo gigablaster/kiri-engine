@@ -251,7 +251,7 @@ impl RenderDevice {
         }
     }
 
-    pub fn end_labe(&self, command_buffer: vk::CommandBuffer) {
+    pub fn end_label(&self, command_buffer: vk::CommandBuffer) {
         if let Some(debug_utils) = &self.debug {
             unsafe { debug_utils.cmd_end_debug_utils_label(command_buffer) };
         }
