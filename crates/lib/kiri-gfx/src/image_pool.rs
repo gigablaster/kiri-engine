@@ -46,7 +46,7 @@ pub struct RenderTargetPool {
 }
 
 #[derive(Debug)]
-pub struct TransientImageGuard<'a> {
+pub struct TransientImage<'a> {
     pool: &'a RenderTargetPool,
     key: TempImageKey,
     pub handle: ImageHandle,
@@ -67,14 +67,14 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
-    ) -> Result<TransientImageGuard, Error> {
+    ) -> Result<TransientImage, Error> {
         assert!(
             usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
                 || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
             "Must be an attachment"
         );
         let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
-        Ok(TransientImageGuard {
+        Ok(TransientImage {
             pool: self,
             key,
             handle: image,
@@ -123,7 +123,7 @@ impl RenderTargetPool {
     }
 }
 
-impl Drop for TransientImageGuard<'_> {
+impl Drop for TransientImage<'_> {
     fn drop(&mut self) {
         self.pool.recycle(self.handle, self.key);
     }

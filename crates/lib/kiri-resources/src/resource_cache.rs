@@ -196,6 +196,24 @@ impl ResourceLoader for Arc<ResourceManager> {
     }
 }
 
+pub struct ResourceResolveContext<'a> {
+    models: &'a Pool<Resource<RenderModel>>,
+}
+
+impl<'a> ResourceResolveContext<'a> {
+    pub fn resolve_model(&self, handle: ModelHandle) -> Result<Option<Arc<RenderModel>>, Error> {
+        let resource = self
+            .models
+            .get(handle)
+            .ok_or(Error::InvalidModelHandle(handle))?;
+        match resource {
+            Resource::Loading => Ok(None),
+            Resource::Failed => Err(Error::ResourceLoadingFailed),
+            Resource::Loaded(model) => Ok(Some(model.clone())),
+        }
+    }
+}
+
 impl ResourceManager {
     pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource manager");
@@ -291,6 +309,11 @@ impl ResourceManager {
                     .build(&manager.renderer)?)
             }
         }
+    }
+
+    pub fn resolve<CB: FnOnce(ResourceResolveContext)>(&self, cb: CB) {
+        let models = self.models.pool.lock();
+        cb(ResourceResolveContext { models: &models });
     }
 
     async fn load_material(

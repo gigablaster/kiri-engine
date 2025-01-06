@@ -57,6 +57,9 @@ pub struct DrawStream {
     commands: usize,
 }
 
+unsafe impl Send for DrawStream {}
+unsafe impl Sync for DrawStream {}
+
 const PIPELINE_MASK: u16 = 1 << 0;
 const VERTEX_STREAM_MASK: u16 = 1 << 1;
 const INDEX_STREAM_MASK: u16 = VERTEX_STREAM_MASK << MAX_VERTEX_STREAMS;
