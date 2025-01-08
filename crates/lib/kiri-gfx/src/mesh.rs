@@ -131,14 +131,8 @@ impl RenderMeshBuilder {
         indices: BufferHandle,
     ) -> RenderMesh {
         RenderMesh {
-            positions: BufferPointer::new(
-                positions,
-                self.first_vertex * mem::size_of::<MeshVertexPositions>() as u64,
-            ),
-            attributes: BufferPointer::new(
-                attributes,
-                self.first_vertex * mem::size_of::<MeshVertexAttributes>() as u64,
-            ),
+            positions: BufferPointer::new(positions, 0),
+            attributes: BufferPointer::new(attributes, 0),
             index_buffer: BufferPointer::new(
                 indices,
                 self.first_index * mem::size_of::<u16>() as u64,

@@ -30,7 +30,9 @@ use kiri_gfx::{
     PipelineHandle, RasterPipelineDesc, RenderContext, RenderModel, RenderTargetPool,
     TransientImage,
 };
-use kiri_math::{vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A};
+use kiri_math::{
+    vec3, vec3a, vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A,
+};
 use kiri_resources::{ModelHandle, ResourceManager};
 use log::warn;
 use parking_lot::Mutex;
@@ -614,8 +616,6 @@ impl RenderWorld {
                     .write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)
                     .unwrap();
                 let mut stream = DrawStreamBuilder::default();
-                stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
-                stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
                 chunk
                     .iter()
                     .enumerate()
@@ -628,6 +628,8 @@ impl RenderWorld {
                             })
                             .unwrap();
                         stream.set_pipeline(render_op.pipeline);
+                        stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
+                        stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
                         stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(render_op.ds));
                         stream.set_dynamic_offset(0, Some(writer.offset as _));
                         stream.set_vertex_buffer(0, op.vertex_positions);
@@ -788,13 +790,18 @@ impl RenderWorldInner {
                             .copied()
                             .map(|(x, y)| (x as usize, y as usize))
                         {
-                            let transform = transform * model.world_transforms[node_index];
+                            let transform = model.world_transforms[node_index] * transform;
                             let mesh = &model.meshes[mesh_index];
                             if mesh.bounds.transform(transform).is_visible(frustrum) {
+                                let decompress_mat = Mat4::from_scale(vec3(
+                                    mesh.position_scale,
+                                    mesh.position_scale,
+                                    mesh.position_scale,
+                                ));
                                 for surface in mesh.surfaces.iter() {
                                     let index = ops.len();
                                     ops.push(RenderOpData {
-                                        model: transform.into(),
+                                        model: transform * decompress_mat,
                                         vertex_positions: mesh.positions,
                                         vertex_attributes: mesh.attributes,
                                         index_buffer: mesh.index_buffer,
