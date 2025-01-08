@@ -56,15 +56,15 @@ pub trait MeshEffectFactory: Debug + Send + Sync {
         name: &str,
         depth_pass_layout: &'static RenderPassLayout<'static>,
         color_pass_layout: &'static RenderPassLayout<'static>,
-        input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Option<Arc<dyn Effect>>, Error>;
 }
 
-pub fn fill_descriptor_with_textures(
-    mut builder: DescriptorSetBuilder,
+pub fn fill_descriptor_with_textures<'a>(
+    builder: DescriptorSetBuilder<'a>,
     desc: &DescriptorSetLayoutDesc,
     textures: &HashMap<String, Arc<Texture>>,
-) -> Result<DescriptorSetBuilder, Error> {
+) -> Result<DescriptorSetBuilder<'a>, Error> {
+    let mut builder = builder;
     for (slot, desc) in desc.layout {
         if desc.ty == vk::DescriptorType::SAMPLED_IMAGE
             || desc.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER

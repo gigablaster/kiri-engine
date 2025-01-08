@@ -24,7 +24,7 @@ use kiri_backend::{
     RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
-use log::warn;
+use log::{trace, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
@@ -112,6 +112,7 @@ pub(super) struct PipelineCompilationData {
     streams: &'static [InputVertexStreamLayout<'static>],
     specialization: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
+    name: Option<String>,
 }
 
 /// Low-level renderer
@@ -260,6 +261,7 @@ impl Renderer {
         streams: &'static [InputVertexStreamLayout<'static>],
         specialization: &[(u32, u32)],
         desc: RasterPipelineCreateDesc,
+        name: Option<&str>,
     ) -> PipelineHandle {
         let data = PipelineCompilationData {
             program,
@@ -267,6 +269,7 @@ impl Renderer {
             streams,
             specialization: specialization.to_vec(),
             desc,
+            name: name.map(|x| x.to_owned()),
         };
         let handle = self
             .pipelines
@@ -363,6 +366,8 @@ impl Renderer {
             )?,
             DescriptorSetCount::default(),
         )?;
+        self.device
+            .set_object_name(empty_descriptor_set, "Empty descriptor set");
         let resolver = RenderResourceResolver {
             buffers: &buffers,
             images: &images,
@@ -443,6 +448,7 @@ impl Renderer {
         let program = programs
             .get(data.program)
             .ok_or(Error::InvalidProgramHandle(data.program))?;
+        trace!("Compile pipeline {:?}", data);
         Ok((
             handle,
             (
@@ -482,6 +488,9 @@ impl Renderer {
                 let descriptor_set = context.allocate(data.layout, data.count)?;
                 descriptors.replace(handle, descriptor_set);
                 let data = descriptors.get_cold_mut(handle).unwrap();
+                if let Some(name) = &data.name {
+                    self.device.set_object_name(descriptor_set, name);
+                }
 
                 // Process images
                 for image in &mut data.images {

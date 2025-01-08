@@ -225,11 +225,13 @@ pub(super) fn create_descriptor_layout(
         })
         .collect::<Vec<_>>();
     let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
-    Ok(unsafe {
+    let layout = unsafe {
         device
             .raw
             .create_descriptor_set_layout(&create_info, None)?
-    })
+    };
+    device.set_object_name(layout, format!("{:?}", layout));
+    Ok(layout)
 }
 
 fn get_sampler_desc(name: &str) -> SamplerDesc {

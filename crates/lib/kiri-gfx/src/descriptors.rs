@@ -54,10 +54,11 @@ pub(super) struct DescriptorSetData {
     pub storage_buffers: Vec<Binding<StaticBufferBindingData>>,
     pub dynamic_uniform_buffers: Vec<Binding<DynamicBufferBindingData>>,
     pub dynamic_storage_buffers: Vec<Binding<DynamicBufferBindingData>>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct DescriptorSetBuilder {
+pub struct DescriptorSetBuilder<'a> {
     layout: DescriptorSetLayoutDesc<'static>,
     stages: vk::ShaderStageFlags,
     images: Vec<Binding<ImageBindingData>>,
@@ -65,9 +66,10 @@ pub struct DescriptorSetBuilder {
     storage_buffers: Vec<Binding<StaticBufferBindingData>>,
     dynamic_uniform_buffers: Vec<Binding<DynamicBufferBindingData>>,
     dynamic_storage_buffers: Vec<Binding<DynamicBufferBindingData>>,
+    name: Option<&'a str>,
 }
 
-impl DescriptorSetBuilder {
+impl<'a> DescriptorSetBuilder<'a> {
     pub fn new(stages: vk::ShaderStageFlags, layout: DescriptorSetLayoutDesc<'static>) -> Self {
         let count = layout.get_descriptor_count();
         Self {
@@ -78,6 +80,7 @@ impl DescriptorSetBuilder {
             storage_buffers: Vec::with_capacity(count.storage_buffers as _),
             dynamic_uniform_buffers: Vec::with_capacity(count.dynamic_uniform_buffers as _),
             dynamic_storage_buffers: Vec::with_capacity(count.dynamic_storage_buffers as _),
+            name: None,
         }
     }
 
@@ -158,6 +161,11 @@ impl DescriptorSetBuilder {
         self
     }
 
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.name = Some(name);
+        self
+    }
+
     pub(super) fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
         Ok(DescriptorSetData {
             count: self.layout.get_descriptor_count(),
@@ -167,6 +175,7 @@ impl DescriptorSetBuilder {
             storage_buffers: self.storage_buffers,
             dynamic_uniform_buffers: self.dynamic_uniform_buffers,
             dynamic_storage_buffers: self.dynamic_storage_buffers,
+            name: self.name.map(|x| x.to_owned()),
         })
     }
 }

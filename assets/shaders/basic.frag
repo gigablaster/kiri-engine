@@ -3,6 +3,7 @@
 
 #include "include/pbr_material.glsl"
 #include "include/shared.glsl"
+#include "include/pass_main.glsl"
 #include "include/bdrf.glsl"
 
 layout(location = 0) in vec2 uv;

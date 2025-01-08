@@ -22,6 +22,7 @@ use kiri_backend::{
     DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
     ShaderDesc,
 };
+use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::Error;
@@ -138,6 +139,7 @@ impl PipelineCache {
             if let Some(pipeline) = pipelines.get(&desc) {
                 Ok(*pipeline)
             } else {
+                debug!("Create pipeline {:?}", &desc);
                 let program = self.get_or_load_program(
                     desc.descriptor_layout,
                     &desc.vertex_shader,
@@ -149,6 +151,7 @@ impl PipelineCache {
                     desc.input_layout,
                     &desc.specialization,
                     desc.desc,
+                    Some(&format!("{:?}", desc)),
                 );
                 pipelines.insert(desc, pipeline);
                 Ok(pipeline)

@@ -328,7 +328,6 @@ impl ResourceManager {
                 &source.name,
                 &DEPTH_RENDER_PASS_LAYOUT,
                 &MAIN_RENDER_PASS_LAYOUT,
-                &STATIC_MESH_INPUT_LAYOUT,
             )? {
                 let instance = effect.create_instance(&desc)?;
                 let main = match source.blend {
@@ -351,20 +350,18 @@ impl ResourceManager {
                     }
                     kiri_assets::MeshMaterialBlend::AlphaTest(_) => PipelineHandle::invalid(),
                 };
-                let shadow = match source.blend {
+                let depth = match source.blend {
                     kiri_assets::MeshMaterialBlend::Opaque => {
                         instance.pipeline(EFFECT_PASS_DEPTH).unwrap_or_default()
                     }
                     kiri_assets::MeshMaterialBlend::AlphaBlend => PipelineHandle::invalid(),
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => instance
-                        .pipeline(EFFECT_PASS_DEPTH_MASKED)
-                        .unwrap_or_default(),
+                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => PipelineHandle::invalid(),
                 };
                 material = Some(RenderMeshMaterial {
                     instance,
                     main,
                     transparent,
-                    depth: shadow,
+                    depth,
                     effect,
                 });
                 break;

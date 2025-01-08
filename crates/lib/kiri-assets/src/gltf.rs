@@ -64,6 +64,16 @@ pub struct MeshVertexAttributes {
     pub uv: [i16; 2],
 }
 
+pub const STATIC_MESH_DEPTH_INPUT_LAYOUT: [InputVertexStreamLayout; 1] =
+    [InputVertexStreamLayout {
+        streams: &[InputVertexAttrubute {
+            location: 0,
+            format: vk::Format::R16G16B16A16_SNORM,
+            offset: 0,
+        }],
+        stride: mem::size_of::<MeshVertexPositions>() as u32,
+    }];
+
 pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 2] = [
     InputVertexStreamLayout {
         streams: &[InputVertexAttrubute {

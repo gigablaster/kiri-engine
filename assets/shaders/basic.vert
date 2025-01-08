@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "include/shared.glsl"
+#include "include/pass_main.glsl"
 #include "include/layout_static.glsl"
 
 layout(location = 0) out vec2 out_uv;

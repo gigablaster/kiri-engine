@@ -15,6 +15,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use kiri_assets::{STATIC_MESH_DEPTH_INPUT_LAYOUT, STATIC_MESH_INPUT_LAYOUT};
 use kiri_backend::{
     ash::vk::{self},
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc,
@@ -109,7 +110,8 @@ impl BasicEffect {
         cache: &Arc<PipelineCache>,
         depth_pass: &'static RenderPassLayout<'static>,
         color_pass: &'static RenderPassLayout<'static>,
-        input_layout: &'static [InputVertexStreamLayout<'static>],
+        main_input_layout: &'static [InputVertexStreamLayout<'static>],
+        depth_input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Arc<dyn Effect>, Error> {
         let transparent = Self::create_pipeline(
             cache,
@@ -119,7 +121,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .premultiplied()
                 .depth_write(false),
-            input_layout,
+            main_input_layout,
             false,
         )?;
         let opaque = Self::create_pipeline(
@@ -130,7 +132,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
-            input_layout,
+            main_input_layout,
             false,
         )?;
         let opaque_masked = Self::create_pipeline(
@@ -141,7 +143,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
-            input_layout,
+            main_input_layout,
             true,
         )?;
         let depth = Self::create_pipeline(
@@ -150,7 +152,7 @@ impl BasicEffect {
             "shaders/depth.frag",
             depth_pass,
             RasterPipelineCreateDesc::default(),
-            input_layout,
+            depth_input_layout,
             false,
         )?;
         let depth_masked = Self::create_pipeline(
@@ -159,18 +161,21 @@ impl BasicEffect {
             "shaders/depth.frag",
             depth_pass,
             RasterPipelineCreateDesc::default(),
-            input_layout,
+            depth_input_layout,
             true,
         )?;
         Ok(Arc::new(BasicEffect {
             cache: cache.clone(),
             uniforms: ConstUniformBuffer::new(&cache.renderer),
             pipelines: [
-                ((EFFECT_PASS_TRANSPARENT, input_layout), transparent),
-                ((EFFECT_PASS_OPAQUE, input_layout), opaque),
-                ((EFFECT_PASS_OPAQUE_MASKED, input_layout), opaque_masked),
-                ((EFFECT_PASS_DEPTH, input_layout), depth),
-                ((EFFECT_PASS_DEPTH_MASKED, input_layout), depth_masked),
+                ((EFFECT_PASS_TRANSPARENT, main_input_layout), transparent),
+                ((EFFECT_PASS_OPAQUE, main_input_layout), opaque),
+                (
+                    (EFFECT_PASS_OPAQUE_MASKED, main_input_layout),
+                    opaque_masked,
+                ),
+                ((EFFECT_PASS_DEPTH, main_input_layout), depth),
+                ((EFFECT_PASS_DEPTH_MASKED, main_input_layout), depth_masked),
             ]
             .into(),
         }))
@@ -215,12 +220,14 @@ impl Effect for BasicEffect {
                 .unwrap_or_default(),
             alpha_cut: desc.scalars.get("alpha_cut").copied().unwrap_or_default(),
         };
+        let name = format!("{:?}", desc);
         let uniform = self.uniforms.allocate(data)?;
         let builder = DescriptorSetBuilder::new(
             vk::ShaderStageFlags::ALL_GRAPHICS,
             BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
         )
-        .bind_uniform_buffer(0, uniform);
+        .bind_uniform_buffer(0, uniform)
+        .name(&name);
         let builder = fill_descriptor_with_textures(
             builder,
             &BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
@@ -246,10 +253,7 @@ impl Effect for BasicEffect {
     }
 }
 
-type EffectKey = (
-    &'static RenderPassLayout<'static>,
-    &'static [InputVertexStreamLayout<'static>],
-);
+type EffectKey = &'static RenderPassLayout<'static>;
 
 #[derive(Debug)]
 pub struct BasicEffectFactory {
@@ -272,23 +276,23 @@ impl MeshEffectFactory for BasicEffectFactory {
         _name: &str,
         depth_pass_layout: &'static RenderPassLayout<'static>,
         color_pass_layout: &'static RenderPassLayout<'static>,
-        input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Option<Arc<dyn Effect>>, Error> {
         let effects = self.effects.upgradable_read();
-        if let Some(effect) = effects.get(&(color_pass_layout, input_layout)) {
+        if let Some(effect) = effects.get(color_pass_layout) {
             Ok(Some(effect.clone()))
         } else {
             let mut effects = RwLockUpgradableReadGuard::upgrade(effects);
-            if let Some(effect) = effects.get(&(color_pass_layout, input_layout)) {
+            if let Some(effect) = effects.get(color_pass_layout) {
                 Ok(Some(effect.clone()))
             } else {
                 let effect = BasicEffect::create(
                     &self.cache,
                     depth_pass_layout,
                     color_pass_layout,
-                    input_layout,
+                    &STATIC_MESH_INPUT_LAYOUT,
+                    &STATIC_MESH_DEPTH_INPUT_LAYOUT,
                 )?;
-                effects.insert((color_pass_layout, input_layout), effect.clone());
+                effects.insert(color_pass_layout, effect.clone());
                 Ok(Some(effect))
             }
         }
