@@ -678,7 +678,7 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.hot.data.len() - self.hot.empty.len() - self.current;
+        let size = (self.hot.data.len() - self.hot.empty.len()).saturating_sub(self.current);
 
         (size, Some(size))
     }
