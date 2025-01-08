@@ -14,7 +14,6 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 mod gltf;
 mod image;
-#[cfg(feature = "devel")]
 mod mesh_builder;
 mod shader;
 
@@ -30,7 +29,6 @@ pub enum Error {
 
 pub trait AssetSource: Send + Sync {
     fn reference(&self) -> AssetReference;
-    #[cfg(feature = "devel")]
     fn changed(&self, last_update: SystemTime) -> bool;
 }
 
@@ -104,7 +102,6 @@ pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     asset.serialize(w)
 }
 
-#[cfg(feature = "devel")]
 pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
     fn import(&self) -> Result<T, Error>;
 }
@@ -120,7 +117,6 @@ pub use gltf::*;
 pub use image::*;
 pub use kiri_vfs::AssetReference;
 use kiri_vfs::{ROOT_COMPILED_ASSETS_PATH, ROOT_SOURCE_ASSETS_PATH};
-#[cfg(feature = "devel")]
 use mesh_builder::*;
 pub use shader::*;
 
@@ -192,16 +188,6 @@ pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<Syste
     None
 }
 
-#[cfg(not(feature = "devel"))]
-pub(crate) fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
-    source: &T,
-) -> Result<U, Error> {
-    let reference = source.reference();
-    let reader = vfs_load(reference)?;
-    Ok(load_asset(reader)?)
-}
-
-#[cfg(feature = "devel")]
 pub fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
     source: &T,
 ) -> Result<U, Error> {
@@ -227,7 +213,6 @@ pub fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, 
     Ok(asset)
 }
 
-#[cfg(feature = "devel")]
 fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
     use std::fs::File;
 

@@ -25,7 +25,6 @@ use kiri_common::NodeIndex;
 use speedy::{Readable, Writable};
 use uuid::uuid;
 
-#[cfg(feature = "devel")]
 use crate::ImportAsset;
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetReference,
@@ -40,7 +39,6 @@ impl AssetSource for ModelSource {
         AssetReference::new(self)
     }
 
-    #[cfg(feature = "devel")]
     fn changed(&self, last_update: SystemTime) -> bool {
         is_asset_changed(&self.0, last_update)
     }
@@ -231,7 +229,6 @@ impl Asset for ModelAsset {
     }
 }
 
-#[cfg(feature = "devel")]
 mod import {
     use std::collections::HashMap;
 
@@ -500,7 +497,6 @@ mod import {
     }
 }
 
-#[cfg(feature = "devel")]
 impl ImportAsset<ModelAsset> for ModelSource {
     fn import(&self) -> Result<ModelAsset, Error> {
         let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)

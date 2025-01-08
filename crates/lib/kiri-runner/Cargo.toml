@@ -24,6 +24,3 @@ puffin_http = "0.16.1"
 
 [[example]]
 name = "loop"
-
-[features]
-devel = ["kiri-assets/devel", "kiri-resources/devel", "kiri-gfx/devel"]

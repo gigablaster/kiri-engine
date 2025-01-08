@@ -15,7 +15,6 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-#[cfg(feature = "devel")]
 use kiri_assets::{
     get_compiled_asset_change_time, get_compiled_asset_path, save_asset, ImportAsset,
 };
@@ -35,11 +34,9 @@ use kiri_gfx::{
     RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
-#[cfg(feature = "devel")]
 use log::warn;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-#[cfg(feature = "devel")]
 use std::{fs::File, io};
 
 use crate::Error;
@@ -263,25 +260,12 @@ impl ResourceManager {
         self.effect_factory.write().push(effect);
     }
 
-    #[cfg(feature = "devel")]
     async fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
         source: T,
     ) -> Result<U, Error> {
         use kiri_assets::load_or_compile_asset;
 
         Ok(load_or_compile_asset(&source)?)
-    }
-
-    #[cfg(not(feature = "devel"))]
-    async fn load_or_compile_asset<T: AssetSource + Debug, U: Asset>(
-        source: T,
-    ) -> Result<U, Error> {
-        use kiri_assets::load_asset;
-        use kiri_vfs::vfs_load;
-
-        let reference = source.reference();
-        let reader = vfs_load(reference)?;
-        Ok(load_asset(reader)?)
     }
 
     async fn load_texture(
