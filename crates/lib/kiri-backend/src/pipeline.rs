@@ -191,7 +191,7 @@ impl InputVertexStreamLayout<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn compile_raster_pipeline(
+pub fn compile_raster_pipeline<N: AsRef<str>>(
     device: &RenderDevice,
     cache: vk::PipelineCache,
     program: &Program,
@@ -199,6 +199,7 @@ pub fn compile_raster_pipeline(
     streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
+    name: Option<N>,
 ) -> Result<vk::Pipeline, Error> {
     let mut specialization_values = Cursor::new(Vec::new());
     let specialization_entires = specialization
@@ -344,6 +345,10 @@ pub fn compile_raster_pipeline(
             .raw
             .create_graphics_pipelines(cache, &[pipeline_create_info], None)
     }?[0];
+
+    if let Some(name) = name {
+        device.set_object_name(pipeline, name);
+    }
 
     Ok(pipeline)
 }

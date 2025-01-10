@@ -460,6 +460,7 @@ impl Renderer {
                     data.streams,
                     &data.specialization,
                     data.desc,
+                    data.name.clone(),
                 )?,
                 program.pipeline_layout,
             ),

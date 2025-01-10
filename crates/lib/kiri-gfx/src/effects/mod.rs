@@ -17,7 +17,7 @@ pub use basic::*;
 
 use kiri_backend::{
     ash::vk::{self},
-    DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexStreamLayout, RenderPassLayout,
+    DescriptorSetDesc, DescriptorSetLayoutDesc, RenderPassLayout,
 };
 use kiri_math::Vec4;
 

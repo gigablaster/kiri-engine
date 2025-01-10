@@ -30,8 +30,8 @@ pub struct RenderContext<'a> {
     pub backbuffer: &'a Image,
 }
 
-unsafe impl<'a> Sync for RenderContext<'a> {}
-unsafe impl<'a> Send for RenderContext<'a> {}
+unsafe impl Sync for RenderContext<'_> {}
+unsafe impl Send for RenderContext<'_> {}
 
 impl<'a> RenderContext<'a> {
     pub(crate) fn new(

@@ -15,29 +15,24 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use kiri_assets::{
-    get_compiled_asset_change_time, get_compiled_asset_path, save_asset, ImportAsset,
-};
+use kiri_assets::ImportAsset;
 use kiri_assets::{
     Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource,
-    STATIC_MESH_INPUT_LAYOUT,
 };
 use kiri_common::{block_on, spawn, spawn_io, yield_now, Task};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     effects::{
         BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, DEPTH_RENDER_PASS_LAYOUT,
-        EFFECT_PASS_DEPTH, EFFECT_PASS_DEPTH_MASKED, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED,
-        EFFECT_PASS_TRANSPARENT, MAIN_RENDER_PASS_LAYOUT,
+        EFFECT_PASS_DEPTH, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED, EFFECT_PASS_TRANSPARENT,
+        MAIN_RENDER_PASS_LAYOUT,
     },
     ImageUploadData, PipelineCache, PipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
     RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
-use log::warn;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use std::{fs::File, io};
 
 use crate::Error;
 
@@ -197,7 +192,7 @@ pub struct ResourceResolveContext<'a> {
     models: &'a Pool<Resource<RenderModel>>,
 }
 
-impl<'a> ResourceResolveContext<'a> {
+impl ResourceResolveContext<'_> {
     pub fn resolve_model(&self, handle: ModelHandle) -> Result<Option<Arc<RenderModel>>, Error> {
         let resource = self
             .models

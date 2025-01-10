@@ -31,7 +31,7 @@ use kiri_gfx::{
     TransientImage,
 };
 use kiri_math::{
-    vec3, vec3a, vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A,
+    vec3, vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A,
 };
 use kiri_resources::{ModelHandle, ResourceManager};
 use log::warn;
@@ -98,7 +98,7 @@ pub struct WorldSpawnContext<'a> {
     world: &'a mut RenderWorldInner,
 }
 
-impl<'a> WorldSpawnContext<'a> {
+impl WorldSpawnContext<'_> {
     pub fn model(&mut self, transform: &Affine3A, model: &Arc<RenderModel>) -> RenderWorldHandle {
         self.world
             .spawn(transform, WorldObject::Model(model.clone()))
@@ -313,8 +313,8 @@ impl RenderWorld {
     fn process_loading(&self, world: &mut RenderWorldInner) {
         self.resources.resolve(|context| {
             for object in world.objects.iter_mut() {
-                match object {
-                    WorldObject::PendingModel(handle) => match context.resolve_model(*handle) {
+                if let WorldObject::PendingModel(handle) = object {
+                    match context.resolve_model(*handle) {
                         Ok(model) => {
                             if let Some(model) = model {
                                 *object = WorldObject::Model(model);
@@ -324,8 +324,7 @@ impl RenderWorld {
                             warn!("Failed to load model for node {}: {}", handle, err);
                             *object = WorldObject::Empty;
                         }
-                    },
-                    _ => {}
+                    }
                 }
             }
         });
@@ -540,7 +539,7 @@ impl RenderWorld {
             .bind_image(0, hdr.handle, vk::ImageAspectFlags::COLOR)
             .bind_uniform_buffer(
                 1,
-                context.push_dynamic_data(&[TonemappingGpuData { expouse: expouse }])?,
+                context.push_dynamic_data(&[TonemappingGpuData { expouse }])?,
             ),
         )?;
 
@@ -720,11 +719,9 @@ impl RenderWorldInner {
         if !self.is_valid(handle) {
             return;
         }
-        match &mut self.objects[handle.index as usize] {
-            // TODO: invaludate per-object light cache.
-            WorldObject::PointLight(light) => light.radius = radius,
-            _ => {}
-        }
+        if let WorldObject::PointLight(light) = &mut self.objects[handle.index as usize] {
+            light.radius = radius
+        };
     }
 
     fn update_render_model(&mut self, handle: RenderWorldHandle, model: Arc<RenderModel>) {
@@ -754,7 +751,7 @@ impl RenderWorldInner {
 
     fn is_valid(&self, handle: RenderWorldHandle) -> bool {
         let index = handle.index as usize;
-        index < self.objects.len() && self.generations[index as usize] == handle.generation
+        index < self.objects.len() && self.generations[index] == handle.generation
     }
 
     fn invalidate(&mut self, handle: RenderWorldHandle) {

@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{error::Error, fmt::Display, sync::Arc, thread, time::Duration};
+use std::{error::Error, fmt::Display, sync::Arc};
 
 use kiri::{RenderView, RenderWorld};
 use kiri_common::GameAppConfig;
