@@ -5,7 +5,7 @@ use std::{error::Error, fmt::Display, sync::Arc, thread, time::Duration};
 use kiri::{RenderView, RenderWorld};
 use kiri_common::GameAppConfig;
 use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
-use kiri_math::{vec3, Affine3A, PerspectiveCamera, Vec3};
+use kiri_math::{vec3, Affine3A, PerspectiveCamera, Quat, Vec3};
 use kiri_resources::{ResourceLoader, ResourceManager};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
@@ -13,6 +13,7 @@ use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 struct Loop {
     resources: Arc<ResourceManager>,
     world: RenderWorld,
+    time: f32,
 }
 
 #[derive(Debug)]
@@ -36,14 +37,14 @@ impl GameClient<LoopError> for Loop {
         let resources = ResourceManager::new(renderer)?;
         let world = RenderWorld::new(&resources)?;
         world.spawn(|context| {
-            for x in -5..5 {
-                for y in -5..5 {
-                    for z in -5..5 {
+            for x in -10..10 {
+                for y in -10..10 {
+                    for z in -10..10 {
                         context.load_model(
                             &Affine3A::from_translation(vec3(
-                                0.75 * x as f32,
-                                0.75 * y as f32,
-                                0.75 * z as f32,
+                                1.25 * x as f32,
+                                1.25 * y as f32,
+                                1.25 * z as f32,
                             )),
                             resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf"),
                         );
@@ -103,12 +104,16 @@ impl GameClient<LoopError> for Loop {
         //     bottom: vec3(0.5, 1.0, 0.5),
         // });
         // world.insert_resource(Postprocess { expouse: 0.2 });
-        Ok(Self { world, resources })
+        Ok(Self {
+            world,
+            resources,
+            time: 0.0,
+        })
     }
 
-    fn update(&mut self, _time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
+    fn update(&mut self, time: kiri_common::GameTime) -> Result<GameTickState, LoopError> {
         self.resources.tick();
-        thread::sleep(Duration::from_millis(16));
+        self.time += time.delta_time;
         Ok(GameTickState::Continue)
     }
 
@@ -125,7 +130,7 @@ impl GameClient<LoopError> for Loop {
                     znear: 0.1,
                     zfar: 100.0,
                     origin: vec3(0.0, 0.5, 2.25),
-                    forward: Vec3::X,
+                    forward: Quat::from_rotation_y(self.time * 0.2).mul_vec3(Vec3::Z),
                     up: Vec3::Y,
                     aspect: context.backbuffer.desc.aspect(),
                 },

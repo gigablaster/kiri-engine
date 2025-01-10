@@ -59,7 +59,7 @@ impl<E: Error> RenderSystem<E> {
             )
             .map_err(|x| GameError::LoopError(x.to_string()))?;
         let instance = InstanceBuilder::new(window.display_handle().unwrap().as_raw())
-            .debug(true)
+            .debug(false)
             .build()?;
         let surface = Surface::new(&instance, window.window_handle().unwrap().as_raw()).unwrap();
         let device = RenderDevice::new(
@@ -146,6 +146,7 @@ where
                 self.alt_pressed = modifiers.state().alt_key()
             }
             WindowEvent::RedrawRequested => {
+                puffin::GlobalProfiler::lock().new_frame();
                 let render_system = self.render_system.as_ref().unwrap();
                 let game = self.game.as_mut().unwrap();
                 let timestamp = Instant::now();
