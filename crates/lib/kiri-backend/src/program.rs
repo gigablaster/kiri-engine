@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 gigablaster
+// Copyright (C) 2023-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,14 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ffi::CString, sync::Arc};
+use std::{collections::HashMap, ffi::CString, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
 use kiri_common::TempList;
 
-use crate::{DescriptorSetCount, Error, SamplerDesc};
+use crate::{DescriptorSetCount, Error, SamplerDesc, MAX_RESOURCES};
 
 use super::RenderDevice;
 
@@ -76,28 +76,95 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorSetDesc<'a> {
-    pub name: &'a str,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DescriptorSetDesc {
+    pub name: String,
     pub ty: vk::DescriptorType,
     pub count: u32,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorSetLayoutDesc<'a> {
-    pub layout: &'a [(u32, DescriptorSetDesc<'a>)],
+impl DescriptorSetDesc {
+    fn new(value: rspirv_reflect::DescriptorInfo, set_index: usize) -> Self {
+        let count = match value.binding_count {
+            rspirv_reflect::BindingCount::One => 1,
+            rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
+            rspirv_reflect::BindingCount::Unbounded => MAX_RESOURCES,
+        };
+        match value.ty {
+            rspirv_reflect::DescriptorType::SAMPLED_IMAGE => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                count,
+            },
+            rspirv_reflect::DescriptorType::STORAGE_IMAGE => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                count,
+            },
+            rspirv_reflect::DescriptorType::STORAGE_BUFFER
+                if set_index as usize == DYNAMIC_BINDING_SLOT =>
+            {
+                DescriptorSetDesc {
+                    name: value.name,
+                    ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                    count,
+                }
+            }
+            rspirv_reflect::DescriptorType::STORAGE_BUFFER => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                count,
+            },
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER
+                if set_index as usize == DYNAMIC_BINDING_SLOT =>
+            {
+                DescriptorSetDesc {
+                    name: value.name,
+                    ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    count,
+                }
+            }
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count,
+            },
+            rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count,
+            },
+            rspirv_reflect::DescriptorType::SAMPLER => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::SAMPLER,
+                count,
+            },
+            other => panic!("Descriptor set type {:?} isn't supported", other),
+        }
+    }
+}
+
+type ReflectedDescriptorSet = HashMap<u32, DescriptorSetDesc>;
+
+#[derive(Debug, Clone, Default)]
+struct ReflectedDescriptorLayout {
+    layout: HashMap<u32, ReflectedDescriptorSet>,
+    push_constant_range: Option<(u32, u32)>,
+    compute_groups_size: Option<(u32, u32, u32)>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct DescriptorSetLayoutDesc {
+    pub layout: Vec<(u32, DescriptorSetDesc)>,
+    pub push_constant_size: Option<(u32, u32)>,
+    pub compute_groups_size: Option<(u32, u32, u32)>,
     pub update_after_bind: bool,
 }
 
-pub const EMPTY_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    layout: &[],
-    update_after_bind: false,
-};
-
-impl DescriptorSetLayoutDesc<'_> {
+impl DescriptorSetLayoutDesc {
     pub fn get_descriptor_count(&self) -> DescriptorSetCount {
         let mut count = DescriptorSetCount::default();
-        for (_, data) in self.layout {
+        for (_, data) in self.layout.iter() {
             match data.ty {
                 vk::DescriptorType::SAMPLED_IMAGE => count.sampled_images += data.count,
                 vk::DescriptorType::UNIFORM_BUFFER => count.unifroms_buffers += data.count,
@@ -135,7 +202,7 @@ impl DescriptorSetLayoutDesc<'_> {
     }
 
     pub fn get_layout(&self) -> &[(u32, DescriptorSetDesc)] {
-        self.layout
+        &self.layout
     }
 }
 
@@ -148,27 +215,27 @@ pub struct Program {
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
     pub pipeline_layout: vk::PipelineLayout,
     pub descriptor_layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
-    pub layout: &'static [DescriptorSetLayoutDesc<'static>],
+    pub layout: Vec<DescriptorSetLayoutDesc>,
+    pub push_constant_range: Option<vk::PushConstantRange>,
+    pub compute_groups_size: Option<(u32, u32, u32)>,
 }
 
 impl Program {
-    pub fn new(
-        device: &Arc<RenderDevice>,
-        layout: &'static [DescriptorSetLayoutDesc<'static>],
-        shaders: &[ShaderDesc],
-    ) -> Result<Self, Error> {
+    pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
         for shader in shaders {
             stages |= shader.stage;
         }
+        let layout = Self::reflect(shaders)?;
+
         let mut modules = ArrayVec::<_, MAX_SHADERS>::new();
         for shader in shaders {
             stages |= shader.stage;
             modules.push(Self::create_shader(&device.raw, shader, shader.entry)?);
         }
         let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
-        for info in layout {
-            layouts.push(device.get_or_create_layout(stages, *info)?);
+        for info in layout.iter() {
+            layouts.push(device.get_or_create_layout(stages, info)?);
         }
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
@@ -179,7 +246,85 @@ impl Program {
             pipeline_layout,
             descriptor_layouts: layouts,
             layout,
+            push_constant_range: None,
+            compute_groups_size: None,
         })
+    }
+
+    fn reflect(shaders: &[ShaderDesc]) -> Result<Vec<DescriptorSetLayoutDesc>, Error> {
+        let mut layouts = Vec::new();
+        for shader in shaders {
+            layouts.push(Self::reflect_shader(shader)?);
+        }
+        let layout = Self::merge_reflected_layouts(layouts);
+        let layout = layout
+            .layout
+            .iter()
+            .map(|(_, descriptor_set)| DescriptorSetLayoutDesc {
+                layout: descriptor_set
+                    .iter()
+                    .map(|(index, descriptor)| (*index, descriptor.clone()))
+                    .collect(),
+                update_after_bind: false,
+                push_constant_size: layout
+                    .push_constant_range
+                    .map(|(start, end)| (start, end - start)),
+                compute_groups_size: layout.compute_groups_size,
+            })
+            .collect::<Vec<_>>();
+        Ok(layout)
+    }
+
+    fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Error> {
+        let reflection = rspirv_reflect::Reflection::new_from_spirv(&shader.code)?;
+        let descriptor_sets = reflection.get_descriptor_sets()?;
+        let mut layout = HashMap::new();
+        for (set_index, set) in descriptor_sets {
+            let mut descriptor_set = HashMap::new();
+            for (index, bind) in set {
+                descriptor_set.insert(index, DescriptorSetDesc::new(bind, set_index as _));
+            }
+            layout.insert(set_index, descriptor_set);
+        }
+        Ok(ReflectedDescriptorLayout {
+            layout,
+            push_constant_range: reflection
+                .get_push_constant_range()?
+                .map(|x| (x.offset, x.size)),
+            compute_groups_size: reflection.get_compute_group_size(),
+        })
+    }
+
+    fn merge_reflected_layouts(
+        layouts: Vec<ReflectedDescriptorLayout>,
+    ) -> ReflectedDescriptorLayout {
+        let mut result = ReflectedDescriptorLayout::default();
+        for layout in layouts {
+            for (stage_index, descriptor_set) in layout.layout {
+                result
+                    .layout
+                    .entry(stage_index)
+                    .and_modify(|entry| {
+                        for (set_index, set) in descriptor_set.iter() {
+                            entry.insert(*set_index, set.clone());
+                        }
+                    })
+                    .or_insert(descriptor_set.clone());
+            }
+            if let Some((offset, size)) = layout.push_constant_range {
+                let (current_start, current_end) = result.push_constant_range.unwrap_or_default();
+                result.push_constant_range =
+                    Some((current_start.min(offset), current_end.max(offset + size)))
+            }
+            result.compute_groups_size = layout.compute_groups_size;
+        }
+
+        if let Some(max) = result.layout.iter().map(|(set_index, _)| *set_index).max() {
+            for i in 0..max {
+                result.layout.entry(i).or_default();
+            }
+        }
+        result
     }
 
     fn create_shader(
@@ -201,7 +346,7 @@ impl Program {
 pub(super) fn create_descriptor_layout(
     device: &RenderDevice,
     stage: vk::ShaderStageFlags,
-    layout: DescriptorSetLayoutDesc,
+    layout: &DescriptorSetLayoutDesc,
 ) -> Result<vk::DescriptorSetLayout, Error> {
     let samplers = TempList::new();
     let bindings = layout
@@ -217,7 +362,7 @@ pub(super) fn create_descriptor_layout(
                 || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
             {
                 binding = binding.immutable_samplers(samplers.add(vec![
-                    device.sampler(get_sampler_desc(data.name)).unwrap();
+                    device.sampler(get_sampler_desc(&data.name)).unwrap();
                     data.count as _
                 ]));
             }

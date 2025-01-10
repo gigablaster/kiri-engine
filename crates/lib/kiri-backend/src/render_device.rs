@@ -29,6 +29,7 @@ use super::{
 };
 
 const MAX_SUBMITS: usize = 32;
+pub(super) const MAX_RESOURCES: u32 = 64536;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -47,7 +48,7 @@ pub struct RenderDevice {
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
-    layouts: RwLock<HashMap<DescriptorSetLayoutDesc<'static>, vk::DescriptorSetLayout>>,
+    layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
     allocator: Mutex<GpuAllocator>,
 }
 
@@ -344,7 +345,7 @@ impl RenderDevice {
     pub fn get_or_create_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        desc: DescriptorSetLayoutDesc<'static>,
+        desc: &DescriptorSetLayoutDesc,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let layouts = self.layouts.upgradable_read();
         if let Some(layout) = layouts.get(&desc) {
@@ -355,7 +356,7 @@ impl RenderDevice {
                 Ok(*layout)
             } else {
                 let layout = create_descriptor_layout(self, stage, desc)?;
-                layouts.insert(desc, layout);
+                layouts.insert(desc.clone(), layout);
                 Ok(layout)
             }
         }

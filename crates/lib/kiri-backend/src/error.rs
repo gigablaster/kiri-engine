@@ -48,6 +48,8 @@ pub enum Error {
     MapFailed,
     #[error("Memory is already mapped")]
     AlreadyMapped,
+    #[error("Shader reflection failed: {0}")]
+    ShaderReflectionFailed(#[from] rspirv_reflect::ReflectError),
 }
 
 impl From<vk::Result> for Error {
