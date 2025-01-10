@@ -135,8 +135,7 @@ struct RenderOp {
 #[derive(Debug, Clone, Copy)]
 struct RenderOpData {
     model: Mat4,
-    vertex_positions: BufferPointer,
-    vertex_attributes: BufferPointer,
+    vertices: BufferPointer,
     index_buffer: BufferPointer,
     first_index: u32,
     index_count: u32,
@@ -422,7 +421,7 @@ impl RenderWorld {
             )
             .bind_uniform_buffer(0, pass_data),
         )?;
-        Self::generate_commands::<true>(context, &mut pass, &culled.ops, &culled.depth, pass_ds);
+        Self::generate_commands(context, &mut pass, &culled.ops, &culled.depth, pass_ds);
         context.submit(pass.build());
         Ok(depth)
     }
@@ -490,8 +489,8 @@ impl RenderWorld {
                 .initial_layout(vk::ImageLayout::UNDEFINED)],
             Some(RenderTarget::new(depth.handle).load().discard()),
         );
-        Self::generate_commands::<false>(context, &mut pass, &culled.ops, &culled.opaque, pass_ds);
-        Self::generate_commands::<false>(
+        Self::generate_commands(context, &mut pass, &culled.ops, &culled.opaque, pass_ds);
+        Self::generate_commands(
             context,
             &mut pass,
             &culled.ops,
@@ -588,7 +587,7 @@ impl RenderWorld {
         context.submit(Box::new(FinalCompositionPassDispatcher::new(ldr.handle)));
     }
 
-    fn generate_commands<const DEPTH_ONLY: bool>(
+    fn generate_commands(
         context: &RenderContext,
         pass: &mut RasterizerPassBuilder,
         ops: &[RenderOpData],
@@ -632,10 +631,7 @@ impl RenderWorld {
                         stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
                         stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(render_op.ds));
                         stream.set_dynamic_offset(0, Some(writer.offset as _));
-                        stream.set_vertex_buffer(0, op.vertex_positions);
-                        if !DEPTH_ONLY {
-                            stream.set_vertex_buffer(1, op.vertex_attributes);
-                        }
+                        stream.set_vertex_buffer(0, op.vertices);
                         stream.set_vertex_offset(op.vertex_offset as _);
                         stream.set_index_buffer(op.index_buffer);
                         stream.draw(op.first_index, op.index_count, draw_index as _, 1);
@@ -802,8 +798,7 @@ impl RenderWorldInner {
                                     let index = ops.len();
                                     ops.push(RenderOpData {
                                         model: transform * decompress_mat,
-                                        vertex_positions: mesh.positions,
-                                        vertex_attributes: mesh.attributes,
+                                        vertices: mesh.vertex_buffer,
                                         index_buffer: mesh.index_buffer,
                                         first_index: surface.first_index,
                                         index_count: surface.index_count,

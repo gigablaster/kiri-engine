@@ -19,7 +19,6 @@ use crate::{
     effects::{Effect, EffectInstance},
     BufferHandle, BufferPointer, Error, PipelineHandle, Renderer,
 };
-use kiri_assets::{MeshVertexAttributes, MeshVertexPositions};
 use kiri_backend::BufferCreateDesc;
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
@@ -49,8 +48,7 @@ pub struct RenderMeshSurface {
 
 #[derive(Debug, Default)]
 pub struct RenderMesh {
-    pub positions: BufferPointer,
-    pub attributes: BufferPointer,
+    pub vertex_buffer: BufferPointer,
     pub index_buffer: BufferPointer,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: BoundingBox,
@@ -61,8 +59,7 @@ pub struct RenderMesh {
 #[derive(Debug)]
 pub struct RenderModel {
     renderer: Arc<Renderer>,
-    pub positions: BufferHandle,
-    pub attributes: BufferHandle,
+    pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<RenderMesh>,
     pub bounds_per_mesh: Vec<BoundingBox>,
@@ -124,15 +121,9 @@ impl RenderMeshBuilder {
         self
     }
 
-    pub fn build(
-        self,
-        positions: BufferHandle,
-        attributes: BufferHandle,
-        indices: BufferHandle,
-    ) -> RenderMesh {
+    pub fn build(self, vertices: BufferHandle, indices: BufferHandle) -> RenderMesh {
         RenderMesh {
-            positions: BufferPointer::new(positions, 0),
-            attributes: BufferPointer::new(attributes, 0),
+            vertex_buffer: BufferPointer::new(vertices, 0),
             index_buffer: BufferPointer::new(
                 indices,
                 self.first_index * mem::size_of::<u16>() as u64,
@@ -153,9 +144,8 @@ struct NodeBuilder {
     pub world_transform: Affine3A,
 }
 
-pub struct RenderModelBuilder<'a, T: Copy, U: Copy> {
-    positions: &'a [T],
-    attributes: &'a [U],
+pub struct RenderModelBuilder<'a, T: Copy> {
+    vertices: &'a [T],
     indices: &'a [u16],
     nodes: Vec<NodeBuilder>,
     meshes: Vec<RenderMeshBuilder>,
@@ -163,11 +153,10 @@ pub struct RenderModelBuilder<'a, T: Copy, U: Copy> {
     name: Option<&'a str>,
 }
 
-impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
-    pub fn new(positions: &'a [T], attributes: &'a [U], indices: &'a [u16]) -> Self {
+impl<'a, T: Copy> RenderModelBuilder<'a, T> {
+    pub fn new(vertices: &'a [T], indices: &'a [u16]) -> Self {
         Self {
-            positions,
-            attributes,
+            vertices,
             indices,
             nodes: Default::default(),
             meshes: Default::default(),
@@ -215,19 +204,12 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
         assert!(!self.meshes.is_empty(), "Model must have at least one mesh");
         assert!(!self.nodes.is_empty(), "Model must have at least one node");
         let name = self.name.unwrap_or("Mesh");
-        let positions = renderer.create_buffer(
-            BufferCreateDesc::gpu(mem::size_of_val(self.positions) as _)
+        let vertices = renderer.create_buffer(
+            BufferCreateDesc::gpu(mem::size_of_val(self.vertices) as _)
                 .transfer_destination()
                 .veretex_buffer()
                 .device_address()
                 .name(&format!("{} positions", name)),
-        )?;
-        let attributes = renderer.create_buffer(
-            BufferCreateDesc::gpu(mem::size_of_val(self.attributes) as _)
-                .transfer_destination()
-                .veretex_buffer()
-                .device_address()
-                .name(&format!("{} attributes", name)),
         )?;
         let indices = renderer.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.indices) as _)
@@ -236,20 +218,18 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
                 .device_address()
                 .name(&format!("{} indices", name)),
         )?;
-        renderer.upload_buffer(BufferPointer::new(positions, 0), self.positions)?;
-        renderer.upload_buffer(BufferPointer::new(attributes, 0), self.attributes)?;
+        renderer.upload_buffer(BufferPointer::new(vertices, 0), self.vertices)?;
         renderer.upload_buffer(BufferPointer::new(indices, 0), self.indices)?;
         let bounds = self.calculate_bounds();
         Ok(RenderModel {
             renderer: renderer.clone(),
-            positions,
-            attributes,
+            vertices,
             indices,
             bounds_per_mesh: self.meshes.iter().map(|x| x.bounds).collect(),
             meshes: self
                 .meshes
                 .into_iter()
-                .map(|x| x.build(positions, attributes, indices))
+                .map(|x| x.build(vertices, indices))
                 .collect(),
             names: self
                 .nodes
@@ -281,8 +261,7 @@ impl<'a, T: Copy, U: Copy> RenderModelBuilder<'a, T, U> {
 
 impl Drop for RenderModel {
     fn drop(&mut self) {
-        self.renderer.destroy_buffer(self.positions);
-        self.renderer.destroy_buffer(self.attributes);
+        self.renderer.destroy_buffer(self.vertices);
         self.renderer.destroy_buffer(self.indices);
     }
 }

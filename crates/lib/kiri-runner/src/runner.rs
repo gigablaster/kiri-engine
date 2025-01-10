@@ -59,7 +59,7 @@ impl<E: Error> RenderSystem<E> {
             )
             .map_err(|x| GameError::LoopError(x.to_string()))?;
         let instance = InstanceBuilder::new(window.display_handle().unwrap().as_raw())
-            .debug(false)
+            .debug(true)
             .build()?;
         let surface = Surface::new(&instance, window.window_handle().unwrap().as_raw()).unwrap();
         let device = RenderDevice::new(

@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use kiri_assets::{STATIC_MESH_DEPTH_INPUT_LAYOUT, STATIC_MESH_INPUT_LAYOUT};
+use kiri_assets::STATIC_MESH_INPUT_LAYOUT;
 use kiri_backend::{
     ash::vk::{self},
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc,
@@ -110,8 +110,7 @@ impl BasicEffect {
         cache: &Arc<PipelineCache>,
         depth_pass: &'static RenderPassLayout<'static>,
         color_pass: &'static RenderPassLayout<'static>,
-        main_input_layout: &'static [InputVertexStreamLayout<'static>],
-        depth_input_layout: &'static [InputVertexStreamLayout<'static>],
+        input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Result<Arc<dyn Effect>, Error> {
         let transparent = Self::create_pipeline(
             cache,
@@ -121,7 +120,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .premultiplied()
                 .depth_write(false),
-            main_input_layout,
+            input_layout,
             false,
         )?;
         let opaque = Self::create_pipeline(
@@ -132,7 +131,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
-            main_input_layout,
+            input_layout,
             false,
         )?;
         let opaque_masked = Self::create_pipeline(
@@ -143,7 +142,7 @@ impl BasicEffect {
             RasterPipelineCreateDesc::default()
                 .depth_write(false)
                 .depth_test(vk::CompareOp::EQUAL),
-            main_input_layout,
+            input_layout,
             true,
         )?;
         let depth = Self::create_pipeline(
@@ -152,7 +151,7 @@ impl BasicEffect {
             "shaders/depth.frag",
             depth_pass,
             RasterPipelineCreateDesc::default(),
-            depth_input_layout,
+            input_layout,
             false,
         )?;
         let depth_masked = Self::create_pipeline(
@@ -161,21 +160,18 @@ impl BasicEffect {
             "shaders/depth.frag",
             depth_pass,
             RasterPipelineCreateDesc::default(),
-            depth_input_layout,
+            input_layout,
             true,
         )?;
         Ok(Arc::new(BasicEffect {
             cache: cache.clone(),
             uniforms: ConstUniformBuffer::new(&cache.renderer),
             pipelines: [
-                ((EFFECT_PASS_TRANSPARENT, main_input_layout), transparent),
-                ((EFFECT_PASS_OPAQUE, main_input_layout), opaque),
-                (
-                    (EFFECT_PASS_OPAQUE_MASKED, main_input_layout),
-                    opaque_masked,
-                ),
-                ((EFFECT_PASS_DEPTH, main_input_layout), depth),
-                ((EFFECT_PASS_DEPTH_MASKED, main_input_layout), depth_masked),
+                ((EFFECT_PASS_TRANSPARENT, input_layout), transparent),
+                ((EFFECT_PASS_OPAQUE, input_layout), opaque),
+                ((EFFECT_PASS_OPAQUE_MASKED, input_layout), opaque_masked),
+                ((EFFECT_PASS_DEPTH, input_layout), depth),
+                ((EFFECT_PASS_DEPTH_MASKED, input_layout), depth_masked),
             ]
             .into(),
         }))
@@ -290,7 +286,6 @@ impl MeshEffectFactory for BasicEffectFactory {
                     depth_pass_layout,
                     color_pass_layout,
                     &STATIC_MESH_INPUT_LAYOUT,
-                    &STATIC_MESH_DEPTH_INPUT_LAYOUT,
                 )?;
                 effects.insert(color_pass_layout, effect.clone());
                 Ok(Some(effect))

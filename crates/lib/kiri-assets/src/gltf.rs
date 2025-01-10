@@ -52,58 +52,38 @@ impl ModelSource {
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 #[repr(C, align(8))]
-pub struct MeshVertexPositions {
+pub struct RenderMeshVertex {
     pub position: [i16; 3],
-}
-
-#[derive(Debug, Clone, Copy, Readable, Writable)]
-#[repr(C)]
-pub struct MeshVertexAttributes {
     pub normal_packed: u32,
     pub tangent_packed: u32,
     pub uv: [i16; 2],
 }
 
-pub const STATIC_MESH_DEPTH_INPUT_LAYOUT: [InputVertexStreamLayout; 1] =
-    [InputVertexStreamLayout {
-        streams: &[InputVertexAttrubute {
+pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
+    streams: &[
+        InputVertexAttrubute {
             location: 0,
             format: vk::Format::R16G16B16A16_SNORM,
             offset: 0,
-        }],
-        stride: mem::size_of::<MeshVertexPositions>() as u32,
-    }];
-
-pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 2] = [
-    InputVertexStreamLayout {
-        streams: &[InputVertexAttrubute {
-            location: 0,
-            format: vk::Format::R16G16B16A16_SNORM,
-            offset: 0,
-        }],
-        stride: mem::size_of::<MeshVertexPositions>() as u32,
-    },
-    InputVertexStreamLayout {
-        streams: &[
-            InputVertexAttrubute {
-                location: 1,
-                format: vk::Format::A2R10G10B10_SNORM_PACK32,
-                offset: 0,
-            },
-            InputVertexAttrubute {
-                location: 2,
-                format: vk::Format::A2R10G10B10_SNORM_PACK32,
-                offset: 4,
-            },
-            InputVertexAttrubute {
-                location: 3,
-                format: vk::Format::R16G16_SNORM,
-                offset: 8,
-            },
-        ],
-        stride: mem::size_of::<MeshVertexAttributes>() as u32,
-    },
-];
+        },
+        InputVertexAttrubute {
+            location: 1,
+            format: vk::Format::A2R10G10B10_SNORM_PACK32,
+            offset: 8,
+        },
+        InputVertexAttrubute {
+            location: 2,
+            format: vk::Format::A2R10G10B10_SNORM_PACK32,
+            offset: 12,
+        },
+        InputVertexAttrubute {
+            location: 3,
+            format: vk::Format::R16G16_SNORM,
+            offset: 16,
+        },
+    ],
+    stride: mem::size_of::<RenderMeshVertex>() as u32,
+}];
 
 #[derive(Debug, Clone, Copy, Readable, Writable, PartialEq)]
 pub enum MeshMaterialBlend {
@@ -206,8 +186,7 @@ pub struct Node {
 
 #[derive(Debug, Readable, Writable)]
 pub struct ModelAsset {
-    pub vertex_positions: Vec<MeshVertexPositions>,
-    pub vertex_attributes: Vec<MeshVertexAttributes>,
+    pub vertices: Vec<RenderMeshVertex>,
     pub indices: Vec<u16>,
     pub meshes: Vec<StaticMeshAsset>,
     pub nodes: Vec<Node>,
@@ -247,15 +226,14 @@ mod import {
     use crate::{Error, ImageAssetType, ImageSource, MeshAssetBuilder, MeshSurfaceBuilder};
 
     use super::{
-        MeshAssetMaterial, MeshMaterialBlend, MeshVertexAttributes, MeshVertexPositions,
-        ModelAsset, Node, NodeIndex, StaticMeshAsset,
+        MeshAssetMaterial, MeshMaterialBlend, ModelAsset, Node, NodeIndex, RenderMeshVertex,
+        StaticMeshAsset,
     };
 
     pub struct GltfProcessingContext<'a> {
         pub base_path: &'a str,
         pub buffers: Vec<gltf::buffer::Data>,
-        pub vertex_positions: Vec<MeshVertexPositions>,
-        pub vertex_attributes: Vec<MeshVertexAttributes>,
+        pub vertices: Vec<RenderMeshVertex>,
         pub indices: Vec<u16>,
         pub materials: Vec<MeshAssetMaterial>,
     }
@@ -410,8 +388,7 @@ mod import {
             builder.push(surface);
         }
         Ok(builder.build(
-            &mut context.vertex_positions,
-            &mut context.vertex_attributes,
+            &mut context.vertices,
             &mut context.indices,
             &mut context.materials,
         ))
@@ -482,8 +459,7 @@ mod import {
         }
         Ok({
             ModelAsset {
-                vertex_positions: context.context.vertex_positions.clone(),
-                vertex_attributes: context.context.vertex_attributes.clone(),
+                vertices: context.context.vertices.clone(),
                 indices: context.context.indices.clone(),
                 meshes: context.meshes,
                 nodes: context.bones,
@@ -519,8 +495,7 @@ impl ImportAsset<ModelAsset> for ModelSource {
             .to_owned();
         import::import_scenes(
             &mut import::GltfProcessingContext {
-                vertex_positions: Default::default(),
-                vertex_attributes: Default::default(),
+                vertices: Default::default(),
                 indices: Default::default(),
                 materials: Default::default(),
                 base_path: &base_path,

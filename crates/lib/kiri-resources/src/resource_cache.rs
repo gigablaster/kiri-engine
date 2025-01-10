@@ -373,12 +373,7 @@ impl ResourceManager {
     async fn load_model(manager: Arc<ResourceManager>, name: String) -> Result<RenderModel, Error> {
         let asset: ModelAsset =
             spawn_io(Self::load_or_compile_asset(ModelSource::new(&name))).await?;
-        let mut builder = RenderModelBuilder::new(
-            &asset.vertex_positions,
-            &asset.vertex_attributes,
-            &asset.indices,
-        )
-        .name(&name);
+        let mut builder = RenderModelBuilder::new(&asset.vertices, &asset.indices).name(&name);
         let materials = asset
             .materials
             .into_iter()

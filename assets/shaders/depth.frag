@@ -3,6 +3,6 @@
 
 #include "include/pbr_material.glsl"
 #include "include/shared.glsl"
-#include "include/pass_depth.glsl"
+#include "include/pass_main.glsl"
 
 void main() {}

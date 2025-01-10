@@ -2,8 +2,8 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "include/shared.glsl"
-#include "include/pass_depth.glsl"
-#include "include/layout_static_depth.glsl"
+#include "include/pass_main.glsl"
+#include "include/layout_static.glsl"
 
 void main() {
     mat4 model = dynamic.instances[gl_InstanceIndex].model;
