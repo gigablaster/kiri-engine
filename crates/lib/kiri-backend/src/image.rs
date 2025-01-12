@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{GpuMemoryBlock, RenderDevice};
+use crate::{GpuMemoryBlock, ImageUploadData, RenderDevice};
 
 use super::{DropList, Error};
 
@@ -343,7 +343,11 @@ impl Image {
     ///
     /// Including memory allocation. All resources will be freed when instance
     /// is dropped.    
-    pub fn new(device: &Arc<RenderDevice>, desc: ImageCreateDesc) -> Result<Self, Error> {
+    pub fn new(
+        device: &Arc<RenderDevice>,
+        desc: ImageCreateDesc,
+        data: Option<&[ImageUploadData]>,
+    ) -> Result<Arc<Self>, Error> {
         let image = unsafe { device.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             device.set_object_name(image, name);
@@ -365,20 +369,24 @@ impl Image {
                 .raw
                 .bind_image_memory(image, *memory.memory(), memory.offset())
         }?;
-        Ok(Self {
+        let desc = ImageDesc {
+            dims: desc.dims,
+            ty: desc.ty,
+            usage: desc.usage,
+            format: desc.format,
+            mip_levels: desc.mip_levels,
+            array_elements: desc.array_elements,
+        };
+        if let Some(data) = data {
+            device.with_staging(|staging| staging.upload_image(&device.raw, image, desc, data))?;
+        }
+        Ok(Arc::new(Self {
             device: device.clone(),
             raw: image,
-            desc: ImageDesc {
-                dims: desc.dims,
-                ty: desc.ty,
-                usage: desc.usage,
-                format: desc.format,
-                mip_levels: desc.mip_levels,
-                array_elements: desc.array_elements,
-            },
+            desc,
             views: Default::default(),
             memory: Some(memory),
-        })
+        }))
     }
 
     fn clear_views_impl(&self, drop_list: &mut DropList) {

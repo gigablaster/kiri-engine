@@ -23,6 +23,7 @@ mod physical_device;
 mod pipeline;
 mod program;
 mod render_device;
+mod staging;
 mod swapchain;
 
 pub use ash;
@@ -41,3 +42,14 @@ pub use swapchain::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemoryBlock = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageUploadData<'a> {
+    pub data: &'a [u8],
+}
+
+impl<'a> ImageUploadData<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+}

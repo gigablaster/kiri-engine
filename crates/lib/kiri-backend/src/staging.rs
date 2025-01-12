@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 gigablaster
+// Copyright (C) 2023-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,26 +20,32 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, ImageDesc, RenderDevice};
+use ash::vk;
+use gpu_alloc::{Request, UsageFlags};
+use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
 
-use crate::{Error, ImageUploadData};
+use crate::{
+    Error, GpuAllocator, GpuMemoryBlock, ImageDesc, ImageUploadData, PhysicalDevice, Queue,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
 
 #[derive(Debug)]
 pub struct Staging {
-    device: Arc<RenderDevice>,
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     fence: vk::Fence,
+    transfer_queue: Arc<Queue>,
     allocator: BumpAllocator,
     upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
     upload_images: HashMap<vk::Image, Vec<ImageUploadRequest>>,
-    staging: Buffer,
+    staging: vk::Buffer,
+    memory: Option<GpuMemoryBlock>,
     mapping: NonNull<u8>,
     semaphore: vk::Semaphore,
+    aligment: u64,
 }
 
 unsafe impl Send for Staging {}
@@ -48,41 +54,55 @@ unsafe impl Sync for Staging {}
 const STAGING_SIZE: u64 = 128 * 1024 * 1024;
 
 impl Staging {
-    pub fn new(device: &Arc<RenderDevice>) -> Result<Self, Error> {
+    pub fn new(
+        device: &ash::Device,
+        physical_device: &PhysicalDevice,
+        allocator: &mut GpuAllocator,
+        transfer_queue: Arc<Queue>,
+    ) -> Result<Self, Error> {
         let pool_info =
             vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::TRANSIENT);
-        let command_pool = unsafe { device.raw.create_command_pool(&pool_info, None) }?;
+        let command_pool = unsafe { device.create_command_pool(&pool_info, None) }?;
 
         let command_buffer = unsafe {
-            device.raw.allocate_command_buffers(
+            device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
                     .command_buffer_count(1)
                     .command_pool(command_pool),
             )
         }?[0];
         let fence = unsafe {
-            device.raw.create_fence(
+            device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
             )
         }?;
-        let semaphore = unsafe {
-            device
-                .raw
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        let semaphore =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }?;
+        let staging = unsafe {
+            device.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(STAGING_SIZE)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC),
+                None,
+            )
         }?;
-        let staging = Buffer::new(
-            device,
-            BufferCreateDesc::upload(STAGING_SIZE)
-                .transfer_source()
-                .dedicated(),
-        )?;
-        let mapping = staging
-            .mapping
-            .expect("Staging memory must be perma-mapped");
+        let memory_requirements = unsafe { device.get_buffer_memory_requirements(staging) };
+        let mut memory = unsafe {
+            allocator.alloc(
+                AshMemoryDevice::wrap(device),
+                Request {
+                    size: memory_requirements.size,
+                    align_mask: memory_requirements.alignment,
+                    usage: UsageFlags::UPLOAD,
+                    memory_types: memory_requirements.memory_type_bits,
+                },
+            )
+        }?;
+        unsafe { device.bind_buffer_memory(staging, *memory.memory(), memory.offset()) }?;
+        let mapping = unsafe { memory.map(AshMemoryDevice::wrap(device), 0, STAGING_SIZE as _) }?;
 
         Ok(Self {
-            device: device.clone(),
             fence,
             command_pool,
             command_buffer,
@@ -90,13 +110,21 @@ impl Staging {
             upload_buffers: Default::default(),
             upload_images: Default::default(),
             mapping,
+            transfer_queue,
+            memory: Some(memory),
             staging,
             semaphore,
+            aligment: physical_device
+                .properties
+                .limits
+                .buffer_image_granularity
+                .max(64),
         })
     }
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
+        device: &ash::Device,
         target: vk::Buffer,
         offset: u64,
         data: &[T],
@@ -114,13 +142,14 @@ impl Staging {
             if current_offset == data_len {
                 return Ok(());
             } else {
-                self.upload_impl(false)?;
+                self.upload_impl(device, false)?;
             }
         }
     }
 
     pub fn upload_image(
         &mut self,
+        device: &ash::Device,
         target: vk::Image,
         desc: ImageDesc,
         data: &[ImageUploadData],
@@ -129,7 +158,7 @@ impl Staging {
         self.upload_images.remove(&target);
         for (mip, data) in data.iter().enumerate() {
             while !self.try_push_mip(target, desc, mip as _, data)? {
-                self.upload_impl(false)?;
+                self.upload_impl(device, false)?;
             }
         }
         Ok(())
@@ -146,7 +175,7 @@ impl Staging {
         if size > STAGING_SIZE {
             return Err(Error::ImageTooBig);
         }
-        if let Some(offset) = self.allocator.allocate(size, self.get_aligment() as _) {
+        if let Some(offset) = self.allocator.allocate(size, self.aligment) {
             unsafe {
                 copy_nonoverlapping(
                     data.data.as_ptr(),
@@ -188,15 +217,6 @@ impl Staging {
         }
     }
 
-    fn get_aligment(&self) -> u64 {
-        self.device
-            .physical_device
-            .properties
-            .limits
-            .buffer_image_granularity
-            .max(64)
-    }
-
     fn try_push_buffer(
         &mut self,
         target: vk::Buffer,
@@ -204,10 +224,10 @@ impl Staging {
         bytes: u64,
         data: *const u8,
     ) -> Result<u64, Error> {
-        let can_send = self.allocator.validate(bytes, self.get_aligment());
+        let can_send = self.allocator.validate(bytes, self.aligment);
         let dst_offset = self
             .allocator
-            .allocate(can_send as _, self.get_aligment() as _)
+            .allocate(can_send as _, self.aligment)
             .unwrap(); // Already checked that allocator can allocate enough space
         unsafe {
             copy_nonoverlapping(
@@ -225,48 +245,51 @@ impl Staging {
         Ok(can_send)
     }
 
-    pub fn upload(&mut self) -> Result<vk::Semaphore, Error> {
-        let semaphore = self.upload_impl(true)?;
+    pub fn upload(&mut self, device: &ash::Device) -> Result<vk::Semaphore, Error> {
+        let semaphore = self.upload_impl(device, true)?;
         Ok(semaphore.unwrap())
     }
 
-    fn upload_impl(&mut self, need_semaphore: bool) -> Result<Option<vk::Semaphore>, Error> {
+    fn upload_impl(
+        &mut self,
+        device: &ash::Device,
+        need_semaphore: bool,
+    ) -> Result<Option<vk::Semaphore>, Error> {
         unsafe {
-            self.device
-                .raw
-                .wait_for_fences(&[self.fence], true, u64::MAX)?;
-            self.device.raw.reset_fences(&[self.fence])?;
-            self.device
-                .raw
-                .reset_command_pool(self.command_pool, vk::CommandPoolResetFlags::empty())?;
-            self.device.raw.begin_command_buffer(
+            device.wait_for_fences(&[self.fence], true, u64::MAX)?;
+            device.reset_fences(&[self.fence])?;
+            device.reset_command_pool(self.command_pool, vk::CommandPoolResetFlags::empty())?;
+            device.begin_command_buffer(
                 self.command_buffer,
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-            self.device.begin_label(self.command_buffer, "Upload data");
-            self.barrier_before();
-            self.copy_buffers();
-            self.copy_images();
-            self.barriers_after();
-            self.device.end_label(self.command_buffer);
-            self.device.raw.end_command_buffer(self.command_buffer)?;
+            self.barrier_before(device);
+            self.copy_buffers(device);
+            self.copy_images(device);
+            self.barriers_after(device);
+            device.end_command_buffer(self.command_buffer)?;
         }
         self.allocator.reset();
         self.upload_buffers.clear();
         self.upload_images.clear();
         if need_semaphore {
-            self.device
-                .submit(&[self.command_buffer], self.fence, &[], &[self.semaphore])?;
+            self.transfer_queue.submit(
+                device,
+                &[self.command_buffer],
+                self.fence,
+                &[],
+                &[self.semaphore],
+            )?;
             Ok(Some(self.semaphore))
         } else {
-            self.device
-                .submit(&[self.command_buffer], self.fence, &[], &[])?;
+            self.transfer_queue
+                .submit(device, &[self.command_buffer], self.fence, &[], &[])?;
             Ok(None)
         }
     }
 
-    fn barriers_after(&mut self) {
+    fn barriers_after(&mut self, device: &ash::Device) {
         let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
@@ -295,7 +318,7 @@ impl Staging {
             })
         });
         unsafe {
-            self.device.raw.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier(
                 self.command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -307,7 +330,7 @@ impl Staging {
         };
     }
 
-    fn barrier_before(&self) {
+    fn barrier_before(&self, device: &ash::Device) {
         let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
@@ -336,7 +359,7 @@ impl Staging {
             })
         });
         unsafe {
-            self.device.raw.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier(
                 self.command_buffer,
                 vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::VERTEX_SHADER,
                 vk::PipelineStageFlags::TRANSFER,
@@ -348,21 +371,19 @@ impl Staging {
         };
     }
 
-    fn copy_buffers(&self) {
+    fn copy_buffers(&self, device: &ash::Device) {
         self.upload_buffers.iter().for_each(|x| unsafe {
-            self.device
-                .raw
-                .cmd_copy_buffer(self.command_buffer, self.staging.raw, *x.0, x.1)
+            device.cmd_copy_buffer(self.command_buffer, self.staging, *x.0, x.1)
         })
     }
 
-    fn copy_images(&self) {
+    fn copy_images(&self, device: &ash::Device) {
         self.upload_images.iter().for_each(|x| {
             let regions = x.1.iter().map(|x| x.0).collect::<Vec<_>>();
             unsafe {
-                self.device.raw.cmd_copy_buffer_to_image(
+                device.cmd_copy_buffer_to_image(
                     self.command_buffer,
-                    self.staging.raw,
+                    self.staging,
                     *x.0,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &regions,
@@ -370,18 +391,18 @@ impl Staging {
             }
         })
     }
-}
 
-impl Drop for Staging {
-    fn drop(&mut self) {
-        self.upload_impl(false).unwrap();
-        unsafe {
-            self.device.raw.device_wait_idle().unwrap();
-            self.device
-                .raw
-                .destroy_command_pool(self.command_pool, None);
-            self.device.raw.destroy_semaphore(self.semaphore, None);
-            self.device.raw.destroy_fence(self.fence, None);
+    pub fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
+        if let Some(memory) = self.memory.take() {
+            self.upload_impl(device, false).unwrap();
+            unsafe {
+                device.device_wait_idle().unwrap();
+                device.destroy_command_pool(self.command_pool, None);
+                device.destroy_semaphore(self.semaphore, None);
+                device.destroy_fence(self.fence, None);
+                device.destroy_buffer(self.staging, None);
+                allocator.dealloc(AshMemoryDevice::wrap(device), memory);
+            }
         }
     }
 }

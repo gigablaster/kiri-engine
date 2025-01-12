@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::NonNull, sync::Arc};
+use std::{hash::Hash, ptr::NonNull, sync::Arc};
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
@@ -211,6 +211,12 @@ impl Buffer {
             device_address,
             memory: Some(memory),
         })
+    }
+
+    pub fn upload<T: Copy>(&self, offset: u64, data: &[T]) -> Result<(), Error> {
+        assert!(self.desc.usage.contains(vk::BufferUsageFlags::TRANSFER_DST));
+        self.device
+            .with_staging(|staging| staging.upload_buffer(&self.device.raw, self.raw, offset, data))
     }
 
     pub fn device_address(&self) -> vk::DeviceAddress {

@@ -26,8 +26,6 @@ pub enum Error {
     InvalidDescriptorSlotName(String),
     #[error("Slot with index {0} not found")]
     InvalidDescriptorSlotIndex(u32),
-    #[error("Image is too big")]
-    ImageTooBig,
     #[error("Out of dynamic memory")]
     OutOfDynamicMemory,
     #[error("Invalid image handle {0}")]

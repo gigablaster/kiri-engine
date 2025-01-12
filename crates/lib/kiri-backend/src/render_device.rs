@@ -21,7 +21,10 @@ use gpu_alloc_ash::AshMemoryDevice;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::{create_descriptor_layout, DescriptorSetLayoutDesc, Error, GpuMemoryBlock, Instance};
+use crate::{
+    create_descriptor_layout, staging::Staging, DescriptorSetLayoutDesc, Error, GpuMemoryBlock,
+    Instance,
+};
 
 use super::{
     drop_list::DropList, frame::Frame, physical_device::PhysicalDevice, FindSuitableDevice,
@@ -47,14 +50,52 @@ pub struct RenderDevice {
     current_drop_list: Mutex<DropList>,
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
-    universal_queue: Arc<Mutex<vk::Queue>>,
+    universal_queue: Arc<Queue>,
     layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
     allocator: Mutex<GpuAllocator>,
+    staging: Mutex<Staging>,
 }
 
 impl Debug for RenderDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.raw.handle()))
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Queue {
+    family_index: u32,
+    raw: Mutex<vk::Queue>,
+}
+
+impl Queue {
+    /// Submits execution to main queue
+    ///
+    /// Thread-safe.
+    pub fn submit(
+        &self,
+        device: &ash::Device,
+        cbs: &[vk::CommandBuffer],
+        fence: vk::Fence,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        signal: &[vk::Semaphore],
+    ) -> Result<(), Error> {
+        puffin::profile_function!();
+        let wait_sems = wait
+            .iter()
+            .map(|(semaphore, _)| *semaphore)
+            .collect::<ArrayVec<_, MAX_SUBMITS>>();
+        let wait_stages = wait
+            .iter()
+            .map(|(_, stage)| *stage)
+            .collect::<ArrayVec<_, MAX_SUBMITS>>();
+        let submit_info = vk::SubmitInfo::default()
+            .command_buffers(cbs)
+            .wait_semaphores(&wait_sems)
+            .wait_dst_stage_mask(&wait_stages)
+            .signal_semaphores(signal);
+        unsafe { device.queue_submit(*self.raw.lock(), &[submit_info], fence) }?;
+        Ok(())
     }
 }
 
@@ -141,9 +182,10 @@ impl RenderDevice {
                 .create_device(pdevice.raw, &device_create_info, None)?
         };
 
-        let universal_queue = Arc::new(Mutex::new(unsafe {
-            device.get_device_queue(universal_queue_index, 0)
-        }));
+        let universal_queue = Arc::new(Queue {
+            family_index: universal_queue_index,
+            raw: Mutex::new(unsafe { device.get_device_queue(universal_queue_index, 0) }),
+        });
 
         let debug = instance
             .debug_utils()
@@ -163,8 +205,18 @@ impl RenderDevice {
             initial_buddy_dedicated_size: 256 * 1024 * 1024,
         };
 
+        let mut allocator = GpuAllocator::new(allocator_config, unsafe {
+            gpu_alloc_ash::device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw)
+        }?);
+
         Ok(Arc::new(Self {
             instance: instance.clone(),
+            staging: Mutex::new(Staging::new(
+                &device,
+                &pdevice,
+                &mut allocator,
+                universal_queue.clone(),
+            )?),
             samplers,
             universal_queue,
             frames: [
@@ -175,13 +227,7 @@ impl RenderDevice {
             raw: device,
             debug,
             layouts: Default::default(),
-            allocator: Mutex::new(GpuAllocator::new(allocator_config, unsafe {
-                gpu_alloc_ash::device_properties(
-                    &instance.raw,
-                    Instance::vulkan_version(),
-                    pdevice.raw,
-                )
-            }?)),
+            allocator: Mutex::new(allocator),
             physical_device: pdevice,
         }))
     }
@@ -241,6 +287,13 @@ impl RenderDevice {
         cb(&mut self.current_drop_list.lock());
     }
 
+    pub(super) fn with_staging<CB: FnOnce(&mut Staging) -> Result<(), Error>>(
+        &self,
+        cb: CB,
+    ) -> Result<(), Error> {
+        cb(&mut self.staging.lock())
+    }
+
     pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
         if let Some(debug_utils) = &self.debug {
             let name = CString::new(name.as_ref()).unwrap();
@@ -268,41 +321,11 @@ impl RenderDevice {
         }
     }
 
-    /// Submits execution to main queue
-    ///
-    /// Thread-safe.
-    pub fn submit(
-        &self,
-        cbs: &[vk::CommandBuffer],
-        fence: vk::Fence,
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
-        signal: &[vk::Semaphore],
-    ) -> Result<(), Error> {
-        puffin::profile_function!();
-        let wait_sems = wait
-            .iter()
-            .map(|(semaphore, _)| *semaphore)
-            .collect::<ArrayVec<_, MAX_SUBMITS>>();
-        let wait_stages = wait
-            .iter()
-            .map(|(_, stage)| *stage)
-            .collect::<ArrayVec<_, MAX_SUBMITS>>();
-        let submit_info = vk::SubmitInfo::default()
-            .command_buffers(cbs)
-            .wait_semaphores(&wait_sems)
-            .wait_dst_stage_mask(&wait_stages)
-            .signal_semaphores(signal);
-        unsafe {
-            self.raw
-                .queue_submit(*self.universal_queue.lock(), &[submit_info], fence)
-        }?;
-        Ok(())
-    }
-
     /// Begins frame
     ///
     /// Waiting for last frame to finish rendering, them resets fences and frame state.
-    pub fn begin_frame(&self) -> Result<Arc<Frame>, Error> {
+    /// Returns frame data and staging semaphore
+    pub fn begin_frame(&self) -> Result<(Arc<Frame>, vk::Semaphore), Error> {
         puffin::profile_function!();
         let mut frame = self.frames[0].lock();
         {
@@ -314,7 +337,8 @@ impl RenderDevice {
             };
             frame.reset(&self.raw, &mut self.allocator.lock())?;
         }
-        Ok(frame.clone())
+        let upload_finished = self.staging.lock().upload(&self.raw)?;
+        Ok((frame.clone(), upload_finished))
     }
 
     /// Ends frame
@@ -344,7 +368,7 @@ impl RenderDevice {
             target
                 .swapchain
                 .loader()
-                .queue_present(*self.universal_queue.lock(), &present_info)
+                .queue_present(*self.universal_queue.raw.lock(), &present_info)
         } {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => Ok(()),
             Err(err) => panic!("Can't present image: {}", err),
@@ -405,6 +429,7 @@ impl Drop for RenderDevice {
         unsafe { self.raw.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         let mut drop_list = self.current_drop_list.lock();
         let mut allocator = self.allocator.lock();
+        self.staging.lock().free(&self.raw, &mut allocator);
         drop_list.purge(&self.raw, &mut allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
