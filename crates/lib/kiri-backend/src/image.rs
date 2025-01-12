@@ -204,6 +204,11 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
+    pub fn storage(mut self) -> Self {
+        self.usage |= vk::ImageUsageFlags::STORAGE;
+        self
+    }
+
     pub fn ty(mut self, value: vk::ImageType) -> Self {
         self.ty = value;
         self
