@@ -16,11 +16,9 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
-    mem,
     time::SystemTime,
 };
 
-use kiri_backend::{ash::vk, InputVertexAttrubute, InputVertexStreamLayout};
 use kiri_common::NodeIndex;
 use speedy::{Readable, Writable};
 use uuid::uuid;
@@ -58,32 +56,6 @@ pub struct RenderMeshVertex {
     pub tangent_packed: u32,
     pub uv: [i16; 2],
 }
-
-pub const STATIC_MESH_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
-    streams: &[
-        InputVertexAttrubute {
-            location: 0,
-            format: vk::Format::R16G16B16A16_SNORM,
-            offset: 0,
-        },
-        InputVertexAttrubute {
-            location: 1,
-            format: vk::Format::A2R10G10B10_SNORM_PACK32,
-            offset: 8,
-        },
-        InputVertexAttrubute {
-            location: 2,
-            format: vk::Format::A2R10G10B10_SNORM_PACK32,
-            offset: 12,
-        },
-        InputVertexAttrubute {
-            location: 3,
-            format: vk::Format::R16G16_SNORM,
-            offset: 16,
-        },
-    ],
-    stride: mem::size_of::<RenderMeshVertex>() as u32,
-}];
 
 #[derive(Debug, Clone, Copy, Readable, Writable, PartialEq)]
 pub enum MeshMaterialBlend {

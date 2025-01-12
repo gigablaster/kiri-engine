@@ -19,6 +19,7 @@ use std::{
     mem,
     path::Path,
     slice,
+    sync::Arc,
 };
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
@@ -196,7 +197,6 @@ pub fn compile_raster_pipeline<N: AsRef<str>>(
     cache: vk::PipelineCache,
     program: &Program,
     pass_layout: &RenderPassLayout,
-    streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
     name: Option<N>,
@@ -232,37 +232,6 @@ pub fn compile_raster_pipeline<N: AsRef<str>>(
                 .name(entry)
         })
         .collect::<Vec<_>>();
-
-    let streams = streams
-        .iter()
-        .enumerate()
-        .map(|(index, stream)| stream.build(index as u32))
-        .collect::<Vec<_>>();
-
-    let strides = streams
-        .iter()
-        .map(|(stride, _)| stride)
-        .copied()
-        .collect::<Vec<_>>();
-    let attributes = streams
-        .iter()
-        .flat_map(|(_, attributes)| attributes)
-        .copied()
-        .collect::<Vec<_>>();
-    let vertex_binding_desc = strides
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            vk::VertexInputBindingDescription::default()
-                .stride(strides[index] as _)
-                .binding(attributes[index].binding)
-                .input_rate(vk::VertexInputRate::VERTEX)
-        })
-        .collect::<Vec<_>>();
-
-    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
-        .vertex_binding_descriptions(&vertex_binding_desc)
-        .vertex_attribute_descriptions(&attributes);
 
     let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -328,7 +297,6 @@ pub fn compile_raster_pipeline<N: AsRef<str>>(
 
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&shader_create_info)
-        .vertex_input_state(&vertex_input)
         .input_assembly_state(&assembly_state_create_info)
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterizer_state)
