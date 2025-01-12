@@ -13,20 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cell::LazyCell,
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
 
 use kiri_assets::STATIC_MESH_INPUT_LAYOUT;
 use kiri_backend::{
     ash::vk::{self},
     DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc,
-    RenderPassLayout, EMPTY_DESCRIPTOR_LAYOUT,
+    RenderPassLayout,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
-    effects::{INSTANCE_DESCRIPTOR_LAYOUT, RENDER_PASS_DESCRIPTOR_LAYOUT},
-    uniforms::ConstUniformBuffer,
-    DescriptorSetBuilder, Error, PipelineCache, PipelineHandle, RasterPipelineDesc,
+    uniforms::ConstUniformBuffer, DescriptorSetBuilder, Error, PipelineCache, PipelineHandle,
+    RasterPipelineDesc,
 };
 
 use super::{
@@ -35,59 +38,62 @@ use super::{
     EFFECT_PASS_TRANSPARENT,
 };
 
-const BASIC_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    layout: &[
-        (
-            0,
-            DescriptorSetDesc {
-                name: "material",
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                count: 1,
-            },
-        ),
-        (
-            1,
-            DescriptorSetDesc {
-                name: "base_color",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            2,
-            DescriptorSetDesc {
-                name: "normals",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            3,
-            DescriptorSetDesc {
-                name: "metallic_roughness",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            4,
-            DescriptorSetDesc {
-                name: "occlusion",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            5,
-            DescriptorSetDesc {
-                name: "emissive",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-    ],
-    update_after_bind: false,
-};
+static BASIC_MATERIAL_DESCRIPTOR_LAYOUT: LazyLock<DescriptorSetLayoutDesc> =
+    LazyLock::new(|| DescriptorSetLayoutDesc {
+        layout: vec![
+            (
+                0,
+                DescriptorSetDesc {
+                    name: "material".to_owned(),
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    count: 1,
+                },
+            ),
+            (
+                1,
+                DescriptorSetDesc {
+                    name: "base_color".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+            (
+                2,
+                DescriptorSetDesc {
+                    name: "normals".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+            (
+                3,
+                DescriptorSetDesc {
+                    name: "metallic_roughness".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+            (
+                4,
+                DescriptorSetDesc {
+                    name: "occlusion".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+            (
+                5,
+                DescriptorSetDesc {
+                    name: "emissive".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+        ],
+        update_after_bind: false,
+        push_constant_size: None,
+        compute_groups_size: None,
+    });
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
@@ -187,20 +193,9 @@ impl BasicEffect {
         use_discard: bool,
     ) -> Result<PipelineHandle, Error> {
         let pipeline = cache.get_or_create_raster_pipeline(
-            RasterPipelineDesc::new(
-                vertex_shader,
-                fragment_shader,
-                pass,
-                input_layout,
-                &[
-                    RENDER_PASS_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
-                    INSTANCE_DESCRIPTOR_LAYOUT,
-                ],
-            )
-            .pipeline_desc(desc)
-            .specialization(BASIC_EFFECT_SPEC_DISCARD_INDEX, use_discard.into()),
+            RasterPipelineDesc::new(vertex_shader, fragment_shader, pass, input_layout)
+                .pipeline_desc(desc)
+                .specialization(BASIC_EFFECT_SPEC_DISCARD_INDEX, use_discard.into()),
         )?;
         Ok(pipeline)
     }
@@ -219,10 +214,10 @@ impl Effect for BasicEffect {
         let name = format!("{:?}", desc);
         let uniform = self.uniforms.allocate(data)?;
         let builder = DescriptorSetBuilder::new(
-            vk::ShaderStageFlags::ALL_GRAPHICS,
-            BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            &BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
         )
-        .bind_uniform_buffer(0, uniform)
+        .bind_uniform_buffer("material", uniform)?
         .name(&name);
         let builder = fill_descriptor_with_textures(
             builder,

@@ -59,7 +59,7 @@ pub(super) struct DescriptorSetData {
 
 #[derive(Debug)]
 pub struct DescriptorSetBuilder<'a> {
-    layout: DescriptorSetLayoutDesc<'static>,
+    layout: &'a DescriptorSetLayoutDesc,
     stages: vk::ShaderStageFlags,
     images: Vec<Binding<ImageBindingData>>,
     unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
@@ -70,7 +70,7 @@ pub struct DescriptorSetBuilder<'a> {
 }
 
 impl<'a> DescriptorSetBuilder<'a> {
-    pub fn new(stages: vk::ShaderStageFlags, layout: DescriptorSetLayoutDesc<'static>) -> Self {
+    pub fn new(stages: vk::ShaderStageFlags, layout: &'a DescriptorSetLayoutDesc) -> Self {
         let count = layout.get_descriptor_count();
         Self {
             layout,
@@ -86,10 +86,14 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_image(
         mut self,
-        slot: u32,
+        slot: &str,
         image: ImageHandle,
         aspect: vk::ImageAspectFlags,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = self
+            .layout
+            .get_slot(slot)
+            .ok_or(Error::TextureSlotNotFound(slot.to_owned()))?;
         self.images.push(Binding {
             slot,
             element: 0,
@@ -100,10 +104,14 @@ impl<'a> DescriptorSetBuilder<'a> {
                 view: vk::ImageView::null(),
             },
         });
-        self
+        Ok(self)
     }
 
-    pub fn bind_uniform_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
+    pub fn bind_uniform_buffer(mut self, slot: &str, buffer: BufferSlice) -> Result<Self, Error> {
+        let slot = self
+            .layout
+            .get_slot(slot)
+            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.unifom_buffers.push(Binding {
             slot,
             element: 0,
@@ -114,10 +122,14 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: buffer.size,
             },
         });
-        self
+        Ok(self)
     }
 
-    pub fn bind_storage_buffer(mut self, slot: u32, buffer: BufferSlice) -> Self {
+    pub fn bind_storage_buffer(mut self, slot: &str, buffer: BufferSlice) -> Result<Self, Error> {
+        let slot = self
+            .layout
+            .get_slot(slot)
+            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.storage_buffers.push(Binding {
             slot,
             element: 0,
@@ -128,37 +140,45 @@ impl<'a> DescriptorSetBuilder<'a> {
                 size: buffer.size,
             },
         });
-        self
+        Ok(self)
     }
 
     pub fn bind_dynamic_uniform_buffer(
         mut self,
-        slot: u32,
+        slot: &str,
         handle: BufferHandle,
         size: u64,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = self
+            .layout
+            .get_slot(slot)
+            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_uniform_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData { handle, size },
         });
-        self
+        Ok(self)
     }
 
     pub fn bind_dynamic_storage_buffer(
         mut self,
-        slot: u32,
+        slot: &str,
         handle: BufferHandle,
         size: u64,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let slot = self
+            .layout
+            .get_slot(slot)
+            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_storage_buffers.push(Binding {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData { handle, size },
         });
-        self
+        Ok(self)
     }
 
     pub fn name(mut self, name: &'a str) -> Self {

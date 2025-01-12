@@ -33,7 +33,6 @@ pub struct RasterPipelineDesc {
     pub fragment_shader: String,
     pub render_pass: &'static RenderPassLayout<'static>,
     pub input_layout: &'static [InputVertexStreamLayout<'static>],
-    pub descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
 }
@@ -44,7 +43,6 @@ impl RasterPipelineDesc {
         fragment_shader: &str,
         render_pass: &'static RenderPassLayout<'static>,
         input_layout: &'static [InputVertexStreamLayout<'static>],
-        descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
@@ -53,7 +51,6 @@ impl RasterPipelineDesc {
             input_layout,
             specialization: Default::default(),
             desc: Default::default(),
-            descriptor_layout,
         }
     }
 
@@ -104,7 +101,6 @@ impl PipelineCache {
 
     fn get_or_load_program(
         &self,
-        layout: &'static [DescriptorSetLayoutDesc<'static>],
         vertex_shader: &str,
         fragment_shader: &str,
     ) -> Result<ProgramHandle, Error> {
@@ -115,13 +111,10 @@ impl PipelineCache {
         } else {
             let vertex_shader = self.get_or_load_shader(vertex_shader, ShaderType::Vertex)?;
             let fragment_shader = self.get_or_load_shader(fragment_shader, ShaderType::Fragment)?;
-            let program = self.renderer.create_program(
-                layout,
-                &[
-                    ShaderDesc::vertex(&vertex_shader),
-                    ShaderDesc::fragment(&fragment_shader),
-                ],
-            )?;
+            let program = self.renderer.create_program(&[
+                ShaderDesc::vertex(&vertex_shader),
+                ShaderDesc::fragment(&fragment_shader),
+            ])?;
             programs.insert(key, program);
             Ok(program)
         }
@@ -140,11 +133,8 @@ impl PipelineCache {
                 Ok(*pipeline)
             } else {
                 debug!("Create pipeline {:?}", &desc);
-                let program = self.get_or_load_program(
-                    desc.descriptor_layout,
-                    &desc.vertex_shader,
-                    &desc.fragment_shader,
-                )?;
+                let program =
+                    self.get_or_load_program(&desc.vertex_shader, &desc.fragment_shader)?;
                 let pipeline = self.renderer.create_pipeline(
                     program,
                     desc.render_pass,

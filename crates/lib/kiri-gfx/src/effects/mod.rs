@@ -21,7 +21,12 @@ use kiri_backend::{
 };
 use kiri_math::Vec4;
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{
+    cell::OnceCell,
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, LazyLock},
+};
 
 use crate::{BufferSlice, DescriptorHandle, DescriptorSetBuilder, Error, PipelineHandle, Texture};
 
@@ -65,42 +70,48 @@ pub fn fill_descriptor_with_textures<'a>(
     textures: &HashMap<String, Arc<Texture>>,
 ) -> Result<DescriptorSetBuilder<'a>, Error> {
     let mut builder = builder;
-    for (slot, desc) in desc.layout {
+    for (_, desc) in desc.layout.iter() {
         if desc.ty == vk::DescriptorType::SAMPLED_IMAGE
             || desc.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
         {
             let texture = textures
-                .get(desc.name)
+                .get(&desc.name)
                 .ok_or(Error::TextureSlotNotFound(desc.name.to_owned()))?;
-            builder = builder.bind_image(*slot, texture.image, vk::ImageAspectFlags::COLOR);
+            builder = builder.bind_image(&desc.name, texture.image, vk::ImageAspectFlags::COLOR)?;
         }
     }
     Ok(builder)
 }
 
-pub const RENDER_PASS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    layout: &[(
-        0,
-        DescriptorSetDesc {
-            name: "per_pass",
-            ty: vk::DescriptorType::UNIFORM_BUFFER,
-            count: 1,
-        },
-    )],
-    update_after_bind: false,
-};
+pub static RENDER_PASS_DESCRIPTOR_LAYOUT: LazyLock<DescriptorSetLayoutDesc> =
+    LazyLock::new(|| DescriptorSetLayoutDesc {
+        layout: vec![(
+            0,
+            DescriptorSetDesc {
+                name: "per_pass".to_owned(),
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count: 1,
+            },
+        )],
+        update_after_bind: false,
+        push_constant_size: None,
+        compute_groups_size: None,
+    });
 
-pub const INSTANCE_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    layout: &[(
-        0,
-        DescriptorSetDesc {
-            name: "instance",
-            ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-            count: 1,
-        },
-    )],
-    update_after_bind: false,
-};
+pub static INSTANCE_DESCRIPTOR_LAYOUT: LazyLock<DescriptorSetLayoutDesc> =
+    LazyLock::new(|| DescriptorSetLayoutDesc {
+        layout: vec![(
+            0,
+            DescriptorSetDesc {
+                name: "instance".to_owned(),
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                count: 1,
+            },
+        )],
+        update_after_bind: false,
+        push_constant_size: None,
+        compute_groups_size: None,
+    });
 
 pub const EFFECT_PASS_OPAQUE: &str = "opaque";
 pub const EFFECT_PASS_OPAQUE_MASKED: &str = "opaque_masked";

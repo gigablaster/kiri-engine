@@ -13,13 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, sync::Arc};
+use std::{
+    mem,
+    sync::{Arc, LazyLock},
+};
 
 use crossbeam::queue::SegQueue;
 use kiri_backend::{
     ash::vk, DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute,
-    InputVertexStreamLayout, RenderPassLayout, DYNAMIC_BINDING_SLOT, EMPTY_DESCRIPTOR_LAYOUT,
-    MATERIAL_BINDING_SLOT, PASS_BINDING_SLOT,
+    InputVertexStreamLayout, RenderPassLayout, DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT,
+    PASS_BINDING_SLOT,
 };
 use kiri_gfx::{
     effects::{INSTANCE_DESCRIPTOR_LAYOUT, RENDER_PASS_DESCRIPTOR_LAYOUT},
@@ -211,27 +214,30 @@ const POSTPROCESS_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStrea
     stride: 16,
 }];
 
-const POSTPROCESS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
-    layout: &[
-        (
-            0,
-            DescriptorSetDesc {
-                name: "main",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            1,
-            DescriptorSetDesc {
-                name: "params",
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                count: 1,
-            },
-        ),
-    ],
-    update_after_bind: false,
-};
+static POSTPROCESS_DESCRIPTOR_LAYOUT: LazyLock<DescriptorSetLayoutDesc> =
+    LazyLock::new(|| DescriptorSetLayoutDesc {
+        layout: vec![
+            (
+                0,
+                DescriptorSetDesc {
+                    name: "main".to_owned(),
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    count: 1,
+                },
+            ),
+            (
+                1,
+                DescriptorSetDesc {
+                    name: "params".to_owned(),
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    count: 1,
+                },
+            ),
+        ],
+        update_after_bind: false,
+        push_constant_size: None,
+        compute_groups_size: None,
+    });
 
 struct CullData {
     ops: Vec<RenderOpData>,
@@ -257,12 +263,6 @@ impl RenderWorld {
                 "shaders/tonemapping.frag",
                 &POSTPROCESS_PASS_LAYOUT,
                 &POSTPROCESS_INPUT_LAYOUT,
-                &[
-                    POSTPROCESS_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                    EMPTY_DESCRIPTOR_LAYOUT,
-                ],
             ))?;
         Ok(Self {
             resources: resource_manager.clone(),
@@ -415,10 +415,10 @@ impl RenderWorld {
         }])?;
         let pass_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::ALL_GRAPHICS,
-                RENDER_PASS_DESCRIPTOR_LAYOUT,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                &RENDER_PASS_DESCRIPTOR_LAYOUT,
             )
-            .bind_uniform_buffer(0, pass_data),
+            .bind_uniform_buffer("per_pass", pass_data)?,
         )?;
         Self::generate_commands(context, &mut pass, &culled.ops, &culled.depth, pass_ds);
         context.submit(pass.build());
@@ -476,10 +476,10 @@ impl RenderWorld {
         }])?;
         let pass_ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::ALL_GRAPHICS,
-                RENDER_PASS_DESCRIPTOR_LAYOUT,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                &RENDER_PASS_DESCRIPTOR_LAYOUT,
             )
-            .bind_uniform_buffer(0, pass_data),
+            .bind_uniform_buffer("per_pass", pass_data)?,
         )?;
         let mut pass = RasterizerPassBuilder::new(
             "main",
@@ -533,14 +533,14 @@ impl RenderWorld {
 
         let ds = context.get_descriptor_set(
             DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::ALL_GRAPHICS,
-                POSTPROCESS_DESCRIPTOR_LAYOUT,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                &POSTPROCESS_DESCRIPTOR_LAYOUT,
             )
-            .bind_image(0, hdr.handle, vk::ImageAspectFlags::COLOR)
+            .bind_image("main", hdr.handle, vk::ImageAspectFlags::COLOR)?
             .bind_uniform_buffer(
-                1,
+                "params",
                 context.push_dynamic_data(&[TonemappingGpuData { expouse }])?,
-            ),
+            )?,
         )?;
 
         pass.draw(Self::fullscreen_quad(context, self.tonemapping, ds)?);
@@ -600,14 +600,15 @@ impl RenderWorld {
                 let instance_ds = context
                     .get_descriptor_set(
                         DescriptorSetBuilder::new(
-                            vk::ShaderStageFlags::ALL_GRAPHICS,
-                            INSTANCE_DESCRIPTOR_LAYOUT,
+                            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            &INSTANCE_DESCRIPTOR_LAYOUT,
                         )
                         .bind_dynamic_storage_buffer(
-                            0,
+                            "instance",
                             context.get_temprary_buffer(),
                             (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
-                        ),
+                        )
+                        .unwrap(),
                     )
                     .unwrap();
                 let mut writer = context

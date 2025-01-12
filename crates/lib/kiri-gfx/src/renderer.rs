@@ -304,12 +304,8 @@ impl Renderer {
         self.programs.write().push(program)
     }
 
-    pub fn create_program(
-        &self,
-        layout: &'static [DescriptorSetLayoutDesc<'static>],
-        shaders: &[ShaderDesc],
-    ) -> Result<ProgramHandle, Error> {
-        let program = Program::new(&self.device, layout, shaders)?;
+    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
+        let program = Program::new(&self.device, shaders)?;
         Ok(self.import_program(program))
     }
 
@@ -362,7 +358,7 @@ impl Renderer {
             &self.device.raw,
             self.device.get_or_create_layout(
                 vk::ShaderStageFlags::ALL_GRAPHICS,
-                DescriptorSetLayoutDesc::default(),
+                &DescriptorSetLayoutDesc::default(),
             )?,
             DescriptorSetCount::default(),
         )?;
