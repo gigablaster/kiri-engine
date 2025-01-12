@@ -112,13 +112,23 @@ impl RenderDevice {
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
         let mut synchornization2 =
             vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true);
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
+            .runtime_descriptor_array(true)
+            .descriptor_binding_partially_bound(true)
+            .shader_storage_buffer_array_non_uniform_indexing(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_storage_image_array_non_uniform_indexing(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true);
 
         let mut features = vk::PhysicalDeviceFeatures2::default()
             .features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
             .push_next(&mut buffer_device_address)
             .push_next(&mut maintenance4)
             .push_next(&mut dynamic_rendering)
-            .push_next(&mut synchornization2);
+            .push_next(&mut synchornization2)
+            .push_next(&mut descriptor_indexing);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
