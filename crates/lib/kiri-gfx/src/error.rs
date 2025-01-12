@@ -16,7 +16,7 @@
 use kiri_backend::ash::vk;
 use thiserror::Error;
 
-use crate::{BufferHandle, DescriptorHandle, ImageHandle, PipelineHandle, ProgramHandle};
+use crate::{BufferHandle, DescriptorHandle, ImageHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -36,12 +36,8 @@ pub enum Error {
     InvalidBufferHandle(BufferHandle),
     #[error("Descriptor binding slot with name {0} not found")]
     BindingSlotNotFound(String),
-    #[error("Invalid pipeline handle {0}")]
-    InvalidPipelineHandle(PipelineHandle),
     #[error("Invalid descriptor handle {0}")]
     InvalidDescriptorHandle(DescriptorHandle),
-    #[error("Invalid program handle {0}")]
-    InvalidProgramHandle(ProgramHandle),
     #[error("Asset compilation failed {0}")]
     AssetCompilationFailed(#[from] kiri_assets::Error),
     #[error("Texture slot {0} not found")]

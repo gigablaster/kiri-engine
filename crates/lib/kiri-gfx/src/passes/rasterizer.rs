@@ -22,7 +22,7 @@ use kiri_backend::{
     ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
-use crate::{DrawStream, Error, ImageHandle, ImagePool, PassDispatcher, RenderResourceResolver};
+use crate::{Error, ImageHandle, ImagePool, PassDispatcher, RenderResourceResolver};
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
@@ -166,8 +166,9 @@ impl ImageDependency {
             })
             .image(
                 images
-                    .get(self.image)
+                    .get_cold(self.image)
                     .ok_or(Error::InvalidImageHandle(self.image))?
+                    .0
                     .raw,
             ))
     }

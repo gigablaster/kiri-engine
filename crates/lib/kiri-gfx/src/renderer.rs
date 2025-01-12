@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,32 +18,22 @@ use std::{path::PathBuf, ptr::NonNull, sync::Arc};
 
 use kiri_backend::{
     ash::vk::{self},
-    compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
-    Buffer, BufferCreateDesc, DescriptorSetCount, DescriptorSetLayoutDesc, Frame, Image,
-    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, RasterPipelineCreateDesc,
-    RasterProgram, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
+    load_or_create_pipeline_cache, save_pipeline_cache, Buffer, Frame, Image, ImageViewDesc,
+    RenderDevice,
 };
-use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
-use log::{trace, warn};
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
+use log::warn;
+use parking_lot::{Mutex, RwLock};
 
-use crate::{
-    DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, ImageUploadData,
-    RenderContext, RenderResourceResolver, Staging,
-};
+use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, Staging};
 
-pub type ImageHandle = Handle<Image>;
+pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
-pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-pub type ProgramHandle = Handle<RasterProgram>;
 
-pub(super) type ImagePool = Pool<Image>;
-pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
-pub(super) type PipelinePool =
-    HotColdPool<(vk::Pipeline, vk::PipelineLayout), PipelineCompilationData>;
+pub(super) type ImagePool = HotColdPool<vk::ImageView, (Arc<Image>, ImageViewDesc)>;
+pub(super) type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>>;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
-pub(super) type ProgramPool = Pool<RasterProgram>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
@@ -105,27 +95,17 @@ impl From<BufferSlice> for BufferPointer {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct PipelineCompilationData {
-    program: ProgramHandle,
-    render_pass: &'static RenderPassLayout<'static>,
-    streams: &'static [InputVertexStreamLayout<'static>],
-    specialization: Vec<(u32, u32)>,
-    desc: RasterPipelineCreateDesc,
-    name: Option<String>,
-}
-
 /// Low-level renderer
 #[derive(Debug)]
 pub struct Renderer {
     pub device: Arc<RenderDevice>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
-    pipelines: RwLock<PipelinePool>,
     descriptors: RwLock<DescriptorPool>,
-    programs: RwLock<ProgramPool>,
     staging: Mutex<Staging>,
-    pipelines_to_compile: Mutex<Vec<PipelineHandle>>,
+    sampled_images_to_update: Mutex<Vec<ImageHandle>>,
+    storage_images_to_update: Mutex<Vec<ImageHandle>>,
+    storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     pipeline_cache_path: Option<PathBuf>,
     pipeline_cache: vk::PipelineCache,
@@ -134,7 +114,7 @@ pub struct Renderer {
 unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
-const MAX_RESOURCE_COUNT: usize = 0xffff;
+const MAX_RESOURCE_COUNT: usize = 64536;
 const MAX_PIPELINES: usize = 8192;
 const MAX_PROGRAMS: usize = 1024;
 const MAX_DESCRIPTORS: usize = 8192;
@@ -153,95 +133,62 @@ impl Renderer {
             staging: Mutex::new(Staging::new(device)?),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
-            pipelines: RwLock::new(PipelinePool::new(MAX_PIPELINES)),
             descriptors: RwLock::new(DescriptorPool::new(MAX_DESCRIPTORS)),
-            programs: RwLock::new(ProgramPool::new(MAX_PROGRAMS)),
-            pipelines_to_compile: Default::default(),
             dynamic_memory: Default::default(),
+            sampled_images_to_update: Default::default(),
+            storage_images_to_update: Default::default(),
+            storage_buffers_to_update: Default::default(),
             pipeline_cache_path,
             pipeline_cache,
         }))
     }
 
-    pub fn import_image(&self, image: Image) -> ImageHandle {
-        self.images.write().push(image)
-    }
-
-    pub fn create_image(
+    pub fn register_image(
         &self,
-        desc: ImageCreateDesc,
-        data: Option<&[ImageUploadData]>,
+        image: Arc<Image>,
+        desc: ImageViewDesc,
     ) -> Result<ImageHandle, Error> {
-        let image = Image::new(&self.device, desc)?;
-        if let Some(data) = data {
-            self.staging
-                .lock()
-                .upload_image(image.raw, image.desc, data)?;
-        }
-        Ok(self.import_image(image))
+        let view = image.view(desc)?;
+        let usage = image.desc.usage;
+        let handle = self.images.write().push(view, (image, desc));
+        self.update_bindless_image(handle, usage);
+        Ok(handle)
     }
 
-    pub fn replace_image(&self, handle: ImageHandle, image: Image) {
-        self.images.write().replace(handle, image);
+    pub fn replace_image(&self, handle: ImageHandle, image: Arc<Image>) -> Result<(), Error> {
+        let mut images = self.images.write();
+        let desc = images
+            .get_cold(handle)
+            .map(|(_, desc)| desc)
+            .copied()
+            .ok_or(Error::InvalidImageHandle(handle))?;
+        let view = image.view(desc)?;
+        let usage = image.desc.usage;
+        images.replace_hot_cold(handle, view, (image, desc));
+        drop(images);
         self.invalidate_image_views(handle);
-    }
-
-    pub fn update_image(
-        &self,
-        handle: ImageHandle,
-        desc: ImageCreateDesc,
-        data: Option<&[ImageUploadData]>,
-    ) -> Result<(), Error> {
-        let image = Image::new(&self.device, desc)?;
-        if let Some(data) = data {
-            self.staging
-                .lock()
-                .upload_image(image.raw, image.desc, data)?;
-        }
-        self.replace_image(handle, image);
+        self.update_bindless_image(handle, usage);
         Ok(())
     }
 
-    pub fn destroy_image(&self, handle: ImageHandle) {
+    pub fn remove_image(&self, handle: ImageHandle) {
         self.images.write().remove(handle);
     }
 
-    pub fn get_image_view(
-        &self,
-        handle: ImageHandle,
-        desc: ImageViewDesc,
-    ) -> Result<vk::ImageView, Error> {
-        Ok(self
-            .images
-            .read()
-            .get(handle)
-            .ok_or(Error::InvalidImageHandle(handle))?
-            .view(desc)?)
+    fn update_bindless_image(&self, handle: ImageHandle, usage: vk::ImageUsageFlags) {
+        if usage.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.sampled_images_to_update.lock().push(handle);
+        }
+        if usage.contains(vk::ImageUsageFlags::STORAGE) {
+            self.storage_images_to_update.lock().push(handle);
+        }
     }
 
-    pub fn import_buffer(&self, buffer: Buffer) -> BufferHandle {
+    pub fn register_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
         self.buffers.write().push(buffer.raw, buffer)
     }
 
-    pub fn create_buffer(&self, desc: BufferCreateDesc) -> Result<BufferHandle, Error> {
-        let buffer = Buffer::new(&self.device, desc)?;
-        Ok(self.import_buffer(buffer))
-    }
-
-    pub fn upload_buffer<T: Copy>(&self, buffer: BufferPointer, data: &[T]) -> Result<(), Error> {
-        let vk_buffer = self
-            .buffers
-            .read()
-            .get(buffer.handle)
-            .copied()
-            .ok_or(Error::InvalidBufferHandle(buffer.handle))?;
-        self.staging
-            .lock()
-            .upload_buffer(vk_buffer, buffer.offset, data)?;
-        Ok(())
-    }
-
-    pub fn destroy_buffer(&self, handle: BufferHandle) {
+    pub fn remove_buffer(&self, handle: BufferHandle) {
         self.buffers.write().remove(handle);
     }
 
@@ -252,37 +199,6 @@ impl Renderer {
             .get_cold_mut(handle)
             .ok_or(Error::InvalidBufferHandle(handle))?
             .mapping)
-    }
-
-    pub fn create_pipeline(
-        &self,
-        program: ProgramHandle,
-        render_pass: &'static RenderPassLayout<'static>,
-        streams: &'static [InputVertexStreamLayout<'static>],
-        specialization: &[(u32, u32)],
-        desc: RasterPipelineCreateDesc,
-        name: Option<&str>,
-    ) -> PipelineHandle {
-        let data = PipelineCompilationData {
-            program,
-            render_pass,
-            streams,
-            specialization: specialization.to_vec(),
-            desc,
-            name: name.map(|x| x.to_owned()),
-        };
-        let handle = self
-            .pipelines
-            .write()
-            .push((vk::Pipeline::null(), vk::PipelineLayout::null()), data);
-        self.pipelines_to_compile.lock().push(handle);
-        handle
-    }
-
-    pub fn destroy_pipeline(&self, handle: PipelineHandle) {
-        if let Some(((pipeline, _), _)) = self.pipelines.write().remove(handle) {
-            unsafe { self.device.raw.destroy_pipeline(pipeline, None) }
-        }
     }
 
     pub fn create_descriptor_set(
@@ -300,168 +216,99 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
-    pub fn import_program(&self, program: RasterProgram) -> ProgramHandle {
-        self.programs.write().push(program)
-    }
+    // pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
+    //     &self,
+    //     swapchain: &Swapchain,
+    //     render: RenderCB,
+    // ) -> Result<FrameState, Error> {
+    //     puffin::profile_function!();
+    //     // Preparations
+    //     let target = match swapchain.acquire_next_image()? {
+    //         AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
+    //         AcquiredSurface::Image(target) => target,
+    //     };
+    //     let frame = self.device.begin_frame()?;
+    //     let mut dynamic_memory = self.dynamic_memory.lock();
+    //     dynamic_memory.recycle();
+    //     let dynamic = dynamic_memory.get(self)?;
 
-    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let program = RasterProgram::new(&self.device, shaders)?;
-        Ok(self.import_program(program))
-    }
+    //     // Generate render streams
+    //     let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
+    //     render(&context)?;
 
-    pub fn destroy_program(&self, handle: ProgramHandle) {
-        self.programs.write().remove(handle);
-    }
+    //     // Prepare
+    //     let staging_wait = self.staging.lock().upload()?;
+    //     self.compile_pipelines()?;
+    //     let images = self.images.write();
+    //     let buffers = self.buffers.write();
+    //     let pipelines = self.pipelines.write();
 
-    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
-        &self,
-        swapchain: &Swapchain,
-        render: RenderCB,
-    ) -> Result<FrameState, Error> {
-        puffin::profile_function!();
-        // Preparations
-        let target = match swapchain.acquire_next_image()? {
-            AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
-            AcquiredSurface::Image(target) => target,
-        };
-        let frame = self.device.begin_frame()?;
-        let mut dynamic_memory = self.dynamic_memory.lock();
-        dynamic_memory.recycle();
-        let dynamic = dynamic_memory.get(self)?;
+    //     self.update_descriptors(&frame, &images, &buffers)?;
 
-        // Generate render streams
-        let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
-        render(&context)?;
+    //     // Actual rendering
+    //     let command_buffer =
+    //         frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
+    //     let (mut trash_descriptors, passes) = context.consume();
+    //     unsafe {
+    //         self.device.raw.begin_command_buffer(
+    //             command_buffer,
+    //             &vk::CommandBufferBeginInfo::default()
+    //                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+    //         )?;
+    //     }
+    //     let mut descriptors = self.descriptors.write();
+    //     let empty_descriptor_set = frame.get_descriptor(
+    //         &self.device.raw,
+    //         self.device.get_or_create_layout(
+    //             vk::ShaderStageFlags::ALL_GRAPHICS,
+    //             &DescriptorSetLayoutDesc::default(),
+    //         )?,
+    //         DescriptorSetCount::default(),
+    //     )?;
+    //     self.device
+    //         .set_object_name(empty_descriptor_set, "Empty descriptor set");
+    //     let resolver = RenderResourceResolver {
+    //         buffers: &buffers,
+    //         images: &images,
+    //         descriptors: &descriptors,
+    //         pipelines: &pipelines,
+    //         empty_descriptor_set,
+    //         backbuffer: target.image,
+    //     };
+    //     for pass in passes {
+    //         self.device.begin_label(command_buffer, pass.name());
+    //         pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
+    //         self.device.end_label(command_buffer);
+    //     }
+    //     unsafe {
+    //         self.device.raw.end_command_buffer(command_buffer)?;
+    //     }
+    //     // Submit
+    //     self.device.submit(
+    //         &[command_buffer],
+    //         frame.render_fence,
+    //         &[
+    //             (
+    //                 staging_wait,
+    //                 vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+    //             ),
+    //             (
+    //                 target.acquire_semaphore,
+    //                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+    //             ),
+    //         ],
+    //         &[frame.render_finished],
+    //     )?;
+    //     // Present
+    //     self.device.present(target, &frame)?;
+    //     // Cleanup
+    //     trash_descriptors.drain(..).for_each(|x| {
+    //         descriptors.remove(x);
+    //     });
+    //     self.device.end_frame(frame);
 
-        // Prepare
-        let staging_wait = self.staging.lock().upload()?;
-        self.compile_pipelines()?;
-        let images = self.images.write();
-        let buffers = self.buffers.write();
-        let pipelines = self.pipelines.write();
-
-        self.update_descriptors(&frame, &images, &buffers)?;
-
-        // Actual rendering
-        let command_buffer =
-            frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
-        let (mut trash_descriptors, passes) = context.consume();
-        unsafe {
-            self.device.raw.begin_command_buffer(
-                command_buffer,
-                &vk::CommandBufferBeginInfo::default()
-                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-            )?;
-        }
-        let mut descriptors = self.descriptors.write();
-        let empty_descriptor_set = frame.get_descriptor(
-            &self.device.raw,
-            self.device.get_or_create_layout(
-                vk::ShaderStageFlags::ALL_GRAPHICS,
-                &DescriptorSetLayoutDesc::default(),
-            )?,
-            DescriptorSetCount::default(),
-        )?;
-        self.device
-            .set_object_name(empty_descriptor_set, "Empty descriptor set");
-        let resolver = RenderResourceResolver {
-            buffers: &buffers,
-            images: &images,
-            descriptors: &descriptors,
-            pipelines: &pipelines,
-            empty_descriptor_set,
-            backbuffer: target.image,
-        };
-        for pass in passes {
-            self.device.begin_label(command_buffer, pass.name());
-            pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
-            self.device.end_label(command_buffer);
-        }
-        unsafe {
-            self.device.raw.end_command_buffer(command_buffer)?;
-        }
-        // Submit
-        self.device.submit(
-            &[command_buffer],
-            frame.render_fence,
-            &[
-                (
-                    staging_wait,
-                    vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
-                ),
-                (
-                    target.acquire_semaphore,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                ),
-            ],
-            &[frame.render_finished],
-        )?;
-        // Present
-        self.device.present(target, &frame)?;
-        // Cleanup
-        trash_descriptors.drain(..).for_each(|x| {
-            descriptors.remove(x);
-        });
-        self.device.end_frame(frame);
-
-        Ok(FrameState::Rendered)
-    }
-
-    fn compile_pipelines(&self) -> Result<(), Error> {
-        puffin::profile_function!();
-        let programs = self.programs.read();
-        let pipelines = self.pipelines.upgradable_read();
-        let result = Arc::new(Mutex::new(Vec::default()));
-        let pipelines_ref = &pipelines;
-        let programs_ref = &programs;
-        rayon::scope(|s| {
-            for handle in self.pipelines_to_compile.lock().drain(..) {
-                let result = result.clone();
-                s.spawn(move |_| {
-                    let pipeline = self.compile_pipeline(handle, pipelines_ref, programs_ref);
-                    result.lock().push(pipeline);
-                });
-            }
-        });
-        let mut pipelines = RwLockUpgradableReadGuard::upgrade(pipelines);
-        for it in result.lock().drain(..) {
-            let (handle, data) = it?;
-            pipelines.replace(handle, data);
-        }
-        Ok(())
-    }
-
-    fn compile_pipeline(
-        &self,
-        handle: PipelineHandle,
-        pipelines: &PipelinePool,
-        programs: &ProgramPool,
-    ) -> Result<(PipelineHandle, (vk::Pipeline, vk::PipelineLayout)), Error> {
-        puffin::profile_function!();
-        let data = pipelines
-            .get_cold(handle)
-            .ok_or(Error::InvalidPipelineHandle(handle))?;
-        let program = programs
-            .get(data.program)
-            .ok_or(Error::InvalidProgramHandle(data.program))?;
-        trace!("Compile pipeline {:?}", data);
-        Ok((
-            handle,
-            (
-                compile_raster_pipeline(
-                    &self.device,
-                    self.pipeline_cache,
-                    program,
-                    data.render_pass,
-                    data.streams,
-                    &data.specialization,
-                    data.desc,
-                    data.name.clone(),
-                )?,
-                program.pipeline_layout,
-            ),
-        ))
-    }
+    //     Ok(FrameState::Rendered)
+    // }
 
     fn update_descriptors(
         &self,
@@ -495,8 +342,8 @@ impl Renderer {
                     if image.data.view == vk::ImageView::null() {
                         image.data.view = images
                             .get(image.data.handle)
-                            .ok_or(Error::InvalidImageHandle(image.data.handle))?
-                            .view(ImageViewDesc::new(image.data.aspect))?;
+                            .copied()
+                            .ok_or(Error::InvalidImageHandle(image.data.handle))?;
                     }
                     // Add to write list.
                     writes.push(

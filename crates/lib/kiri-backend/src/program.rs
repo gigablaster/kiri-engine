@@ -24,10 +24,6 @@ use crate::{DescriptorSetCount, Error, SamplerDesc, MAX_RESOURCES};
 
 use super::RenderDevice;
 
-pub const PASS_BINDING_SLOT: usize = 0;
-pub const OBJECT_BINDING_SLOT: usize = 1;
-pub const MATERIAL_BINDING_SLOT: usize = 2;
-pub const DYNAMIC_BINDING_SLOT: usize = 3;
 pub const MAX_DESCRIPTOR_SETS: usize = 4;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -84,7 +80,7 @@ pub struct DescriptorSetDesc {
 }
 
 impl DescriptorSetDesc {
-    fn new(value: rspirv_reflect::DescriptorInfo, set_index: usize) -> Self {
+    fn new(value: rspirv_reflect::DescriptorInfo) -> Self {
         let count = match value.binding_count {
             rspirv_reflect::BindingCount::One => 1,
             rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
@@ -101,29 +97,21 @@ impl DescriptorSetDesc {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
                 count,
             },
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER
-                if set_index as usize == DYNAMIC_BINDING_SLOT =>
-            {
-                DescriptorSetDesc {
-                    name: value.name,
-                    ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-                    count,
-                }
-            }
+            rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                count,
+            },
             rspirv_reflect::DescriptorType::STORAGE_BUFFER => DescriptorSetDesc {
                 name: value.name,
                 ty: vk::DescriptorType::STORAGE_BUFFER,
                 count,
             },
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER
-                if set_index as usize == DYNAMIC_BINDING_SLOT =>
-            {
-                DescriptorSetDesc {
-                    name: value.name,
-                    ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    count,
-                }
-            }
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => DescriptorSetDesc {
+                name: value.name,
+                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                count,
+            },
             rspirv_reflect::DescriptorType::UNIFORM_BUFFER => DescriptorSetDesc {
                 name: value.name,
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -299,7 +287,7 @@ fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Erro
     for (set_index, set) in descriptor_sets {
         let mut descriptor_set = HashMap::new();
         for (index, bind) in set {
-            descriptor_set.insert(index, DescriptorSetDesc::new(bind, set_index as _));
+            descriptor_set.insert(index, DescriptorSetDesc::new(bind));
         }
         layout.insert(set_index, descriptor_set);
     }
@@ -357,7 +345,7 @@ fn create_shader(
     ))
 }
 
-pub(super) fn create_descriptor_layout(
+pub fn create_descriptor_layout(
     device: &RenderDevice,
     stage: vk::ShaderStageFlags,
     layout: &DescriptorSetLayoutDesc,
