@@ -208,30 +208,48 @@ impl DescriptorSetLayoutDesc {
 
 const MAX_SHADERS: usize = 2;
 
+pub trait Program {
+    fn pipeline_layout(&self) -> vk::PipelineLayout;
+    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout];
+    fn shader_stages(&self) -> vk::ShaderStageFlags;
+}
+
 #[derive(Debug)]
-pub struct Program {
-    device: Arc<RenderDevice>,
+pub struct RasterProgram {
+    pub(super) device: Arc<RenderDevice>,
     pub stages: vk::ShaderStageFlags,
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
     pub pipeline_layout: vk::PipelineLayout,
     pub descriptor_layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
     pub layout: Vec<DescriptorSetLayoutDesc>,
-    pub push_constant_range: Option<vk::PushConstantRange>,
-    pub compute_groups_size: Option<(u32, u32, u32)>,
 }
 
-impl Program {
+impl Program for RasterProgram {
+    fn pipeline_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
+    }
+
+    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout] {
+        &self.descriptor_layouts
+    }
+
+    fn shader_stages(&self) -> vk::ShaderStageFlags {
+        self.stages
+    }
+}
+
+impl RasterProgram {
     pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
         for shader in shaders {
             stages |= shader.stage;
         }
-        let layout = Self::reflect(shaders)?;
+        let layout = reflect(shaders)?;
 
         let mut modules = ArrayVec::<_, MAX_SHADERS>::new();
         for shader in shaders {
             stages |= shader.stage;
-            modules.push(Self::create_shader(&device.raw, shader, shader.entry)?);
+            modules.push(create_shader(&device.raw, shader, shader.entry)?);
         }
         let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
         for info in layout.iter() {
@@ -246,101 +264,97 @@ impl Program {
             pipeline_layout,
             descriptor_layouts: layouts,
             layout,
-            push_constant_range: None,
-            compute_groups_size: None,
         })
     }
+}
 
-    fn reflect(shaders: &[ShaderDesc]) -> Result<Vec<DescriptorSetLayoutDesc>, Error> {
-        let mut layouts = Vec::new();
-        for shader in shaders {
-            layouts.push(Self::reflect_shader(shader)?);
-        }
-        let layout = Self::merge_reflected_layouts(layouts);
-        let layout = layout
-            .layout
-            .iter()
-            .map(|(_, descriptor_set)| DescriptorSetLayoutDesc {
-                layout: descriptor_set
-                    .iter()
-                    .map(|(index, descriptor)| (*index, descriptor.clone()))
-                    .collect(),
-                update_after_bind: false,
-                push_constant_size: layout
-                    .push_constant_range
-                    .map(|(start, end)| (start, end - start)),
-                compute_groups_size: layout.compute_groups_size,
-            })
-            .collect::<Vec<_>>();
-        Ok(layout)
+fn reflect(shaders: &[ShaderDesc]) -> Result<Vec<DescriptorSetLayoutDesc>, Error> {
+    let mut layouts = Vec::new();
+    for shader in shaders {
+        layouts.push(reflect_shader(shader)?);
     }
-
-    fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Error> {
-        let reflection = rspirv_reflect::Reflection::new_from_spirv(&shader.code)?;
-        let descriptor_sets = reflection.get_descriptor_sets()?;
-        let mut layout = HashMap::new();
-        for (set_index, set) in descriptor_sets {
-            let mut descriptor_set = HashMap::new();
-            for (index, bind) in set {
-                descriptor_set.insert(index, DescriptorSetDesc::new(bind, set_index as _));
-            }
-            layout.insert(set_index, descriptor_set);
-        }
-        Ok(ReflectedDescriptorLayout {
-            layout,
-            push_constant_range: reflection
-                .get_push_constant_range()?
-                .map(|x| (x.offset, x.size)),
-            compute_groups_size: reflection.get_compute_group_size(),
+    let layout = merge_reflected_layouts(layouts);
+    let layout = layout
+        .layout
+        .iter()
+        .map(|(_, descriptor_set)| DescriptorSetLayoutDesc {
+            layout: descriptor_set
+                .iter()
+                .map(|(index, descriptor)| (*index, descriptor.clone()))
+                .collect(),
+            update_after_bind: false,
+            push_constant_size: layout
+                .push_constant_range
+                .map(|(start, end)| (start, end - start)),
+            compute_groups_size: layout.compute_groups_size,
         })
-    }
+        .collect::<Vec<_>>();
+    Ok(layout)
+}
 
-    fn merge_reflected_layouts(
-        layouts: Vec<ReflectedDescriptorLayout>,
-    ) -> ReflectedDescriptorLayout {
-        let mut result = ReflectedDescriptorLayout::default();
-        for layout in layouts {
-            for (stage_index, descriptor_set) in layout.layout {
-                result
-                    .layout
-                    .entry(stage_index)
-                    .and_modify(|entry| {
-                        for (set_index, set) in descriptor_set.iter() {
-                            entry.insert(*set_index, set.clone());
-                        }
-                    })
-                    .or_insert(descriptor_set.clone());
-            }
-            if let Some((offset, size)) = layout.push_constant_range {
-                let (current_start, current_end) = result.push_constant_range.unwrap_or_default();
-                result.push_constant_range =
-                    Some((current_start.min(offset), current_end.max(offset + size)))
-            }
-            result.compute_groups_size = layout.compute_groups_size;
+fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Error> {
+    let reflection = rspirv_reflect::Reflection::new_from_spirv(&shader.code)?;
+    let descriptor_sets = reflection.get_descriptor_sets()?;
+    let mut layout = HashMap::new();
+    for (set_index, set) in descriptor_sets {
+        let mut descriptor_set = HashMap::new();
+        for (index, bind) in set {
+            descriptor_set.insert(index, DescriptorSetDesc::new(bind, set_index as _));
         }
+        layout.insert(set_index, descriptor_set);
+    }
+    Ok(ReflectedDescriptorLayout {
+        layout,
+        push_constant_range: reflection
+            .get_push_constant_range()?
+            .map(|x| (x.offset, x.size)),
+        compute_groups_size: reflection.get_compute_group_size(),
+    })
+}
 
-        if let Some(max) = result.layout.iter().map(|(set_index, _)| *set_index).max() {
-            for i in 0..max {
-                result.layout.entry(i).or_default();
-            }
+fn merge_reflected_layouts(layouts: Vec<ReflectedDescriptorLayout>) -> ReflectedDescriptorLayout {
+    let mut result = ReflectedDescriptorLayout::default();
+    for layout in layouts {
+        for (stage_index, descriptor_set) in layout.layout {
+            result
+                .layout
+                .entry(stage_index)
+                .and_modify(|entry| {
+                    for (set_index, set) in descriptor_set.iter() {
+                        entry.insert(*set_index, set.clone());
+                    }
+                })
+                .or_insert(descriptor_set.clone());
         }
-        result
+        if let Some((offset, size)) = layout.push_constant_range {
+            let (current_start, current_end) = result.push_constant_range.unwrap_or_default();
+            result.push_constant_range =
+                Some((current_start.min(offset), current_end.max(offset + size)))
+        }
+        result.compute_groups_size = layout.compute_groups_size;
     }
 
-    fn create_shader(
-        device: &ash::Device,
-        desc: &ShaderDesc,
-        entry: &str,
-    ) -> Result<(vk::ShaderModule, vk::ShaderStageFlags, CString), Error> {
-        let shader_create_info =
-            vk::ShaderModuleCreateInfo::default().code(desc.code.as_slice_of::<u32>().unwrap());
-
-        Ok((
-            unsafe { device.create_shader_module(&shader_create_info, None) }?,
-            desc.stage,
-            CString::new(entry).unwrap(),
-        ))
+    if let Some(max) = result.layout.iter().map(|(set_index, _)| *set_index).max() {
+        for i in 0..max {
+            result.layout.entry(i).or_default();
+        }
     }
+    result
+}
+
+fn create_shader(
+    device: &ash::Device,
+    desc: &ShaderDesc,
+    entry: &str,
+) -> Result<(vk::ShaderModule, vk::ShaderStageFlags, CString), Error> {
+    let shader_create_info =
+        vk::ShaderModuleCreateInfo::default().code(desc.code.as_slice_of::<u32>().unwrap());
+
+    Ok((
+        unsafe { device.create_shader_module(&shader_create_info, None) }?,
+        desc.stage,
+        CString::new(entry).unwrap(),
+    ))
 }
 
 pub(super) fn create_descriptor_layout(
@@ -411,7 +425,7 @@ fn get_sampler_desc(name: &str) -> SamplerDesc {
     }
 }
 
-impl Drop for Program {
+impl Drop for RasterProgram {
     fn drop(&mut self) {
         self.shaders.drain(..).for_each(|(shader, _, _)| unsafe {
             self.device.raw.destroy_shader_module(shader, None)

@@ -26,7 +26,7 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Program, RenderDevice};
+use crate::{Error, Program, RasterProgram, RenderDevice};
 
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -161,46 +161,34 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexAttrubute {
-    pub location: u32,
-    pub format: vk::Format,
-    pub offset: u32,
+#[derive(Debug)]
+pub struct Pipeline<P: Program> {
+    device: Arc<RenderDevice>,
+    pub program: Arc<P>,
+    pub pipeline: vk::Pipeline,
+    pub pipeline_bind_point: vk::PipelineBindPoint,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexStreamLayout<'a> {
-    pub streams: &'a [InputVertexAttrubute],
-    pub stride: u32,
-}
-
-impl InputVertexStreamLayout<'_> {
-    fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {
-        let attributes = self
-            .streams
-            .iter()
-            .map(|attr| vk::VertexInputAttributeDescription {
-                location: attr.location,
-                binding,
-                format: attr.format,
-                offset: attr.offset,
-            })
-            .collect();
-
-        (self.stride, attributes)
+impl<P: Program> Drop for Pipeline<P> {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.raw.destroy_pipeline(self.pipeline, None);
+        }
     }
 }
+
+pub type RasterPipeline = Pipeline<RasterProgram>;
 
 #[allow(clippy::too_many_arguments)]
 pub fn compile_raster_pipeline<N: AsRef<str>>(
     device: &RenderDevice,
     cache: vk::PipelineCache,
-    program: &Program,
+    program: &Arc<RasterProgram>,
     pass_layout: &RenderPassLayout,
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
     name: Option<N>,
-) -> Result<vk::Pipeline, Error> {
+) -> Result<Arc<RasterPipeline>, Error> {
     let mut specialization_values = Cursor::new(Vec::new());
     let specialization_entires = specialization
         .iter()
@@ -318,7 +306,12 @@ pub fn compile_raster_pipeline<N: AsRef<str>>(
         device.set_object_name(pipeline, name);
     }
 
-    Ok(pipeline)
+    Ok(Arc::new(RasterPipeline {
+        device: program.device.clone(),
+        program: program.clone(),
+        pipeline,
+        pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+    }))
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";

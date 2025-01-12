@@ -20,8 +20,8 @@ use kiri_backend::{
     ash::vk::{self},
     compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
     Buffer, BufferCreateDesc, DescriptorSetCount, DescriptorSetLayoutDesc, Frame, Image,
-    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc,
-    RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
+    ImageCreateDesc, ImageViewDesc, InputVertexStreamLayout, RasterPipelineCreateDesc,
+    RasterProgram, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use log::{trace, warn};
@@ -36,14 +36,14 @@ pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type PipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-pub type ProgramHandle = Handle<Program>;
+pub type ProgramHandle = Handle<RasterProgram>;
 
 pub(super) type ImagePool = Pool<Image>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
 pub(super) type PipelinePool =
     HotColdPool<(vk::Pipeline, vk::PipelineLayout), PipelineCompilationData>;
 pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
-pub(super) type ProgramPool = Pool<Program>;
+pub(super) type ProgramPool = Pool<RasterProgram>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
@@ -300,12 +300,12 @@ impl Renderer {
         self.descriptors.write().remove(handle);
     }
 
-    pub fn import_program(&self, program: Program) -> ProgramHandle {
+    pub fn import_program(&self, program: RasterProgram) -> ProgramHandle {
         self.programs.write().push(program)
     }
 
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let program = Program::new(&self.device, shaders)?;
+        let program = RasterProgram::new(&self.device, shaders)?;
         Ok(self.import_program(program))
     }
 
