@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -25,7 +25,7 @@ use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 use speedy::{Readable, Writable};
 
 use crate::ImportAsset;
-use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error};
+use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ShaderType {
@@ -79,10 +79,10 @@ impl AssetSource for ShaderAssetSource {
     }
 }
 
-fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> Result<bool, Error> {
+fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> io::Result<bool> {
     Ok(
         shader_prepper::process_file(path, &mut ShaderIncludeProvider::default(), PathBuf::new())
-            .map_err(|err| Error::ProcessingFailed(err.to_string()))?
+            .map_err(|err| io::Error::other(format!("Shader processing failed: {}", err)))?
             .iter()
             .map(|chunk| is_asset_changed(&chunk.file, timestamp))
             .any(|x| x),
@@ -157,7 +157,7 @@ impl Asset for ShaderAsset {
 }
 
 impl ImportAsset<ShaderAsset> for ShaderAssetSource {
-    fn import(&self) -> Result<ShaderAsset, Error> {
+    fn import(&self) -> io::Result<ShaderAsset> {
         let child = Command::new("glslc")
             .arg(self.ty.target())
             .arg("--target-env=vulkan1.3")
@@ -168,18 +168,18 @@ impl ImportAsset<ShaderAsset> for ShaderAssetSource {
             .arg(Path::new(ROOT_SOURCE_ASSETS_PATH).join(&self.path))
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
+            .map_err(|x| io::Error::other(format!("Failed to spawn shader compiler: {}", x)))?;
 
         let result = child
             .wait_with_output()
-            .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
+            .map_err(|x| io::Error::other(format!("Shader compilation failed: {}", x)))?;
         if result.status.success() {
             Ok(ShaderAsset {
                 bytecode: result.stdout,
             })
         } else {
-            Err(Error::ProcessingFailed(
-                String::from_utf8_lossy(&result.stderr).into(),
+            Err(io::Error::other(
+                String::from_utf8_lossy(&result.stderr).to_string(),
             ))
         }
     }

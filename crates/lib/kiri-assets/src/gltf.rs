@@ -16,6 +16,7 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
+    io,
     time::SystemTime,
 };
 
@@ -26,7 +27,7 @@ use uuid::uuid;
 use crate::ImportAsset;
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, is_asset_changed, Asset, AssetReference,
-    AssetSource, Error, ImageSource,
+    AssetSource, ImageSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -191,11 +192,11 @@ impl Asset for ModelAsset {
 }
 
 mod import {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, io};
 
     use gltf::mesh::Mode;
 
-    use crate::{Error, ImageAssetType, ImageSource, MeshAssetBuilder, MeshSurfaceBuilder};
+    use crate::{ImageAssetType, ImageSource, MeshAssetBuilder, MeshSurfaceBuilder};
 
     use super::{
         MeshAssetMaterial, MeshMaterialBlend, ModelAsset, Node, NodeIndex, RenderMeshVertex,
@@ -323,26 +324,26 @@ mod import {
     fn process_mesh(
         context: &mut GltfProcessingContext,
         mesh: gltf::Mesh,
-    ) -> Result<StaticMeshAsset, Error> {
+    ) -> io::Result<StaticMeshAsset> {
         let mut builder = MeshAssetBuilder::default();
         for prim in mesh.primitives() {
             let mut surface = MeshSurfaceBuilder::new(process_material(context, prim.material()));
             if prim.mode() != Mode::Triangles {
-                return Err(Error::ProcessingFailed(
-                    "Only processing triangle meshes".into(),
+                return Err(io::Error::other(
+                    "Only processing triangle meshes".to_string(),
                 ));
             }
             let reader = prim.reader(|buffer| Some(&context.buffers[buffer.index()]));
             if let Some(positions) = reader.read_positions() {
                 surface.push_position(&positions.collect::<Vec<_>>());
             } else {
-                return Err(Error::ProcessingFailed("Mesh has no positions".into()));
+                return Err(io::Error::other("Mesh has no positions".to_string()));
             };
             if let Some(indices) = reader.read_indices() {
                 surface.push_indices(&indices.into_u32().collect::<Vec<_>>());
             } else {
-                return Err(Error::ProcessingFailed(
-                    "Only processing indexed meshes".into(),
+                return Err(io::Error::other(
+                    "Only processing indexed meshes".to_string(),
                 ));
             }
             if let Some(normals) = reader.read_normals() {
@@ -371,7 +372,7 @@ mod import {
         parent_index: NodeIndex,
         name: &str,
         node: gltf::Node,
-    ) -> Result<(), Error> {
+    ) -> io::Result<()> {
         let bone_index = context.bones.len() as u32;
         let (translation, rotation, scale) = node.transform().decomposed();
         context.bones.push(Node {
@@ -410,7 +411,7 @@ mod import {
     pub fn import_scene<'a>(
         context: &'a mut GltfProcessingContext<'a>,
         scene: gltf::Scene,
-    ) -> Result<ModelAsset, Error> {
+    ) -> io::Result<ModelAsset> {
         let mut context = NodeProcessingContext {
             context,
             bone_to_mesh: Default::default(),
@@ -447,18 +448,18 @@ mod import {
     pub(crate) fn import_scenes<'a>(
         context: &'a mut GltfProcessingContext<'a>,
         document: gltf::Document,
-    ) -> Result<ModelAsset, Error> {
+    ) -> io::Result<ModelAsset> {
         let scene = document
             .default_scene()
-            .ok_or(Error::ImportFailed("Default scene not found".to_owned()))?;
+            .ok_or(io::Error::other("Default scene not found".to_string()))?;
         import_scene(context, scene)
     }
 }
 
 impl ImportAsset<ModelAsset> for ModelSource {
-    fn import(&self) -> Result<ModelAsset, Error> {
+    fn import(&self) -> io::Result<ModelAsset> {
         let (document, buffers, _) = gltf::import(get_absolute_asset_path(&self.0)?)
-            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+            .map_err(|err| io::Error::other(err.to_string()))?;
         let base_path = get_relative_asset_path(&self.0)?
             .parent()
             .unwrap()

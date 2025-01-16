@@ -17,16 +17,6 @@ mod image;
 mod mesh_builder;
 mod shader;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("IO failed: {0:?}")]
-    Io(#[from] io::Error),
-    #[error("Import failed: {0}")]
-    ImportFailed(String),
-    #[error("Processing failed: {0}")]
-    ProcessingFailed(String),
-}
-
 pub trait AssetSource: Send + Sync {
     fn reference(&self) -> AssetReference;
     fn changed(&self, last_update: SystemTime) -> bool;
@@ -87,15 +77,6 @@ impl<C: Context> Writable<C> for AssetHeader {
     }
 }
 
-pub fn load_asset<T: Asset, R: Read>(r: R) -> io::Result<T> {
-    let mut reader = BufReader::new(r);
-    let header = AssetHeader::read_from_stream_unbuffered(&mut reader)?;
-    if !header.is_valid::<T>() {
-        return Err(io::Error::other("Asset header isn't valid"));
-    }
-    T::deserialize(&mut reader)
-}
-
 pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     let mut w = w;
     AssetHeader::new::<T>().write_to_stream(&mut w)?;
@@ -103,12 +84,13 @@ pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
 }
 
 pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
-    fn import(&self) -> Result<T, Error>;
+    fn import(&self) -> io::Result<T>;
 }
 
 use std::{
     env, fs,
     io::{self, BufReader, Read, Write},
+    marker::PhantomData,
     path::{self, Path, PathBuf},
     time::SystemTime,
 };
@@ -122,6 +104,7 @@ pub use shader::*;
 
 use speedy::{Context, Readable, Writable};
 use thiserror::Error;
+use turbosloth::{async_trait, LazyWorker, RunContext};
 use uuid::Uuid;
 
 pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
@@ -188,33 +171,56 @@ pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<Syste
     None
 }
 
-pub fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
-    source: &T,
-) -> Result<U, Error> {
-    use kiri_vfs::vfs_load;
-    use log::{debug, warn};
-
-    let reference = source.reference();
-    let newer = get_compiled_asset_change_time(reference)
-        .map(|x| source.changed(x))
-        .unwrap_or(false);
-    if !newer {
-        if let Ok(reader) = vfs_load(reference) {
-            debug!("Loading asset: {:?}", source);
-            return Ok(load_asset(reader)?);
-        }
-    }
-    // There's no compiled asset, so compile it in runtime
-    warn!("Compile asset: {:?}", source);
-    let asset = source.import()?;
-    if let Err(err) = try_save_asset(reference, &asset) {
-        warn!("Failed to save compiled asset to cache: {}", err);
-    }
-    Ok(asset)
+pub struct LoadOrCompileAsset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset> {
+    source: T,
+    _phantom: PhantomData<U>,
 }
 
-fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
-    use std::fs::File;
+#[async_trait]
+impl<T: AssetSource + ImportAsset<U> + std::fmt::Debug + 'static, U: Asset + 'static> LazyWorker
+    for LoadOrCompileAsset<T, U>
+{
+    type Output = io::Result<U>;
 
-    save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
+    async fn run(self, _ctx: RunContext) -> Self::Output {
+        use kiri_vfs::vfs_load;
+        use log::{debug, warn};
+
+        let reference = self.source.reference();
+        let newer = get_compiled_asset_change_time(reference)
+            .map(|x| self.source.changed(x))
+            .unwrap_or(false);
+        if !newer {
+            if let Ok(reader) = vfs_load(reference) {
+                debug!("Loading asset: {:?}", self.source);
+                return Ok(Self::load_asset(reader)?);
+            }
+        }
+        // There's no compiled asset, so compile it in runtime
+        warn!("Compile asset: {:?}", self.source);
+        let asset = self.source.import()?;
+        if let Err(err) = Self::try_save_asset(reference, &asset) {
+            warn!("Failed to save compiled asset to cache: {}", err);
+        }
+        Ok(asset)
+    }
+}
+
+impl<T: AssetSource + ImportAsset<U> + std::fmt::Debug + 'static, U: Asset + 'static>
+    LoadOrCompileAsset<T, U>
+{
+    fn load_asset<R: Read>(r: R) -> io::Result<U> {
+        let mut reader = BufReader::new(r);
+        let header = AssetHeader::read_from_stream_unbuffered(&mut reader)?;
+        if !header.is_valid::<U>() {
+            return Err(io::Error::other("Asset header isn't valid"));
+        }
+        U::deserialize(&mut reader)
+    }
+
+    fn try_save_asset(reference: AssetReference, asset: &U) -> io::Result<()> {
+        use std::fs::File;
+
+        save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
+    }
 }

@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::io;
 use std::time::SystemTime;
 
 use image::{imageops::FilterType, ImageBuffer};
@@ -23,7 +24,7 @@ use speedy::{Context, Readable, Writable};
 use uuid::uuid;
 
 use crate::ImportAsset;
-use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource, Error};
+use crate::{get_absolute_asset_path, is_asset_changed, read_to_end, Asset, AssetSource};
 
 #[derive(Debug)]
 pub struct ImageAsset {
@@ -140,7 +141,7 @@ impl Asset for ImageAsset {
 }
 
 impl ImportAsset<ImageAsset> for ImageSource {
-    fn import(&self) -> Result<ImageAsset, Error> {
+    fn import(&self) -> io::Result<ImageAsset> {
         // Load image data
         let data = match &self.data {
             ImageData::Path(path) => read_to_end(get_absolute_asset_path(path)?)?,
@@ -154,7 +155,7 @@ impl ImportAsset<ImageAsset> for ImageSource {
         };
         // Load image
         let mut image =
-            image::load_from_memory(&data).map_err(|x| Error::ImportFailed(x.to_string()))?;
+            image::load_from_memory(&data).map_err(|x| io::Error::other(x.to_string()))?;
         let dims = [image.width(), image.height()];
         let is_pow2 = dims[0].is_power_of_two() && dims[1].is_power_of_two();
         if is_pow2 && dims[0] > 16 && dims[1] > 16 {
