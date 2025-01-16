@@ -347,7 +347,7 @@ impl Image {
         device: &Arc<RenderDevice>,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
-    ) -> Result<Arc<Self>, Error> {
+    ) -> Result<Self, Error> {
         let image = unsafe { device.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             device.set_object_name(image, name);
@@ -380,13 +380,13 @@ impl Image {
         if let Some(data) = data {
             device.with_staging(|staging| staging.upload_image(&device.raw, image, desc, data))?;
         }
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             raw: image,
             desc,
             views: Default::default(),
             memory: Some(memory),
-        }))
+        })
     }
 
     fn clear_views_impl(&self, drop_list: &mut DropList) {

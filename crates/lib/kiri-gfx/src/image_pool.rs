@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{ImageHandle, Renderer};
-use kiri_backend::{ash::vk, ImageCreateDesc};
+use kiri_backend::{ash::vk, Image, ImageCreateDesc, ImageViewDesc};
 use log::debug;
 use parking_lot::Mutex;
 
@@ -67,13 +67,14 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
     ) -> Result<TransientImage, Error> {
         assert!(
             usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
                 || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
             "Must be an attachment"
         );
-        let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
+        let (key, image) = self.get_or_allocate_image(format, dims, usage, aspect)?;
         Ok(TransientImage {
             pool: self,
             key,
@@ -86,6 +87,7 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
     ) -> Result<(TempImageKey, ImageHandle), Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {
@@ -101,21 +103,25 @@ impl RenderTargetPool {
                 "Create render taget resolution: {:?} format: {:?} usage: {:?}",
                 dims, format, usage,
             );
-            let image = self.renderer.create_image(
+            let image = Arc::new(Image::new(
+                &self.renderer.device,
                 ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
                 None,
-            )?;
-            Ok((key, image))
+            )?);
+            let handle = self
+                .renderer
+                .register_image(image, ImageViewDesc::new(aspect))?;
+            Ok((key, handle))
         }
     }
 
     pub fn purge(&self) {
         let mut images = self.images.lock();
-        images.drain().for_each(|(_, mut group)| {
-            group.drain(..).for_each(|x| self.renderer.destroy_image(x))
-        });
+        images
+            .drain()
+            .for_each(|(_, mut group)| group.drain(..).for_each(|x| self.renderer.remove_image(x)));
     }
 
     fn recycle(&self, image: ImageHandle, key: TempImageKey) {
