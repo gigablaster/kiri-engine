@@ -15,35 +15,36 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use crate::{
-    effects::{Effect, EffectInstance},
-    BufferHandle, BufferPointer, Error, PipelineHandle, Renderer,
-};
+use crate::{BufferHandle, BufferPointer, Error, Renderer};
+use kiri_assets::RenderMeshVertex;
 use kiri_backend::BufferCreateDesc;
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+pub enum RenderMeshMaterialType {
+    PBR,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RenderMeshMaterialOrder {
+    Opaque,
+    Masked,
+    Transparent,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct RenderMeshMaterial {
-    pub effect: Arc<dyn Effect>,
-    pub instance: EffectInstance,
-    pub main: PipelineHandle,
-    pub transparent: PipelineHandle,
-    pub depth: PipelineHandle,
+    pub ty: RenderMeshMaterialType,
+    pub order: RenderMeshMaterialOrder,
+    pub data: BufferPointer,
 }
 
-impl Drop for RenderMeshMaterial {
-    fn drop(&mut self) {
-        self.effect.free_instance(&mut self.instance);
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
-    pub vertex_offset: u32,
-    pub material: Arc<RenderMeshMaterial>,
+    pub material: RenderMeshMaterial,
 }
 
 #[derive(Debug, Default)]
@@ -92,17 +93,11 @@ impl RenderMeshBuilder {
         }
     }
 
-    pub fn surface(
-        &mut self,
-        first_index: u32,
-        index_count: u32,
-        material: &Arc<RenderMeshMaterial>,
-    ) {
+    pub fn surface(&mut self, first_index: u32, index_count: u32, material: RenderMeshMaterial) {
         self.surfaces.push(RenderMeshSurface {
             first_index,
             index_count,
-            vertex_offset: self.first_vertex as u32,
-            material: material.clone(),
+            material: material,
         });
     }
 
@@ -123,7 +118,10 @@ impl RenderMeshBuilder {
 
     pub fn build(self, vertices: BufferHandle, indices: BufferHandle) -> RenderMesh {
         RenderMesh {
-            vertex_buffer: BufferPointer::new(vertices, 0),
+            vertex_buffer: BufferPointer::new(
+                vertices,
+                self.first_vertex * mem::size_of::<RenderMeshVertex>() as u64,
+            ),
             index_buffer: BufferPointer::new(
                 indices,
                 self.first_index * mem::size_of::<u16>() as u64,
@@ -218,8 +216,8 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
                 .device_address()
                 .name(&format!("{} indices", name)),
         )?;
-        renderer.upload_buffer(BufferPointer::new(vertices, 0), self.vertices)?;
-        renderer.upload_buffer(BufferPointer::new(indices, 0), self.indices)?;
+        renderer.upload_buffer_data(BufferPointer::new(vertices, 0), self.vertices)?;
+        renderer.upload_buffer_data(BufferPointer::new(indices, 0), self.indices)?;
         let bounds = self.calculate_bounds();
         Ok(RenderModel {
             renderer: renderer.clone(),
@@ -261,7 +259,7 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
 
 impl Drop for RenderModel {
     fn drop(&mut self) {
-        self.renderer.destroy_buffer(self.vertices);
-        self.renderer.destroy_buffer(self.indices);
+        self.renderer.remove_buffer(self.vertices);
+        self.renderer.remove_buffer(self.indices);
     }
 }

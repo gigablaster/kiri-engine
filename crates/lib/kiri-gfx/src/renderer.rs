@@ -18,8 +18,8 @@ use std::{path::PathBuf, ptr::NonNull, sync::Arc};
 
 use kiri_backend::{
     ash::vk::{self},
-    load_or_create_pipeline_cache, save_pipeline_cache, Buffer, Frame, Image, ImageViewDesc,
-    RenderDevice,
+    load_or_create_pipeline_cache, save_pipeline_cache, Buffer, BufferCreateDesc, BufferDesc,
+    Frame, Image, ImageViewDesc, RenderDevice,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use log::warn;
@@ -190,6 +190,11 @@ impl Renderer {
             self.storage_buffers_to_update.lock().push(handle);
         }
         handle
+    }
+
+    pub fn create_buffer(&self, desc: BufferCreateDesc) -> Result<BufferHandle, Error> {
+        let buffer = Buffer::new(&self.device, desc)?;
+        Ok(self.register_buffer(Arc::new(buffer)))
     }
 
     pub fn remove_buffer(&self, handle: BufferHandle) {
