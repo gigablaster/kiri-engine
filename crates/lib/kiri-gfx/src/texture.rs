@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,18 +15,18 @@
 
 use std::sync::Arc;
 
-use crate::{Error, ImageHandle, ImageUploadData, Renderer};
-use kiri_backend::{ash::vk, ImageCreateDesc};
+use crate::{Error, ImageHandle, Renderer};
+use kiri_backend::{ash::vk, Image, ImageCreateDesc, ImageUploadData, ImageViewDesc};
 
 #[derive(Debug)]
 pub struct Texture {
     renderer: Arc<Renderer>,
-    pub image: ImageHandle,
+    pub handle: ImageHandle,
 }
 
 impl Drop for Texture {
     fn drop(&mut self) {
-        self.renderer.destroy_image(self.image);
+        self.renderer.remove_image(self.handle);
     }
 }
 
@@ -58,6 +58,15 @@ impl<'a> TextureBuilder<'a> {
     }
 
     pub fn build(self, renderer: &Arc<Renderer>) -> Result<Texture, Error> {
+        let image = self.create_image(renderer)?;
+        Ok(Texture {
+            renderer: renderer.clone(),
+            handle: renderer
+                .register_image(image, ImageViewDesc::new(vk::ImageAspectFlags::COLOR))?,
+        })
+    }
+
+    fn create_image(self, renderer: &Arc<Renderer>) -> Result<Arc<Image>, Error> {
         let mut desc = ImageCreateDesc::texture(self.format, self.dims)
             .sampled()
             .mip_levels(self.data.map(|x| x.len() as u32).unwrap_or(1))
@@ -65,22 +74,14 @@ impl<'a> TextureBuilder<'a> {
         if let Some(name) = self.name {
             desc = desc.name(name);
         }
-        Ok(Texture {
-            renderer: renderer.clone(),
-            image: renderer.create_image(desc, self.data)?,
-        })
+        Ok(Arc::new(Image::new(&renderer.device, desc, self.data)?))
     }
 }
 
 impl Texture {
     pub fn update(&self, builder: TextureBuilder) -> Result<(), Error> {
-        let mut desc = ImageCreateDesc::texture(builder.format, builder.dims)
-            .sampled()
-            .transfer_desitnation();
-        if let Some(name) = builder.name {
-            desc = desc.name(name);
-        }
-        self.renderer.update_image(self.image, desc, builder.data)?;
+        self.renderer
+            .replace_image(self.handle, builder.create_image(&self.renderer)?)?;
         Ok(())
     }
 }

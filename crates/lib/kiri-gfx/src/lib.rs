@@ -24,7 +24,7 @@ mod image_pool;
 pub mod passes;
 // mod pipeline_cache;
 mod renderer;
-// mod texture;
+mod texture;
 mod uniforms;
 
 // pub use context::*;
@@ -36,4 +36,4 @@ pub use image_pool::*;
 // pub use mesh::*;
 // pub use pipeline_cache::*;
 pub use renderer::*;
-// pub use texture::*;
+pub use texture::*;
