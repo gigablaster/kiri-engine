@@ -25,7 +25,7 @@ use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use log::warn;
 use parking_lot::{Mutex, RwLock};
 
-use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, Staging};
+use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error};
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
@@ -102,7 +102,6 @@ pub struct Renderer {
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
     descriptors: RwLock<DescriptorPool>,
-    staging: Mutex<Staging>,
     sampled_images_to_update: Mutex<Vec<ImageHandle>>,
     storage_images_to_update: Mutex<Vec<ImageHandle>>,
     storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
@@ -115,8 +114,6 @@ unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
 const MAX_RESOURCE_COUNT: usize = 64536;
-const MAX_PIPELINES: usize = 8192;
-const MAX_PROGRAMS: usize = 1024;
 const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
@@ -130,7 +127,6 @@ impl Renderer {
             .unwrap_or(vk::PipelineCache::null());
         Ok(Arc::new(Self {
             device: device.clone(),
-            staging: Mutex::new(Staging::new(device)?),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             descriptors: RwLock::new(DescriptorPool::new(MAX_DESCRIPTORS)),
@@ -185,7 +181,15 @@ impl Renderer {
     }
 
     pub fn register_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
-        self.buffers.write().push(buffer.raw, buffer)
+        let need_update = buffer
+            .desc
+            .usage
+            .contains(vk::BufferUsageFlags::STORAGE_BUFFER);
+        let handle = self.buffers.write().push(buffer.raw, buffer);
+        if need_update {
+            self.storage_buffers_to_update.lock().push(handle);
+        }
+        handle
     }
 
     pub fn remove_buffer(&self, handle: BufferHandle) {
@@ -199,6 +203,19 @@ impl Renderer {
             .get_cold_mut(handle)
             .ok_or(Error::InvalidBufferHandle(handle))?
             .mapping)
+    }
+
+    pub fn upload_buffer_data<T: Copy>(
+        &self,
+        target: BufferPointer,
+        data: &[T],
+    ) -> Result<(), Error> {
+        self.buffers
+            .read()
+            .get_cold(target.handle)
+            .ok_or(Error::InvalidBufferHandle(target.handle))?
+            .upload(target.offset, data)?;
+        Ok(())
     }
 
     pub fn create_descriptor_set(
@@ -476,11 +493,5 @@ impl Drop for Renderer {
                     .destroy_pipeline_cache(self.pipeline_cache, None);
             }
         }
-        self.pipelines
-            .write()
-            .drain()
-            .for_each(|((pipeline, _), _)| unsafe {
-                self.device.raw.destroy_pipeline(pipeline, None)
-            })
     }
 }

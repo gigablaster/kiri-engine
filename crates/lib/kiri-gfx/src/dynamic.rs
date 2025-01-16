@@ -20,14 +20,14 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{BufferCreateDesc, PhysicalDevice};
+use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, PhysicalDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};
 
 #[derive(Debug)]
 pub struct DynamicGpuMemory {
-    buffer: BufferHandle,
+    buffer_handle: BufferHandle,
     mapping: NonNull<u8>,
     allocator: BumpAllocator,
 }
@@ -37,18 +37,18 @@ unsafe impl Sync for DynamicGpuMemory {}
 
 impl DynamicGpuMemory {
     pub fn new(renderer: &Renderer, size: u64) -> Result<Self, Error> {
-        let buffer = renderer.create_buffer(
+        let buffer = Arc::new(Buffer::new(
+            &renderer.device,
             BufferCreateDesc::shared(size)
                 .name("Dynamic data")
                 .storage_buffer()
+                .device_address()
                 .indirect_draw()
-                .uniform_buffer()
-                .veretex_buffer()
-                .index_buffer(),
-        )?;
-        let mapping = renderer.get_buffer_mapping(buffer)?.unwrap();
+                .uniform_buffer(),
+        )?);
+        let mapping = buffer.mapping.unwrap();
         Ok(Self {
-            buffer,
+            buffer_handle: renderer.register_buffer(buffer),
             mapping,
             allocator: BumpAllocator::new(size as _),
         })
@@ -74,7 +74,7 @@ impl DynamicGpuMemory {
                     size,
                 )
             }
-            Ok(BufferSlice::new(self.buffer, offset, size as u64))
+            Ok(BufferSlice::new(self.buffer_handle, offset, size as u64))
         } else {
             Err(Error::OutOfDynamicMemory)
         }
@@ -104,7 +104,7 @@ impl DynamicGpuMemory {
     }
 
     pub fn get_buffer_handle(&self) -> BufferHandle {
-        self.buffer
+        self.buffer_handle
     }
 
     pub fn recycle(&self) {

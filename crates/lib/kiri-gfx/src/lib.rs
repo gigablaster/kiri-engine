@@ -16,7 +16,6 @@
 // mod context;
 mod descriptors;
 mod dispatch;
-// mod draw_stream;
 mod dynamic;
 // pub mod effects;
 mod error;
@@ -31,7 +30,6 @@ mod uniforms;
 // pub use context::*;
 pub use descriptors::*;
 pub use dispatch::*;
-// pub use draw_stream::*;
 use dynamic::*;
 pub use error::*;
 // pub use image_pool::*;

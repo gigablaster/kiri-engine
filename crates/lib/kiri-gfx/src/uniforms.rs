@@ -16,7 +16,7 @@
 use std::{marker::PhantomData, mem, sync::Arc};
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};
-use kiri_backend::BufferCreateDesc;
+use kiri_backend::{Buffer, BufferCreateDesc};
 use kiri_common::{Align, BlockAllocator};
 use parking_lot::Mutex;
 
@@ -24,7 +24,7 @@ const MATERIALS_PER_PAGE: u64 = 256;
 
 #[derive(Debug)]
 struct ConstUniformBufferPage {
-    buffer: BufferHandle,
+    handle: BufferHandle,
     allocator: BlockAllocator,
 }
 /// Static uniform allocator
@@ -42,7 +42,7 @@ impl<T: Copy> Drop for ConstUniformBuffer<T> {
         self.pages
             .lock()
             .drain(..)
-            .for_each(|x| self.renderer.remove_buffer(x.buffer));
+            .for_each(|x| self.renderer.remove_buffer(x.handle));
     }
 }
 
@@ -63,7 +63,7 @@ impl<T: Copy> ConstUniformBuffer<T> {
             .find_map(|x| {
                 x.allocator
                     .allocate()
-                    .map(|offset| BufferSlice::new(x.buffer, offset, item_size))
+                    .map(|offset| BufferSlice::new(x.handle, offset, item_size))
             })
             .unwrap_or_else(|| {
                 let chunk_size = item_size.align(
@@ -75,21 +75,25 @@ impl<T: Copy> ConstUniformBuffer<T> {
                         .min_uniform_buffer_offset_alignment,
                 );
                 // Fixme:: unwrap
-                let buffer = self
-                    .renderer
-                    .create_buffer(
+                let buffer = Arc::new(
+                    Buffer::new(
+                        &self.renderer.device,
                         BufferCreateDesc::gpu(chunk_size * MATERIALS_PER_PAGE)
                             .transfer_destination()
                             .uniform_buffer(),
                     )
-                    .unwrap();
+                    .unwrap(),
+                );
+
                 let mut allocator = BlockAllocator::new(chunk_size, MATERIALS_PER_PAGE);
                 let offset = allocator.allocate().unwrap();
-                pages.push(ConstUniformBufferPage { buffer, allocator });
-                BufferSlice::new(buffer, offset, item_size)
+                let handle = self.renderer.register_buffer(buffer);
+                pages.push(ConstUniformBufferPage { handle, allocator });
+                BufferSlice::new(handle, offset, item_size)
             });
         drop(pages);
-        self.renderer.upload_buffer(allocated.into(), &[data])?;
+        self.renderer
+            .upload_buffer_data(allocated.into(), &[data])?;
         Ok(allocated)
     }
 
@@ -97,7 +101,7 @@ impl<T: Copy> ConstUniformBuffer<T> {
         let mut pages = self.pages.lock();
         let page = pages
             .iter_mut()
-            .find(|page| page.buffer == data.handle)
+            .find(|page| page.handle == data.handle)
             .expect("Uniform must be freed from it's own allocator");
         page.allocator.dealloc(data.offset);
     }

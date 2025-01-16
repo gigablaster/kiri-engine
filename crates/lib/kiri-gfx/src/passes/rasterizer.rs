@@ -13,16 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::mem;
+
 use arrayvec::ArrayVec;
 use kiri_backend::{
     ash::{
         self,
         vk::{self, Rect2D},
     },
-    ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    RasterPipeline, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
 };
 
-use crate::{Error, ImageHandle, ImagePool, PassDispatcher, RenderResourceResolver};
+use crate::{
+    BufferPointer, DescriptorHandle, Error, ImageHandle, PassDispatcher, RenderResourceResolver,
+};
+
+const MAX_DYNAMIC_OFFSETS: usize = 2;
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
@@ -85,12 +91,9 @@ impl RenderTarget {
     fn build(
         &self,
         resolver: &RenderResourceResolver,
-        aspect: vk::ImageAspectFlags,
         layout: vk::ImageLayout,
     ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let view = resolver
-            .resolve_image(self.image)?
-            .view(ImageViewDesc::new(aspect))?;
+        let view = resolver.resolve_image_view(self.image)?;
         let info = vk::RenderingAttachmentInfo::default()
             .image_layout(layout)
             .image_view(view)
@@ -145,11 +148,11 @@ impl ImageDependency {
         self
     }
 
-    fn build(
+    fn build<'a>(
         self,
-        images: &ImagePool,
+        resolver: &RenderResourceResolver<'a>,
         desired_layout: vk::ImageLayout,
-    ) -> Result<vk::ImageMemoryBarrier2, Error> {
+    ) -> Result<vk::ImageMemoryBarrier2<'a>, Error> {
         Ok(vk::ImageMemoryBarrier2::default()
             .old_layout(self.initial_layout)
             .new_layout(self.desired_layout.unwrap_or(desired_layout))
@@ -164,13 +167,79 @@ impl ImageDependency {
                 base_array_layer: 0,
                 layer_count: vk::REMAINING_ARRAY_LAYERS,
             })
-            .image(
-                images
-                    .get_cold(self.image)
-                    .ok_or(Error::InvalidImageHandle(self.image))?
-                    .0
-                    .raw,
-            ))
+            .image(resolver.resolve_image(self.image)?.raw))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+pub struct DrawCommand {
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+}
+
+#[derive(Debug)]
+pub enum DrawCount {
+    Fixed(usize),
+    Indirect(BufferPointer, usize),
+}
+
+#[derive(Debug)]
+pub struct Draw {
+    pub pipeline: vk::Pipeline,
+    pub pipeline_layout: vk::PipelineLayout,
+    pub commands: BufferPointer,
+    pub count: DrawCount,
+    pub stride: usize,
+    pub descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
+    pub dynamic_offsets: ArrayVec<u32, MAX_DYNAMIC_OFFSETS>,
+}
+
+impl Draw {
+    pub fn fixed(pipeline: &RasterPipeline, commands: BufferPointer, draw_count: usize) -> Self {
+        Self {
+            pipeline: pipeline.pipeline,
+            pipeline_layout: pipeline.program.pipeline_layout,
+            commands,
+            count: DrawCount::Fixed(draw_count),
+            stride: mem::size_of::<DrawCommand>(),
+            descriptors: [DescriptorHandle::invalid(); 4],
+            dynamic_offsets: Default::default(),
+        }
+    }
+
+    pub fn indirect(
+        pipeline: &RasterPipeline,
+        commands: BufferPointer,
+        count: BufferPointer,
+        max_draw_count: usize,
+    ) -> Self {
+        Self {
+            pipeline: pipeline.pipeline,
+            pipeline_layout: pipeline.program.pipeline_layout,
+            commands,
+            count: DrawCount::Indirect(count, max_draw_count),
+            stride: mem::size_of::<DrawCommand>(),
+            descriptors: [DescriptorHandle::invalid(); 4],
+            dynamic_offsets: Default::default(),
+        }
+    }
+
+    pub fn descriptor(mut self, index: usize, descriptor: DescriptorHandle) -> Self {
+        self.descriptors[index] = descriptor;
+        self
+    }
+
+    pub fn stride(mut self, stride: usize) -> Self {
+        self.stride = stride;
+        self
+    }
+
+    pub fn push_dynamic_offset(mut self, offset: u32) -> Self {
+        self.dynamic_offsets.push(offset);
+        self
     }
 }
 
@@ -178,7 +247,7 @@ pub struct RasterizerPassBuilder<'a> {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     dependencies: Vec<ImageDependency>,
-    streams: Vec<DrawStream>,
+    draws: Vec<Draw>,
     area: Option<Rect2D>,
     name: &'a str,
 }
@@ -196,7 +265,7 @@ impl<'a> RasterizerPassBuilder<'a> {
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth_target,
             dependencies: Default::default(),
-            streams: Default::default(),
+            draws: Default::default(),
             area: None,
             name,
         }
@@ -212,8 +281,8 @@ impl<'a> RasterizerPassBuilder<'a> {
         self
     }
 
-    pub fn draw(&mut self, stream: DrawStream) {
-        self.streams.push(stream);
+    pub fn draw(&mut self, stream: Draw) {
+        self.draws.push(stream);
     }
 
     pub fn build(self) -> Box<dyn PassDispatcher> {
@@ -222,7 +291,7 @@ impl<'a> RasterizerPassBuilder<'a> {
             &self.color_targets,
             self.depth_target,
             self.dependencies,
-            self.streams,
+            self.draws,
             self.area,
         ))
     }
@@ -232,7 +301,7 @@ pub struct RasterizerPassDispatcher {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     dependencies: Vec<ImageDependency>,
-    streams: Vec<DrawStream>,
+    draws: Vec<Draw>,
     area: Option<vk::Rect2D>,
     name: String,
 }
@@ -243,7 +312,7 @@ impl RasterizerPassDispatcher {
         color_targets: &[RenderTarget],
         depth_target: Option<RenderTarget>,
         dependencies: Vec<ImageDependency>,
-        streams: Vec<DrawStream>,
+        draws: Vec<Draw>,
         area: Option<vk::Rect2D>,
     ) -> Self {
         Self {
@@ -251,7 +320,7 @@ impl RasterizerPassDispatcher {
             color_targets: color_targets.iter().copied().collect(),
             dependencies,
             depth_target,
-            streams,
+            draws,
             area,
         }
     }
@@ -271,19 +340,13 @@ impl PassDispatcher for RasterizerPassDispatcher {
         puffin::profile_function!();
         let mut color_attachments = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for color in &self.color_targets {
-            color_attachments.push(color.build(
-                resolver,
-                vk::ImageAspectFlags::COLOR,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            )?);
+            color_attachments
+                .push(color.build(resolver, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)?);
         }
         let mut depth_attachment = None;
         if let Some(depth) = &self.depth_target {
-            depth_attachment = Some(depth.build(
-                resolver,
-                vk::ImageAspectFlags::DEPTH,
-                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            )?);
+            depth_attachment =
+                Some(depth.build(resolver, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)?);
         }
 
         // From initial layout to attachments
@@ -335,7 +398,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             .iter()
             .copied()
             .try_for_each(|x| -> Result<(), Error> {
-                barriers.push(x.build(resolver.images, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
+                barriers.push(x.build(resolver, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
                 Ok(())
             })?;
         if let Some(target) = &self.depth_target {
@@ -423,8 +486,50 @@ impl PassDispatcher for RasterizerPassDispatcher {
             rendering_info = rendering_info.depth_attachment(depth);
         }
         unsafe { device.cmd_begin_rendering(command_buffer, &rendering_info) };
-        for stream in &self.streams {
-            stream.execute(device, command_buffer, render_area, resolver)?;
+        for draw in &self.draws {
+            let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS];
+            for (index, descriptor) in draw.descriptors.iter().enumerate() {
+                descriptors[index] = resolver
+                    .resolve_descriptor_set(*descriptor)
+                    .unwrap_or(resolver.empty_descriptor_set);
+            }
+            let draw_buffer = resolver.resolve_buffer(draw.commands.handle)?;
+            unsafe {
+                device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    draw.pipeline,
+                );
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    draw.pipeline_layout,
+                    0,
+                    &descriptors,
+                    &draw.dynamic_offsets,
+                );
+                match draw.count {
+                    DrawCount::Fixed(count) => device.cmd_draw_indirect(
+                        command_buffer,
+                        draw_buffer,
+                        draw.commands.offset,
+                        count as _,
+                        draw.stride as _,
+                    ),
+                    DrawCount::Indirect(count, max_draw_count) => {
+                        let count_buffer = resolver.resolve_buffer(count.handle)?;
+                        device.cmd_draw_indirect_count(
+                            command_buffer,
+                            draw_buffer,
+                            draw.commands.offset,
+                            count_buffer,
+                            count.offset,
+                            max_draw_count as _,
+                            draw.stride as _,
+                        );
+                    }
+                }
+            }
         }
         unsafe { device.cmd_end_rendering(command_buffer) };
 

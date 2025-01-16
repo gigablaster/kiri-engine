@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use kiri_backend::{
     ash::{self, vk},
     Image,
@@ -20,20 +22,34 @@ use kiri_backend::{
 
 use crate::{
     BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, Error, ImageHandle, ImagePool,
-    PipelineHandle, PipelinePool,
 };
 
 #[derive(Debug)]
 pub struct RenderResourceResolver<'a> {
-    pub(super) buffers: &'a BufferPool,
-    pub(super) images: &'a ImagePool,
-    pub(super) descriptors: &'a DescriptorPool,
-    pub(super) pipelines: &'a PipelinePool,
-    pub(super) empty_descriptor_set: vk::DescriptorSet,
+    buffers: &'a BufferPool,
+    images: &'a ImagePool,
+    descriptors: &'a DescriptorPool,
+    pub empty_descriptor_set: vk::DescriptorSet,
     pub backbuffer: &'a Image,
 }
 
-impl RenderResourceResolver<'_> {
+impl<'a> RenderResourceResolver<'a> {
+    pub(super) fn new(
+        backbuffer: &'a Image,
+        buffers: &'a BufferPool,
+        images: &'a ImagePool,
+        descriptors: &'a DescriptorPool,
+        empty_descriptor_set: vk::DescriptorSet,
+    ) -> Self {
+        Self {
+            buffers,
+            images,
+            descriptors,
+            empty_descriptor_set,
+            backbuffer,
+        }
+    }
+
     pub fn resolve_buffer(&self, handle: BufferHandle) -> Result<vk::Buffer, Error> {
         self.buffers
             .get(handle)
@@ -41,10 +57,20 @@ impl RenderResourceResolver<'_> {
             .ok_or(Error::InvalidBufferHandle(handle))
     }
 
-    pub fn resolve_image(&self, handle: ImageHandle) -> Result<&Image, Error> {
+    pub fn resolve_image_view(&self, handle: ImageHandle) -> Result<vk::ImageView, Error> {
         self.images
             .get(handle)
+            .copied()
             .ok_or(Error::InvalidImageHandle(handle))
+    }
+
+    pub fn resolve_image(&self, handle: ImageHandle) -> Result<&'a Image, Error> {
+        Ok(self
+            .images
+            .get_cold(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .0
+            .as_ref())
     }
 
     pub fn resolve_descriptor_set(
@@ -55,16 +81,6 @@ impl RenderResourceResolver<'_> {
             .get(handle)
             .copied()
             .ok_or(Error::InvalidDescriptorHandle(handle))
-    }
-
-    pub fn resolve_pipeline(
-        &self,
-        handle: PipelineHandle,
-    ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
-        self.pipelines
-            .get(handle)
-            .copied()
-            .ok_or(Error::InvalidPipelineHandle(handle))
     }
 }
 
