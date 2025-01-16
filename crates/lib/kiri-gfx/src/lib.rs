@@ -17,7 +17,6 @@
 mod descriptors;
 mod dispatch;
 mod dynamic;
-// pub mod effects;
 mod error;
 mod image_pool;
 // mod mesh;
