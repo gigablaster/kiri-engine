@@ -13,26 +13,65 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, future::IntoFuture, sync::Arc};
 
-use crate::{PipelineHandle, ProgramHandle, Renderer};
+use crate::Renderer;
 use bytes::Bytes;
-use kiri_assets::{load_or_compile_asset, ShaderAsset, ShaderAssetSource, ShaderType};
+use futures::{FutureExt, TryFutureExt};
+use kiri_assets::{LoadOrCompileAsset, ShaderAsset, ShaderAssetSource, ShaderType};
 use kiri_backend::{
-    DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
-    ShaderDesc,
+    ash::vk, compile_raster_pipeline, RasterPipeline, RasterPipelineCreateDesc, RasterProgram,
+    RenderDevice, RenderPassLayout, ShaderDesc,
 };
+use kiri_common::{spawn, spawn_io};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use turbosloth::{
+    async_trait, lazy::LazyIdentity, IntoLazy, Lazy, LazyCache, LazyWorker, RunContext,
+};
 
 use crate::Error;
+
+pub struct CompileRasterProgram {
+    device: Arc<RenderDevice>,
+    shaders: Vec<Lazy<ShaderAsset>>,
+}
+
+#[async_trait]
+impl LazyWorker for CompileRasterProgram {
+    type Output = Result<Arc<RasterProgram>, Error>;
+
+    async fn run(self, ctx: RunContext) -> Self::Output {
+        let shaders =
+            futures::future::try_join_all(self.shaders.iter().cloned().map(|foo| foo.eval(&ctx)))
+                .await?
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+        let descs = shaders
+            .iter()
+            .map(|shader| ShaderDesc::new(shader.ty.into(), &shader.bytecode))
+            .collect::<Vec<_>>();
+
+        Ok(Arc::new(RasterProgram::new(&self.device, &descs)?))
+    }
+}
+
+impl CompileRasterProgram {
+    pub fn new(device: &Arc<RenderDevice>, shaders: Vec<Lazy<ShaderAsset>>) -> Self {
+        Self {
+            device: device.clone(),
+            shaders,
+        }
+    }
+}
+pub struct RasterPipelineHandle(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RasterPipelineDesc {
     pub vertex_shader: String,
     pub fragment_shader: String,
     pub render_pass: &'static RenderPassLayout<'static>,
-    pub input_layout: &'static [InputVertexStreamLayout<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
 }
@@ -42,13 +81,11 @@ impl RasterPipelineDesc {
         vertex_shader: &str,
         fragment_shader: &str,
         render_pass: &'static RenderPassLayout<'static>,
-        input_layout: &'static [InputVertexStreamLayout<'static>],
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
             fragment_shader: fragment_shader.into(),
             render_pass,
-            input_layout,
             specialization: Default::default(),
             desc: Default::default(),
         }
@@ -65,87 +102,80 @@ impl RasterPipelineDesc {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ProgramKey(String, String);
+pub struct CompileRasterPipeline {
+    renderer: Arc<Renderer>,
+    program: Lazy<Arc<RasterProgram>>,
+    pass_layout: &'static RenderPassLayout<'static>,
+    specialization: Vec<(u32, u32)>,
+    desc: RasterPipelineCreateDesc,
+}
 
-#[derive(Debug)]
+#[async_trait]
+impl LazyWorker for CompileRasterPipeline {
+    type Output = Result<Arc<RasterPipeline>, Error>;
+
+    async fn run(self, ctx: RunContext) -> Self::Output {
+        let program = self.program.eval(&ctx).await?;
+        Ok(Arc::new(compile_raster_pipeline(
+            &self.renderer.device,
+            self.renderer.pipeline_cache,
+            &program,
+            self.pass_layout,
+            &self.specialization,
+            self.desc,
+            None,
+        )?))
+    }
+}
+
+struct RasterPipelineCacheEntry {
+    program: Lazy<Arc<RasterProgram>>,
+    pipeline: Option<Arc<RasterPipeline>>,
+}
+
 pub struct PipelineCache {
     pub renderer: Arc<Renderer>,
-    shaders: Mutex<HashMap<(String, ShaderType), Bytes>>,
-    programs: Mutex<HashMap<ProgramKey, ProgramHandle>>,
-    raster_pipelines: RwLock<HashMap<RasterPipelineDesc, PipelineHandle>>,
+    cache: Arc<LazyCache>,
+    pipelines: RwLock<Vec<RasterPipelineCacheEntry>>,
+    programs: RwLock<HashMap<(String, String), Arc<RasterProgram>>>,
+    handle_to_pipeline: RwLock<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
 }
 
 impl PipelineCache {
     pub fn new(renderer: &Arc<Renderer>) -> Arc<Self> {
         Arc::new(Self {
             renderer: renderer.clone(),
-            shaders: Default::default(),
+            cache: LazyCache::create(),
             programs: Default::default(),
-            raster_pipelines: Default::default(),
+            pipelines: Default::default(),
+            handle_to_pipeline: Default::default(),
         })
     }
 
-    fn get_or_load_shader(&self, name: &str, ty: ShaderType) -> Result<Bytes, Error> {
-        let mut shaders = self.shaders.lock();
-        let key = (name.into(), ty);
-        if let Some(shader) = shaders.get(&key) {
-            Ok(shader.clone())
-        } else {
-            let shader: ShaderAsset = load_or_compile_asset(&ShaderAssetSource::new(name, ty))?;
-            let bytecode: Bytes = shader.bytecode.into();
-            shaders.insert(key, bytecode.clone());
-            Ok(bytecode)
-        }
-    }
-
-    fn get_or_load_program(
+    async fn get_or_compile_raster_program(
         &self,
         vertex_shader: &str,
         fragment_shader: &str,
-    ) -> Result<ProgramHandle, Error> {
-        let mut programs = self.programs.lock();
-        let key = ProgramKey(vertex_shader.into(), fragment_shader.into());
-        if let Some(program) = programs.get(&key) {
-            Ok(*program)
-        } else {
-            let vertex_shader = self.get_or_load_shader(vertex_shader, ShaderType::Vertex)?;
-            let fragment_shader = self.get_or_load_shader(fragment_shader, ShaderType::Fragment)?;
-            let program = self.renderer.create_program(&[
-                ShaderDesc::vertex(&vertex_shader),
-                ShaderDesc::fragment(&fragment_shader),
-            ])?;
-            programs.insert(key, program);
-            Ok(program)
-        }
-    }
-
-    pub fn get_or_create_raster_pipeline(
-        &self,
-        desc: RasterPipelineDesc,
-    ) -> Result<PipelineHandle, Error> {
-        let pipelines = self.raster_pipelines.upgradable_read();
-        if let Some(pipeline) = pipelines.get(&desc) {
-            Ok(*pipeline)
-        } else {
-            let mut pipelines = RwLockUpgradableReadGuard::upgrade(pipelines);
-            if let Some(pipeline) = pipelines.get(&desc) {
-                Ok(*pipeline)
-            } else {
-                debug!("Create pipeline {:?}", &desc);
-                let program =
-                    self.get_or_load_program(&desc.vertex_shader, &desc.fragment_shader)?;
-                let pipeline = self.renderer.create_pipeline(
-                    program,
-                    desc.render_pass,
-                    desc.input_layout,
-                    &desc.specialization,
-                    desc.desc,
-                    Some(&format!("{:?}", desc)),
-                );
-                pipelines.insert(desc, pipeline);
-                Ok(pipeline)
-            }
-        }
+    ) -> Result<Arc<RasterProgram>, Error> {
+        let (vertex_shader, fragment_shader) = futures::future::try_join(
+            spawn_io(
+                LoadOrCompileAsset::new(ShaderAssetSource::vertex(vertex_shader))
+                    .into_lazy()
+                    .eval(&self.cache),
+            ),
+            spawn_io(
+                LoadOrCompileAsset::new(ShaderAssetSource::fragment(fragment_shader))
+                    .into_lazy()
+                    .eval(&self.cache),
+            ),
+        )
+        .await?;
+        Ok(Arc::new(RasterProgram::new(
+            &self.renderer.device,
+            &[
+                ShaderDesc::vertex(&vertex_shader.bytecode),
+                ShaderDesc::fragment(&fragment_shader.bytecode),
+            ],
+        )?))
     }
 }

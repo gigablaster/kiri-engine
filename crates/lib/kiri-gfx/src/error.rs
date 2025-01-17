@@ -15,6 +15,7 @@
 
 use kiri_backend::ash::vk;
 use thiserror::Error;
+use turbosloth::lazy::LazyEvalError;
 
 use crate::{BufferHandle, DescriptorHandle, ImageHandle};
 
@@ -36,12 +37,10 @@ pub enum Error {
     BindingSlotNotFound(String),
     #[error("Invalid descriptor handle {0}")]
     InvalidDescriptorHandle(DescriptorHandle),
-    #[error("Asset compilation failed {0}")]
-    AssetCompilationFailed(#[from] kiri_assets::Error),
     #[error("Texture slot {0} not found")]
     TextureSlotNotFound(String),
-    #[error("Effect pass {0} doesn't exist in this effect")]
-    PassNotFound(String),
+    #[error("Lazy eval error: {0}")]
+    LazyEvalError(#[from] LazyEvalError),
 }
 
 impl From<vk::Result> for Error {

@@ -107,7 +107,7 @@ pub struct Renderer {
     storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     pipeline_cache_path: Option<PathBuf>,
-    pipeline_cache: vk::PipelineCache,
+    pub(super) pipeline_cache: vk::PipelineCache,
 }
 
 unsafe impl Sync for Renderer {}

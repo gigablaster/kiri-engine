@@ -33,7 +33,7 @@ pub enum ShaderType {
     Fragment,
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Debug, Hash, Clone)]
 pub struct ShaderAssetSource {
     pub path: String,
     pub ty: ShaderType,
@@ -91,6 +91,7 @@ fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> io::Res
 
 #[derive(Debug, Readable, Writable)]
 pub struct ShaderAsset {
+    pub ty: ShaderType,
     pub bytecode: Vec<u8>,
 }
 
@@ -175,6 +176,7 @@ impl ImportAsset<ShaderAsset> for ShaderAssetSource {
             .map_err(|x| io::Error::other(format!("Shader compilation failed: {}", x)))?;
         if result.status.success() {
             Ok(ShaderAsset {
+                ty: self.ty,
                 bytecode: result.stdout,
             })
         } else {

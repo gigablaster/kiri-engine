@@ -180,15 +180,15 @@ impl<P: Program> Drop for Pipeline<P> {
 pub type RasterPipeline = Pipeline<RasterProgram>;
 
 #[allow(clippy::too_many_arguments)]
-pub fn compile_raster_pipeline<N: AsRef<str>>(
+pub fn compile_raster_pipeline(
     device: &RenderDevice,
     cache: vk::PipelineCache,
     program: &Arc<RasterProgram>,
     pass_layout: &RenderPassLayout,
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
-    name: Option<N>,
-) -> Result<Arc<RasterPipeline>, Error> {
+    name: Option<&str>,
+) -> Result<RasterPipeline, Error> {
     let mut specialization_values = Cursor::new(Vec::new());
     let specialization_entires = specialization
         .iter()
@@ -306,12 +306,12 @@ pub fn compile_raster_pipeline<N: AsRef<str>>(
         device.set_object_name(pipeline, name);
     }
 
-    Ok(Arc::new(RasterPipeline {
+    Ok(RasterPipeline {
         device: program.device.clone(),
         program: program.clone(),
         pipeline,
         pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-    }))
+    })
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";

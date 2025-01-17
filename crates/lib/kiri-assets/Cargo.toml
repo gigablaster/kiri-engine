@@ -33,4 +33,3 @@ thiserror = "2.0.9"
 shader-prepper = { version = "0.3.0-pre.3" }
 uuid = { version = "1.10.0", features = ["v4"] }
 log = "0.4.20"
-turbosloth = "0.2.0"
