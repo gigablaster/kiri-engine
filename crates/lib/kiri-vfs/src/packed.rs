@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use async_trait::async_trait;
+use bytes::Bytes;
 use core::slice;
 use kiri_common::Align;
 use memmap2::{Mmap, MmapOptions};
@@ -25,7 +27,7 @@ use std::{
     path::Path,
 };
 
-use crate::{Archive, AssetReference};
+use crate::{Archive, ArchiveLoad, AssetReference};
 
 #[derive(Debug, Readable, Writable)]
 struct AssetHeader {
@@ -155,26 +157,33 @@ impl PackedArchive {
         let mmap = unsafe { MmapOptions::new().map(&file) }?;
         Ok(Self { mmap, directory })
     }
+
+    fn read_all<R: Read>(mut r: R, size: usize) -> io::Result<Bytes> {
+        let mut data = vec![0u8; size];
+        r.read_exact(&mut data)?;
+        Ok(data.into())
+    }
 }
 
-impl Archive for PackedArchive {
-    fn load(&self, reference: AssetReference) -> io::Result<Box<dyn Read>> {
+#[async_trait]
+impl ArchiveLoad for PackedArchive {
+    async fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
         let header = self.directory.assets.get(&reference).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Asset {} not found", reference),
         ))?;
-        if let Some(packed) = header.packed {
+        let data = if let Some(packed) = header.packed {
             let data = &self.mmap[header.offset as usize..(header.offset + packed) as usize];
             let data = Cursor::new(unsafe { slice::from_raw_parts(data.as_ptr(), data.len()) });
-            Ok(Box::new(zstd::stream::Decoder::new(data)?))
+            Self::read_all(zstd::stream::Decoder::new(data)?, packed as _)?
         } else {
             let data = &self.mmap[header.offset as usize..(header.offset + header.size) as usize];
-            Ok(Box::new(Cursor::new(unsafe {
-                slice::from_raw_parts(data.as_ptr(), data.len())
-            })))
-        }
+            data.to_vec().into()
+        };
+        Ok(data)
     }
-
+}
+impl Archive for PackedArchive {
     fn exist(&self, reference: AssetReference) -> bool {
         self.directory.assets.contains_key(&reference)
     }

@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,9 +20,13 @@ use std::{
     fs::File,
     hash::{Hash, Hasher},
     io::{self, Read},
+    os::windows::fs::MetadataExt,
     path::{self, Path, PathBuf},
+    sync::Arc,
 };
 
+use async_trait::async_trait;
+use bytes::Bytes;
 use once_cell::sync::Lazy;
 pub use packed::*;
 use parking_lot::RwLock;
@@ -52,32 +56,41 @@ impl AssetReference {
 unsafe impl Send for AssetReference {}
 unsafe impl Sync for AssetReference {}
 
-pub trait Archive: Send + Sync {
-    fn load(&self, reference: AssetReference) -> io::Result<Box<dyn Read>>;
+#[async_trait]
+pub trait ArchiveLoad: Send + Sync + 'static {
+    async fn load(&self, reference: AssetReference) -> io::Result<Bytes>;
+}
+
+pub trait Archive: ArchiveLoad {
     fn exist(&self, reference: AssetReference) -> bool;
 }
 
-static ARCHIVES: Lazy<RwLock<Vec<Box<dyn Archive>>>> = Lazy::new(|| {
-    let mut archives = Vec::<Box<dyn Archive>>::default();
+static ARCHIVES: Lazy<RwLock<Vec<Arc<dyn Archive>>>> = Lazy::new(|| {
+    let mut archives = Vec::<Arc<dyn Archive>>::default();
     // Data pack
     if let Ok(pack) = PackedArchive::open("data.bin") {
-        archives.push(Box::new(pack));
+        archives.push(Arc::new(pack));
     }
     // Compiled assets outside of data pack
-    archives.push(Box::new(FileSystemArchive::new(".cache")));
+    archives.push(Arc::new(FileSystemArchive::new(".cache")));
     RwLock::new(archives)
 });
 
-pub fn vfs_register_archive(archive: Box<dyn Archive>) {
+pub fn vfs_register_archive(archive: Arc<dyn Archive>) {
     ARCHIVES.write().insert(0, archive);
 }
 
-pub fn vfs_load(reference: AssetReference) -> io::Result<Box<dyn Read>> {
-    let archives = ARCHIVES.read();
-    archives
+pub async fn vfs_load(reference: AssetReference) -> io::Result<Bytes> {
+    let archive = ARCHIVES
+        .read()
         .iter()
-        .find_map(|x| x.load(reference).ok())
-        .ok_or(io::Error::other(format!("Asset {} not found", reference)))
+        .cloned()
+        .find(|x| x.exist(reference))
+        .ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            reference.to_string(),
+        ))?;
+    archive.load(reference).await
 }
 
 pub fn vfs_exist(reference: AssetReference) -> bool {
@@ -90,11 +103,17 @@ pub struct FileSystemArchive {
     root: PathBuf,
 }
 
-impl Archive for FileSystemArchive {
-    fn load(&self, reference: AssetReference) -> io::Result<Box<dyn Read>> {
-        Ok(Box::new(File::open(self.path(reference)?)?))
+#[async_trait]
+impl ArchiveLoad for FileSystemArchive {
+    async fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
+        // TODO: use platform-specific async IO
+        let mut file = File::open(self.path(reference)?)?;
+        let mut data = vec![0u8; file.metadata()?.file_size() as usize];
+        file.read_exact(&mut data)?;
+        Ok(data.into())
     }
-
+}
+impl Archive for FileSystemArchive {
     fn exist(&self, reference: AssetReference) -> bool {
         if let Ok(result) = self.path(reference) {
             result.exists()
@@ -110,6 +129,7 @@ impl FileSystemArchive {
             root: path::absolute(root).unwrap(),
         }
     }
+
     fn path(&self, reference: AssetReference) -> io::Result<PathBuf> {
         path::absolute(self.root.join(format!("{}.asset", reference)))
     }
