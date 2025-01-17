@@ -25,7 +25,8 @@ use kiri_backend::{
 };
 
 use crate::{
-    BufferPointer, DescriptorHandle, Error, ImageHandle, PassDispatcher, RenderResourceResolver,
+    BufferPointer, DescriptorHandle, Error, ImageHandle, PassDispatcher, RasterPipelineHandle,
+    RenderResourceResolver,
 };
 
 const MAX_DYNAMIC_OFFSETS: usize = 2;
@@ -188,8 +189,7 @@ pub enum DrawCount {
 
 #[derive(Debug)]
 pub struct Draw {
-    pub pipeline: vk::Pipeline,
-    pub pipeline_layout: vk::PipelineLayout,
+    pub pipeline: RasterPipelineHandle,
     pub commands: BufferPointer,
     pub count: DrawCount,
     pub stride: usize,
@@ -198,10 +198,13 @@ pub struct Draw {
 }
 
 impl Draw {
-    pub fn fixed(pipeline: &RasterPipeline, commands: BufferPointer, draw_count: usize) -> Self {
+    pub fn direct(
+        pipeline: RasterPipelineHandle,
+        commands: BufferPointer,
+        draw_count: usize,
+    ) -> Self {
         Self {
-            pipeline: pipeline.pipeline,
-            pipeline_layout: pipeline.program.pipeline_layout,
+            pipeline,
             commands,
             count: DrawCount::Fixed(draw_count),
             stride: mem::size_of::<DrawCommand>(),
@@ -211,14 +214,13 @@ impl Draw {
     }
 
     pub fn indirect(
-        pipeline: &RasterPipeline,
+        pipeline: RasterPipelineHandle,
         commands: BufferPointer,
         count: BufferPointer,
         max_draw_count: usize,
     ) -> Self {
         Self {
-            pipeline: pipeline.pipeline,
-            pipeline_layout: pipeline.program.pipeline_layout,
+            pipeline,
             commands,
             count: DrawCount::Indirect(count, max_draw_count),
             stride: mem::size_of::<DrawCommand>(),
@@ -494,16 +496,17 @@ impl PassDispatcher for RasterizerPassDispatcher {
                     .unwrap_or(resolver.empty_descriptor_set);
             }
             let draw_buffer = resolver.resolve_buffer(draw.commands.handle)?;
+            let pipeline = resolver.resolve_raster_pipeline(draw.pipeline)?;
             unsafe {
                 device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    draw.pipeline,
+                    pipeline.pipeline,
                 );
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    draw.pipeline_layout,
+                    pipeline.program.pipeline_layout,
                     0,
                     &descriptors,
                     &draw.dynamic_offsets,

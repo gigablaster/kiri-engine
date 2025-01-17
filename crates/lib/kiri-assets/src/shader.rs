@@ -47,16 +47,16 @@ impl ShaderAssetSource {
         }
     }
 
-    pub fn fragment(path: &str) -> Self {
+    pub fn fragment(path: String) -> Self {
         Self {
-            path: path.to_owned(),
+            path: path,
             ty: ShaderType::Fragment,
         }
     }
 
-    pub fn vertex(path: &str) -> Self {
+    pub fn vertex(path: String) -> Self {
         Self {
-            path: path.to_owned(),
+            path: path,
             ty: ShaderType::Vertex,
         }
     }

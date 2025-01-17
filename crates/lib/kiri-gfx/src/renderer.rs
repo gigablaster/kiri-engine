@@ -25,7 +25,7 @@ use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use log::warn;
 use parking_lot::{Mutex, RwLock};
 
-use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error};
+use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, PipelineCache};
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
@@ -106,8 +106,7 @@ pub struct Renderer {
     storage_images_to_update: Mutex<Vec<ImageHandle>>,
     storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
-    pipeline_cache_path: Option<PathBuf>,
-    pub(super) pipeline_cache: vk::PipelineCache,
+    pipeline_cache: PipelineCache,
 }
 
 unsafe impl Sync for Renderer {}
@@ -118,13 +117,6 @@ const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>, config: &GameAppConfig) -> Result<Arc<Self>, Error> {
-        let pipeline_cache_path = config.cache();
-        let pipeline_cache = pipeline_cache_path
-            .clone()
-            .map(|path| {
-                load_or_create_pipeline_cache(device, &path).unwrap_or(vk::PipelineCache::null())
-            })
-            .unwrap_or(vk::PipelineCache::null());
         Ok(Arc::new(Self {
             device: device.clone(),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
@@ -134,8 +126,7 @@ impl Renderer {
             sampled_images_to_update: Default::default(),
             storage_images_to_update: Default::default(),
             storage_buffers_to_update: Default::default(),
-            pipeline_cache_path,
-            pipeline_cache,
+            pipeline_cache: PipelineCache::new(device, config.cache()),
         }))
     }
 
@@ -486,17 +477,5 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe { self.device.raw.device_wait_idle() }.unwrap();
-        if let Some(path) = &self.pipeline_cache_path {
-            save_pipeline_cache(&self.device, self.pipeline_cache, path)
-                .map_err(|x| {
-                    warn!("Failed to safe pipeline cache: {}", x);
-                })
-                .ok();
-            unsafe {
-                self.device
-                    .raw
-                    .destroy_pipeline_cache(self.pipeline_cache, None);
-            }
-        }
     }
 }

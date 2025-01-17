@@ -17,11 +17,12 @@ use std::sync::Arc;
 
 use kiri_backend::{
     ash::{self, vk},
-    Image,
+    Image, RasterPipeline,
 };
 
 use crate::{
     BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, Error, ImageHandle, ImagePool,
+    PipelineCache, PipelineCacheResolver, RasterPipelineHandle,
 };
 
 #[derive(Debug)]
@@ -29,6 +30,7 @@ pub struct RenderResourceResolver<'a> {
     buffers: &'a BufferPool,
     images: &'a ImagePool,
     descriptors: &'a DescriptorPool,
+    pipeline_resolver: &'a PipelineCacheResolver<'a>,
     pub empty_descriptor_set: vk::DescriptorSet,
     pub backbuffer: &'a Image,
 }
@@ -39,12 +41,14 @@ impl<'a> RenderResourceResolver<'a> {
         buffers: &'a BufferPool,
         images: &'a ImagePool,
         descriptors: &'a DescriptorPool,
+        pipeline_resolver: &'a PipelineCacheResolver,
         empty_descriptor_set: vk::DescriptorSet,
     ) -> Self {
         Self {
             buffers,
             images,
             descriptors,
+            pipeline_resolver,
             empty_descriptor_set,
             backbuffer,
         }
@@ -71,6 +75,13 @@ impl<'a> RenderResourceResolver<'a> {
             .ok_or(Error::InvalidImageHandle(handle))?
             .0
             .as_ref())
+    }
+
+    pub fn resolve_raster_pipeline(
+        &self,
+        handle: RasterPipelineHandle,
+    ) -> Result<Arc<RasterPipeline>, Error> {
+        self.pipeline_resolver.resolve_raster_pipeline(handle)
     }
 
     pub fn resolve_descriptor_set(

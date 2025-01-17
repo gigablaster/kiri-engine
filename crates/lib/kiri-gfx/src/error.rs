@@ -13,14 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::io;
+
 use kiri_backend::ash::vk;
 use thiserror::Error;
 use turbosloth::lazy::LazyEvalError;
 
-use crate::{BufferHandle, DescriptorHandle, ImageHandle};
+use crate::{BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("IO Error {0}")]
+    IoError(#[from] io::Error),
     #[error("Backend error {0}")]
     BackendError(#[from] kiri_backend::Error),
     #[error("Slot with name {0} not found")]
@@ -41,6 +45,8 @@ pub enum Error {
     TextureSlotNotFound(String),
     #[error("Lazy eval error: {0}")]
     LazyEvalError(#[from] LazyEvalError),
+    #[error("Invalid raster pipeline handle {0:?}")]
+    InvalidRasterPipeline(RasterPipelineHandle),
 }
 
 impl From<vk::Result> for Error {

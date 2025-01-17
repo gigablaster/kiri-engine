@@ -173,27 +173,6 @@ pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<Syste
     None
 }
 
-#[derive(Debug)]
-pub struct LoadOrCompileAsset<T: AssetSource + ImportAsset<U>, U: Asset> {
-    source: T,
-    _phantom: PhantomData<U>,
-}
-
-impl<T: AssetSource + ImportAsset<U>, U: Asset> Hash for LoadOrCompileAsset<T, U> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source.hash(state);
-    }
-}
-
-impl<T: AssetSource + ImportAsset<U>, U: Asset> Clone for LoadOrCompileAsset<T, U> {
-    fn clone(&self) -> Self {
-        Self {
-            source: self.source.clone(),
-            _phantom: self._phantom.clone(),
-        }
-    }
-}
-
 pub async fn load_or_compile_asset<T: AssetSource + ImportAsset<U>, U: Asset>(
     source: T,
 ) -> io::Result<U> {
