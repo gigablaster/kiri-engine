@@ -20,12 +20,13 @@ use ash::vk::{self};
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use parking_lot::{Mutex, MutexGuard, RwLock, RwLockUpgradableReadGuard};
+use kiri_common::TempList;
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
-    create_descriptor_layout, staging::Staging, DescriptorSetLayoutDesc, Error, GpuDescriptor,
-    GpuDescriptorAllocator, GpuMemoryBlock, Instance,
+    staging::Staging, DescriptorSetLayoutDesc, Error, GpuDescriptor, GpuDescriptorAllocator,
+    GpuMemoryBlock, Instance,
 };
 
 use super::{
@@ -513,9 +514,73 @@ impl RenderDevice {
             if let Some(layout) = layouts.get(&desc) {
                 Ok(*layout)
             } else {
-                let layout = create_descriptor_layout(self, stage, desc)?;
+                let layout = self.create_descriptor_layout(stage, desc)?;
                 layouts.insert(desc.clone(), layout);
                 Ok(layout)
+            }
+        }
+    }
+
+    fn create_descriptor_layout(
+        &self,
+        stage: vk::ShaderStageFlags,
+        layout: &DescriptorSetLayoutDesc,
+    ) -> Result<vk::DescriptorSetLayout, Error> {
+        let samplers = TempList::new();
+        let bindings = layout
+            .layout
+            .iter()
+            .map(|(index, data)| {
+                let mut binding = vk::DescriptorSetLayoutBinding::default()
+                    .binding(*index)
+                    .descriptor_count(data.count)
+                    .descriptor_type(data.ty)
+                    .stage_flags(stage);
+                if data.ty == vk::DescriptorType::SAMPLER
+                    || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                {
+                    binding = binding.immutable_samplers(samplers.add(vec![
+                    self.sampler(Self::get_sampler_desc(&data.name)).unwrap();
+                    data.count as _
+                ]));
+                }
+                binding
+            })
+            .collect::<Vec<_>>();
+        let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+        let layout = unsafe { self.raw.create_descriptor_set_layout(&create_info, None)? };
+        self.set_object_name(layout, format!("{:?}", bindings));
+        Ok(layout)
+    }
+
+    fn get_sampler_desc(name: &str) -> SamplerDesc {
+        if name.ends_with("_pr") {
+            SamplerDesc {
+                texel_filter: vk::Filter::NEAREST,
+                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+                address_mode: vk::SamplerAddressMode::REPEAT,
+                anisotropy_level: 0,
+            }
+        } else if name.ends_with("_pb") {
+            SamplerDesc {
+                texel_filter: vk::Filter::NEAREST,
+                mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+                address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                anisotropy_level: 0,
+            }
+        } else if name.ends_with("_lb") {
+            SamplerDesc {
+                texel_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                anisotropy_level: 0,
+            }
+        } else {
+            SamplerDesc {
+                texel_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode: vk::SamplerAddressMode::REPEAT,
+                anisotropy_level: 4,
             }
         }
     }

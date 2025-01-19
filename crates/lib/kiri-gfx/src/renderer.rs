@@ -19,8 +19,8 @@ use std::{ptr::NonNull, sync::Arc};
 use futures::executor::block_on;
 use kiri_backend::{
     ash::vk::{self, DescriptorImageInfo},
-    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount,
-    GpuDescriptor, Image, ImageViewDesc, RenderDevice, Swapchain,
+    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc,
+    DescriptorTotalCount, GpuDescriptor, Image, ImageViewDesc, RenderDevice, Swapchain,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use parking_lot::{Mutex, RwLock};
@@ -113,6 +113,8 @@ pub struct Renderer {
     dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
     descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
     empty_descriptor_set: GpuDescriptor,
+    bindless_descriptor_layout: vk::DescriptorSetLayout,
+    bindless_descriptor: GpuDescriptor,
 }
 
 unsafe impl Sync for Renderer {}
@@ -123,6 +125,51 @@ const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>, config: &GameAppConfig) -> Result<Arc<Self>, Error> {
+        let bindless_desc = DescriptorSetLayoutDesc::default()
+            .with_slot(
+                0,
+                DescriptorSetDesc::count(
+                    "sampled_images",
+                    vk::DescriptorType::SAMPLED_IMAGE,
+                    MAX_RESOURCE_COUNT,
+                ),
+            )
+            .with_slot(
+                1,
+                DescriptorSetDesc::count(
+                    "storage_images",
+                    vk::DescriptorType::STORAGE_IMAGE,
+                    MAX_RESOURCE_COUNT,
+                ),
+            )
+            .with_slot(
+                2,
+                DescriptorSetDesc::count(
+                    "storage_buffers",
+                    vk::DescriptorType::STORAGE_BUFFER,
+                    MAX_RESOURCE_COUNT,
+                ),
+            )
+            .bindless();
+        let bindless_descriptor_layout =
+            device.get_or_create_layout(vk::ShaderStageFlags::ALL, &bindless_desc)?;
+        let bindless_descriptor = device
+            .allocate_bindless_descriptor_sets(
+                bindless_descriptor_layout,
+                &bindless_desc.get_descriptor_count(),
+                1,
+            )?
+            .remove(0);
+        let empty_descriptor_set = device
+            .allocate_descriptor_sets(
+                device.get_or_create_layout(
+                    vk::ShaderStageFlags::ALL,
+                    &DescriptorSetLayoutDesc::default(),
+                )?,
+                &DescriptorTotalCount::default(),
+                1,
+            )?
+            .remove(0);
         Ok(Arc::new(Self {
             device: device.clone(),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
@@ -135,16 +182,9 @@ impl Renderer {
             pipeline_cache: PipelineCache::new(device, config.cache()),
             dirty_descriptors: Default::default(),
             descriptors_to_destroy: Default::default(),
-            empty_descriptor_set: device
-                .allocate_descriptor_sets(
-                    device.get_or_create_layout(
-                        vk::ShaderStageFlags::ALL,
-                        &DescriptorSetLayoutDesc::default(),
-                    )?,
-                    &DescriptorTotalCount::default(),
-                    1,
-                )?
-                .remove(0),
+            empty_descriptor_set,
+            bindless_descriptor_layout,
+            bindless_descriptor,
         }))
     }
 
@@ -353,6 +393,7 @@ impl Renderer {
                 let image_writes = TempList::new();
                 let buffer_writes = TempList::new();
                 let mut writes = Vec::with_capacity(MAX_RESOURCE_COUNT);
+                // All dirty descriptors
                 for handle in self.dirty_descriptors.lock().drain(..) {
                     // Allocate and assing new descriptor set
                     let data = descriptors
@@ -473,6 +514,8 @@ impl Renderer {
                         );
                     }
                 }
+                // All bindless descriptors
+
                 unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
                 Ok(())
             })?;

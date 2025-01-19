@@ -25,6 +25,7 @@ use crate::{Error, SamplerDesc, MAX_RESOURCES};
 
 use super::RenderDevice;
 
+pub const DYNAMIC_DESCRIPTOR_SLOT_INDEX: usize = 3;
 pub const MAX_DESCRIPTOR_SETS: usize = 4;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -81,7 +82,25 @@ pub struct DescriptorSetDesc {
 }
 
 impl DescriptorSetDesc {
-    fn new(value: rspirv_reflect::DescriptorInfo) -> Self {
+    pub fn single(name: &str, ty: vk::DescriptorType) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            count: 1,
+        }
+    }
+
+    pub fn count(name: &str, ty: vk::DescriptorType, count: usize) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            count: count as u32,
+        }
+    }
+}
+
+impl From<rspirv_reflect::DescriptorInfo> for DescriptorSetDesc {
+    fn from(value: rspirv_reflect::DescriptorInfo) -> Self {
         let count = match value.binding_count {
             rspirv_reflect::BindingCount::One => 1,
             rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
@@ -172,6 +191,26 @@ impl DescriptorSetLayoutDesc {
             }
         }
         count
+    }
+
+    pub fn with_slot(mut self, slot: usize, desc: DescriptorSetDesc) -> Self {
+        self.layout.push((slot as u32, desc));
+        self
+    }
+
+    pub fn bindless(mut self) -> Self {
+        self.update_after_bind = true;
+        self
+    }
+
+    pub fn push_constant_size(mut self, size: usize) -> Self {
+        self.push_constant_size = Some((0, size as u32));
+        self
+    }
+
+    pub fn compute_group_size(mut self, size: (u32, u32, u32)) -> Self {
+        self.compute_groups_size = Some(size);
+        self
     }
 
     pub fn has_slot(&self, index: u32) -> bool {
@@ -287,8 +326,19 @@ fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Erro
     let mut layout = HashMap::new();
     for (set_index, set) in descriptor_sets {
         let mut descriptor_set = HashMap::new();
-        for (index, bind) in set {
-            descriptor_set.insert(index, DescriptorSetDesc::new(bind));
+        for (index, mut bind) in set {
+            if set_index as usize == DYNAMIC_DESCRIPTOR_SLOT_INDEX {
+                match bind.ty {
+                    rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
+                        bind.ty = rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+                    }
+                    rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
+                        bind.ty = rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
+                    }
+                    _ => {}
+                }
+            }
+            descriptor_set.insert(index, bind.into());
         }
         layout.insert(set_index, descriptor_set);
     }
@@ -344,74 +394,6 @@ fn create_shader(
         desc.stage,
         CString::new(entry).unwrap(),
     ))
-}
-
-pub(super) fn create_descriptor_layout(
-    device: &RenderDevice,
-    stage: vk::ShaderStageFlags,
-    layout: &DescriptorSetLayoutDesc,
-) -> Result<vk::DescriptorSetLayout, Error> {
-    let samplers = TempList::new();
-    let bindings = layout
-        .layout
-        .iter()
-        .map(|(index, data)| {
-            let mut binding = vk::DescriptorSetLayoutBinding::default()
-                .binding(*index)
-                .descriptor_count(data.count)
-                .descriptor_type(data.ty)
-                .stage_flags(stage);
-            if data.ty == vk::DescriptorType::SAMPLER
-                || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-            {
-                binding = binding.immutable_samplers(samplers.add(vec![
-                    device.sampler(get_sampler_desc(&data.name)).unwrap();
-                    data.count as _
-                ]));
-            }
-            binding
-        })
-        .collect::<Vec<_>>();
-    let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
-    let layout = unsafe {
-        device
-            .raw
-            .create_descriptor_set_layout(&create_info, None)?
-    };
-    device.set_object_name(layout, format!("{:?}", layout));
-    Ok(layout)
-}
-
-fn get_sampler_desc(name: &str) -> SamplerDesc {
-    if name.ends_with("_pr") {
-        SamplerDesc {
-            texel_filter: vk::Filter::NEAREST,
-            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-            address_mode: vk::SamplerAddressMode::REPEAT,
-            anisotropy_level: 0,
-        }
-    } else if name.ends_with("_pb") {
-        SamplerDesc {
-            texel_filter: vk::Filter::NEAREST,
-            mipmap_mode: vk::SamplerMipmapMode::NEAREST,
-            address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-            anisotropy_level: 0,
-        }
-    } else if name.ends_with("_lb") {
-        SamplerDesc {
-            texel_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-            anisotropy_level: 0,
-        }
-    } else {
-        SamplerDesc {
-            texel_filter: vk::Filter::LINEAR,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode: vk::SamplerAddressMode::REPEAT,
-            anisotropy_level: 4,
-        }
-    }
 }
 
 impl Drop for RasterProgram {
