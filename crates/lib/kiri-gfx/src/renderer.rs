@@ -310,7 +310,9 @@ impl Renderer {
             &[
                 (
                     staging_semaphore,
-                    vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    vk::PipelineStageFlags::VERTEX_INPUT
+                        | vk::PipelineStageFlags::FRAGMENT_SHADER
+                        | vk::PipelineStageFlags::DRAW_INDIRECT,
                 ),
                 (
                     target.acquire_semaphore,
@@ -348,11 +350,10 @@ impl Renderer {
         }
         self.device
             .with_descriptor_allocator(|context| -> Result<(), Error> {
-                let dirty = self.dirty_descriptors.lock().drain(..).collect::<Vec<_>>();
                 let image_writes = TempList::new();
                 let buffer_writes = TempList::new();
-                let mut writes = Vec::with_capacity(16384);
-                for handle in dirty {
+                let mut writes = Vec::with_capacity(MAX_RESOURCE_COUNT);
+                for handle in self.dirty_descriptors.lock().drain(..) {
                     // Allocate and assing new descriptor set
                     let data = descriptors
                         .get_cold(handle)
@@ -365,13 +366,13 @@ impl Renderer {
                     {
                         drop_list.push(descriptor);
                     }
-                    let data = descriptors.get_cold_mut(handle).unwrap();
+                    let data = descriptors.get_cold(handle).unwrap();
                     if let Some(name) = &data.name {
                         self.device.set_object_name(ds, name);
                     }
 
                     // Process images
-                    for image in &mut data.images {
+                    for image in &data.images {
                         // Add to write list.
                         let view = *images
                             .get(image.data.handle)
