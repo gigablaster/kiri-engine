@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{hash::Hash, ptr::NonNull, sync::Arc};
+use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
