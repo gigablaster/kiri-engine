@@ -17,7 +17,7 @@ use std::{collections::HashMap, mem, sync::Arc};
 
 use crate::{BufferHandle, BufferPointer, Error, Renderer};
 use kiri_assets::RenderMeshVertex;
-use kiri_backend::BufferCreateDesc;
+use kiri_backend::{ash::vk::DescriptorSet, BufferCreateDesc};
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
@@ -37,7 +37,7 @@ pub enum RenderMeshMaterialOrder {
 pub struct RenderMeshMaterial {
     pub ty: RenderMeshMaterialType,
     pub order: RenderMeshMaterialOrder,
-    pub data: BufferPointer,
+    pub descriptor: DescriptorSet,
 }
 
 #[derive(Debug, Clone, Copy)]

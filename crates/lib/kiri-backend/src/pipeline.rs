@@ -162,22 +162,20 @@ impl RasterPipelineCreateDesc {
 }
 
 #[derive(Debug)]
-pub struct Pipeline<P: Program> {
+pub struct Pipeline {
     device: Arc<RenderDevice>,
-    pub program: Arc<P>,
     pub pipeline: vk::Pipeline,
+    pub pipeline_layout: vk::PipelineLayout,
     pub pipeline_bind_point: vk::PipelineBindPoint,
 }
 
-impl<P: Program> Drop for Pipeline<P> {
+impl Drop for Pipeline {
     fn drop(&mut self) {
         unsafe {
             self.device.raw.destroy_pipeline(self.pipeline, None);
         }
     }
 }
-
-pub type RasterPipeline = Pipeline<RasterProgram>;
 
 #[allow(clippy::too_many_arguments)]
 pub fn compile_raster_pipeline(
@@ -188,7 +186,7 @@ pub fn compile_raster_pipeline(
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
     name: Option<&str>,
-) -> Result<RasterPipeline, Error> {
+) -> Result<Pipeline, Error> {
     let mut specialization_values = Cursor::new(Vec::new());
     let specialization_entires = specialization
         .iter()
@@ -306,10 +304,10 @@ pub fn compile_raster_pipeline(
         device.set_object_name(pipeline, name);
     }
 
-    Ok(RasterPipeline {
+    Ok(Pipeline {
         device: program.device.clone(),
-        program: program.clone(),
         pipeline,
+        pipeline_layout: program.pipeline_layout,
         pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
     })
 }

@@ -21,8 +21,8 @@ use kiri_backend::{
         self,
         vk::{self},
     },
-    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorTotalCount, Image, RasterPipeline,
-    RenderDevice, Swapchain, EMPTY_DESCRIPTOR_SET,
+    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorTotalCount, Image, RenderDevice,
+    Swapchain, EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool};
 use parking_lot::{Mutex, RwLock};

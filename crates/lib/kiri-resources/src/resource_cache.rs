@@ -27,7 +27,7 @@ use kiri_gfx::{
         EFFECT_PASS_DEPTH, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED, EFFECT_PASS_TRANSPARENT,
         MAIN_RENDER_PASS_LAYOUT,
     },
-    ImageUploadData, PipelineCache, PipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
+    ImageUploadData, PipelineCache, RasterPipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
     RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
@@ -329,7 +329,7 @@ impl ResourceManager {
                     kiri_assets::MeshMaterialBlend::Opaque => instance
                         .pipeline(EFFECT_PASS_OPAQUE)
                         .ok_or(Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE.to_owned()))?,
-                    kiri_assets::MeshMaterialBlend::AlphaBlend => PipelineHandle::invalid(),
+                    kiri_assets::MeshMaterialBlend::AlphaBlend => RasterPipelineHandle::invalid(),
                     kiri_assets::MeshMaterialBlend::AlphaTest(_) => {
                         instance.pipeline(EFFECT_PASS_OPAQUE_MASKED).ok_or(
                             Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE_MASKED.to_owned()),
@@ -337,20 +337,20 @@ impl ResourceManager {
                     }
                 };
                 let transparent = match source.blend {
-                    kiri_assets::MeshMaterialBlend::Opaque => PipelineHandle::invalid(),
+                    kiri_assets::MeshMaterialBlend::Opaque => RasterPipelineHandle::invalid(),
                     kiri_assets::MeshMaterialBlend::AlphaBlend => {
                         instance.pipeline(EFFECT_PASS_TRANSPARENT).ok_or(
                             Error::EffectPipelineNotFound(EFFECT_PASS_TRANSPARENT.to_owned()),
                         )?
                     }
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => PipelineHandle::invalid(),
+                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => RasterPipelineHandle::invalid(),
                 };
                 let depth = match source.blend {
                     kiri_assets::MeshMaterialBlend::Opaque => {
                         instance.pipeline(EFFECT_PASS_DEPTH).unwrap_or_default()
                     }
-                    kiri_assets::MeshMaterialBlend::AlphaBlend => PipelineHandle::invalid(),
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => PipelineHandle::invalid(),
+                    kiri_assets::MeshMaterialBlend::AlphaBlend => RasterPipelineHandle::invalid(),
+                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => RasterPipelineHandle::invalid(),
                 };
                 material = Some(RenderMeshMaterial {
                     instance,

@@ -26,7 +26,7 @@ use kiri_assets::{load_or_compile_asset, ShaderAssetSource};
 use kiri_backend::{
     ash::vk::{self},
     compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache,
-    DescriptorSetLayoutDesc, RasterPipeline, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
+    DescriptorSetLayoutDesc, Pipeline, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
     RenderPassLayout, ShaderDesc,
 };
 use kiri_common::{block_on, spawn};
@@ -120,7 +120,7 @@ impl RasterPipelineHandle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RasterPipelineDesc {
+pub struct PipelineDesc {
     pub vertex_shader: String,
     pub fragment_shader: String,
     pub pass_layout: &'static RenderPassLayout<'static>,
@@ -129,7 +129,7 @@ pub struct RasterPipelineDesc {
     pub desc: RasterPipelineCreateDesc,
 }
 
-impl RasterPipelineDesc {
+impl PipelineDesc {
     pub fn new(
         vertex_shader: &str,
         fragment_shader: &str,
@@ -178,7 +178,7 @@ impl Hash for CompileRasterPipeline {
 
 #[async_trait]
 impl LazyWorker for CompileRasterPipeline {
-    type Output = Result<RasterPipeline, Error>;
+    type Output = Result<Pipeline, Error>;
 
     async fn run(self, ctx: RunContext) -> Self::Output {
         let program = self.program.eval(&ctx).await?;
@@ -199,7 +199,7 @@ impl CompileRasterPipeline {
         device: &Arc<RenderDevice>,
         pipeline_cache: vk::PipelineCache,
         program: Lazy<RasterProgram>,
-        desc: &RasterPipelineDesc,
+        desc: &PipelineDesc,
     ) -> Self {
         Self {
             device: device.clone(),
@@ -212,14 +212,14 @@ impl CompileRasterPipeline {
     }
 }
 
-struct RasterPipelineCacheEntry {
-    compile: Lazy<RasterPipeline>,
-    pipeline: Option<Arc<RasterPipeline>>,
+struct PipelineCacheEntry {
+    compile: Lazy<Pipeline>,
+    pipeline: Option<Arc<Pipeline>>,
 }
 
-impl Debug for RasterPipelineCacheEntry {
+impl Debug for PipelineCacheEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RasterPipelineCacheEntry")
+        f.debug_struct("PipelineCacheEntry")
             .field("compile", &self.compile.debug_name)
             .field("pipeline", &self.pipeline)
             .finish()
@@ -230,8 +230,8 @@ pub struct PipelineCache {
     cache: Arc<LazyCache>,
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_path: Option<PathBuf>,
-    raster_pipelines: Mutex<Vec<RasterPipelineCacheEntry>>,
-    raster_handle_to_pipeline: RwLock<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
+    raster_pipelines: Mutex<Vec<PipelineCacheEntry>>,
+    raster_handle_to_pipeline: RwLock<HashMap<PipelineDesc, RasterPipelineHandle>>,
 }
 
 unsafe impl Send for PipelineCache {}
@@ -251,7 +251,7 @@ impl Debug for PipelineCache {
 
 pub(super) struct PipelineResolver<'a> {
     cache: Arc<LazyCache>,
-    raster_pipelines: MutexGuard<'a, Vec<RasterPipelineCacheEntry>>,
+    raster_pipelines: MutexGuard<'a, Vec<PipelineCacheEntry>>,
 }
 
 impl Debug for PipelineResolver<'_> {
@@ -272,10 +272,10 @@ impl PipelineResolver<'_> {
             .get(handle.0 as usize)
             .ok_or(Error::InvalidRasterPipeline(handle))?;
         if let Some(pipeline) = &pipeline.pipeline {
-            Ok((pipeline.pipeline, pipeline.program.pipeline_layout))
+            Ok((pipeline.pipeline, pipeline.pipeline_layout))
         } else {
             let compiled = block_on(pipeline.compile.eval(&self.cache))?;
-            Ok((compiled.pipeline, compiled.program.pipeline_layout))
+            Ok((compiled.pipeline, compiled.pipeline_layout))
         }
     }
 }
@@ -300,7 +300,7 @@ impl PipelineCache {
         }
     }
 
-    pub fn get_or_create_raster_pipeline(&self, desc: RasterPipelineDesc) -> RasterPipelineHandle {
+    pub fn get_or_create_raster_pipeline(&self, desc: PipelineDesc) -> RasterPipelineHandle {
         let handles = self.raster_handle_to_pipeline.upgradable_read();
         if let Some(handle) = handles.get(&desc) {
             *handle
@@ -321,7 +321,7 @@ impl PipelineCache {
                 let compile =
                     CompileRasterPipeline::new(&self.device, self.pipeline_cache, program, &desc)
                         .into_lazy();
-                pipelines.push(RasterPipelineCacheEntry {
+                pipelines.push(PipelineCacheEntry {
                     compile,
                     pipeline: None,
                 });
