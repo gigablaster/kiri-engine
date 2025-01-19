@@ -13,15 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CString, sync::Arc};
+use std::{ffi::CString, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
 use gpu_descriptor::DescriptorTotalCount;
-use kiri_common::TempList;
 
-use crate::{Error, SamplerDesc, MAX_RESOURCES};
+use crate::Error;
 
 use super::RenderDevice;
 
@@ -74,163 +73,73 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DescriptorSetDesc {
-    pub name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorSetDesc<'a> {
+    pub name: &'a str,
     pub ty: vk::DescriptorType,
-    pub count: u32,
+    pub count: usize,
 }
 
-impl DescriptorSetDesc {
-    pub fn single(name: &str, ty: vk::DescriptorType) -> Self {
-        Self {
-            name: name.into(),
-            ty,
-            count: 1,
-        }
+impl<'a> DescriptorSetDesc<'a> {
+    pub fn single(name: &'a str, ty: vk::DescriptorType) -> Self {
+        Self { name, ty, count: 1 }
     }
 
-    pub fn count(name: &str, ty: vk::DescriptorType, count: usize) -> Self {
-        Self {
-            name: name.into(),
-            ty,
-            count: count as u32,
-        }
+    pub fn count(name: &'a str, ty: vk::DescriptorType, count: usize) -> Self {
+        Self { name, ty, count }
     }
 }
 
-impl From<rspirv_reflect::DescriptorInfo> for DescriptorSetDesc {
-    fn from(value: rspirv_reflect::DescriptorInfo) -> Self {
-        let count = match value.binding_count {
-            rspirv_reflect::BindingCount::One => 1,
-            rspirv_reflect::BindingCount::StaticSized(count) => count as u32,
-            rspirv_reflect::BindingCount::Unbounded => MAX_RESOURCES,
-        };
-        match value.ty {
-            rspirv_reflect::DescriptorType::SAMPLED_IMAGE => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                count,
-            },
-            rspirv_reflect::DescriptorType::STORAGE_IMAGE => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                count,
-            },
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-                count,
-            },
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                count,
-            },
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                count,
-            },
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                count,
-            },
-            rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count,
-            },
-            rspirv_reflect::DescriptorType::SAMPLER => DescriptorSetDesc {
-                name: value.name,
-                ty: vk::DescriptorType::SAMPLER,
-                count,
-            },
-            other => panic!("Descriptor set type {:?} isn't supported", other),
-        }
-    }
-}
-
-type ReflectedDescriptorSet = HashMap<u32, DescriptorSetDesc>;
-
-#[derive(Debug, Clone, Default)]
-struct ReflectedDescriptorLayout {
-    layout: HashMap<u32, ReflectedDescriptorSet>,
-    push_constant_range: Option<(u32, u32)>,
-    compute_groups_size: Option<(u32, u32, u32)>,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct DescriptorSetLayoutDesc {
-    pub layout: Vec<(u32, DescriptorSetDesc)>,
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorSetLayoutDesc<'a> {
+    pub layout: &'a [(usize, DescriptorSetDesc<'a>)],
     pub push_constant_size: Option<(u32, u32)>,
     pub compute_groups_size: Option<(u32, u32, u32)>,
     pub update_after_bind: bool,
 }
 
-impl DescriptorSetLayoutDesc {
+impl<'a> DescriptorSetLayoutDesc<'a> {
     pub fn get_descriptor_count(&self) -> DescriptorTotalCount {
         let mut count = DescriptorTotalCount::default();
         for (_, data) in self.layout.iter() {
             match data.ty {
-                vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += data.count,
-                vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += data.count,
-                vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += data.count,
+                vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += data.count as u32,
+                vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += data.count as u32,
+                vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += data.count as u32,
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                    count.uniform_buffer_dynamic += data.count
+                    count.uniform_buffer_dynamic += data.count as u32
                 }
                 vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    count.uniform_buffer_dynamic += data.count
+                    count.uniform_buffer_dynamic += data.count as u32
                 }
                 vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    count.combined_image_sampler += data.count
+                    count.combined_image_sampler += data.count as u32
                 }
-                vk::DescriptorType::STORAGE_IMAGE => count.storage_image += data.count,
+                vk::DescriptorType::STORAGE_IMAGE => count.storage_image += data.count as u32,
                 ty => panic!("Descriptor set type {:?} not supported", ty),
             }
         }
         count
     }
 
-    pub fn with_slot(mut self, slot: usize, desc: DescriptorSetDesc) -> Self {
-        self.layout.push((slot as u32, desc));
-        self
-    }
-
-    pub fn bindless(mut self) -> Self {
-        self.update_after_bind = true;
-        self
-    }
-
-    pub fn push_constant_size(mut self, size: usize) -> Self {
-        self.push_constant_size = Some((0, size as u32));
-        self
-    }
-
-    pub fn compute_group_size(mut self, size: (u32, u32, u32)) -> Self {
-        self.compute_groups_size = Some(size);
-        self
-    }
-
-    pub fn has_slot(&self, index: u32) -> bool {
+    pub fn has_slot(&self, index: usize) -> bool {
         self.layout.iter().any(|(x, _)| *x == index)
     }
 
-    pub fn get_slot(&self, name: &str) -> Option<u32> {
+    pub fn get_slot(&self, name: &str) -> Option<usize> {
         self.layout
             .iter()
             .find_map(|(slot, desc)| (desc.name == name).then_some(*slot))
     }
 
-    pub fn get_desc(&self, slot: u32) -> Option<&DescriptorSetDesc> {
+    pub fn get_desc(&self, slot: usize) -> Option<&DescriptorSetDesc> {
         self.layout
             .iter()
             .find_map(|(x, data)| if slot == *x { Some(data) } else { None })
     }
 
-    pub fn get_layout(&self) -> &[(u32, DescriptorSetDesc)] {
-        &self.layout
+    pub fn get_layout(&self) -> &[(usize, DescriptorSetDesc<'a>)] {
+        self.layout
     }
 }
 
@@ -249,7 +158,7 @@ pub struct RasterProgram {
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
     pub pipeline_layout: vk::PipelineLayout,
     pub descriptor_layouts: ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
-    pub layout: Vec<DescriptorSetLayoutDesc>,
+    pub layout: &'static [DescriptorSetLayoutDesc<'static>],
 }
 
 impl Program for RasterProgram {
@@ -267,12 +176,15 @@ impl Program for RasterProgram {
 }
 
 impl RasterProgram {
-    pub fn new(device: &Arc<RenderDevice>, shaders: &[ShaderDesc]) -> Result<Self, Error> {
+    pub fn new(
+        device: &Arc<RenderDevice>,
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
+        shaders: &[ShaderDesc],
+    ) -> Result<Self, Error> {
         let mut stages = vk::ShaderStageFlags::empty();
         for shader in shaders {
             stages |= shader.stage;
         }
-        let layout = reflect(shaders)?;
 
         let mut modules = ArrayVec::<_, MAX_SHADERS>::new();
         for shader in shaders {
@@ -281,7 +193,7 @@ impl RasterProgram {
         }
         let mut layouts = ArrayVec::<_, MAX_DESCRIPTOR_SETS>::new();
         for info in layout.iter() {
-            layouts.push(device.get_or_create_layout(stages, info)?);
+            layouts.push(device.get_or_create_layout(stages, *info)?);
         }
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
@@ -294,91 +206,6 @@ impl RasterProgram {
             layout,
         })
     }
-}
-
-fn reflect(shaders: &[ShaderDesc]) -> Result<Vec<DescriptorSetLayoutDesc>, Error> {
-    let mut layouts = Vec::new();
-    for shader in shaders {
-        layouts.push(reflect_shader(shader)?);
-    }
-    let layout = merge_reflected_layouts(layouts);
-    let layout = layout
-        .layout
-        .iter()
-        .map(|(_, descriptor_set)| DescriptorSetLayoutDesc {
-            layout: descriptor_set
-                .iter()
-                .map(|(index, descriptor)| (*index, descriptor.clone()))
-                .collect(),
-            update_after_bind: false,
-            push_constant_size: layout
-                .push_constant_range
-                .map(|(start, end)| (start, end - start)),
-            compute_groups_size: layout.compute_groups_size,
-        })
-        .collect::<Vec<_>>();
-    Ok(layout)
-}
-
-fn reflect_shader(shader: &ShaderDesc) -> Result<ReflectedDescriptorLayout, Error> {
-    let reflection = rspirv_reflect::Reflection::new_from_spirv(&shader.code)?;
-    let descriptor_sets = reflection.get_descriptor_sets()?;
-    let mut layout = HashMap::new();
-    for (set_index, set) in descriptor_sets {
-        let mut descriptor_set = HashMap::new();
-        for (index, mut bind) in set {
-            if set_index as usize == DYNAMIC_DESCRIPTOR_SLOT_INDEX {
-                match bind.ty {
-                    rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
-                        bind.ty = rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-                    }
-                    rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
-                        bind.ty = rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
-                    }
-                    _ => {}
-                }
-            }
-            descriptor_set.insert(index, bind.into());
-        }
-        layout.insert(set_index, descriptor_set);
-    }
-    Ok(ReflectedDescriptorLayout {
-        layout,
-        push_constant_range: reflection
-            .get_push_constant_range()?
-            .map(|x| (x.offset, x.size)),
-        compute_groups_size: reflection.get_compute_group_size(),
-    })
-}
-
-fn merge_reflected_layouts(layouts: Vec<ReflectedDescriptorLayout>) -> ReflectedDescriptorLayout {
-    let mut result = ReflectedDescriptorLayout::default();
-    for layout in layouts {
-        for (stage_index, descriptor_set) in layout.layout {
-            result
-                .layout
-                .entry(stage_index)
-                .and_modify(|entry| {
-                    for (set_index, set) in descriptor_set.iter() {
-                        entry.insert(*set_index, set.clone());
-                    }
-                })
-                .or_insert(descriptor_set.clone());
-        }
-        if let Some((offset, size)) = layout.push_constant_range {
-            let (current_start, current_end) = result.push_constant_range.unwrap_or_default();
-            result.push_constant_range =
-                Some((current_start.min(offset), current_end.max(offset + size)))
-        }
-        result.compute_groups_size = layout.compute_groups_size;
-    }
-
-    if let Some(max) = result.layout.iter().map(|(set_index, _)| *set_index).max() {
-        for i in 0..max {
-            result.layout.entry(i).or_default();
-        }
-    }
-    result
 }
 
 fn create_shader(

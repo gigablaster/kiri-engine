@@ -48,8 +48,6 @@ pub enum Error {
     MapFailed,
     #[error("Memory is already mapped")]
     AlreadyMapped,
-    #[error("Shader reflection failed: {0}")]
-    ShaderReflectionFailed(#[from] rspirv_reflect::ReflectError),
     #[error("Image is too big")]
     ImageTooBig,
     #[error("Descriptor pool fragmentation")]

@@ -54,7 +54,7 @@ pub struct RenderDevice {
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Queue>,
-    layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
+    layouts: RwLock<HashMap<DescriptorSetLayoutDesc<'static>, vk::DescriptorSetLayout>>,
     memory_allocator: Mutex<GpuAllocator>,
     descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     staging: Mutex<Staging>,
@@ -504,7 +504,7 @@ impl RenderDevice {
     pub fn get_or_create_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        desc: &DescriptorSetLayoutDesc,
+        desc: DescriptorSetLayoutDesc<'static>,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let layouts = self.layouts.upgradable_read();
         if let Some(layout) = layouts.get(&desc) {
@@ -515,7 +515,7 @@ impl RenderDevice {
                 Ok(*layout)
             } else {
                 let layout = self.create_descriptor_layout(stage, desc)?;
-                layouts.insert(desc.clone(), layout);
+                layouts.insert(desc, layout);
                 Ok(layout)
             }
         }
@@ -524,7 +524,7 @@ impl RenderDevice {
     fn create_descriptor_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        layout: &DescriptorSetLayoutDesc,
+        layout: DescriptorSetLayoutDesc,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let samplers = TempList::new();
         let bindings = layout
@@ -532,8 +532,8 @@ impl RenderDevice {
             .iter()
             .map(|(index, data)| {
                 let mut binding = vk::DescriptorSetLayoutBinding::default()
-                    .binding(*index)
-                    .descriptor_count(data.count)
+                    .binding(*index as _)
+                    .descriptor_count(data.count as _)
                     .descriptor_type(data.ty)
                     .stage_flags(stage);
                 if data.ty == vk::DescriptorType::SAMPLER
