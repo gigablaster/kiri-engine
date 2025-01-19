@@ -145,7 +145,7 @@ impl<'a> RenderResourceResolver<'a> {
     pub fn resolve_raster_pipeline(
         &self,
         handle: RasterPipelineHandle,
-    ) -> Result<Arc<RasterPipeline>, Error> {
+    ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
         self.pipeline_resolver.resolve_raster_pipeline(handle)
     }
 

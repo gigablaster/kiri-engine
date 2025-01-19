@@ -19,6 +19,7 @@ use std::{
     hash::Hash,
     path::{Path, PathBuf},
     sync::Arc,
+    u32,
 };
 
 use kiri_assets::{load_or_compile_asset, ShaderAssetSource};
@@ -91,8 +92,32 @@ impl CompileRasterProgram {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash)]
-pub struct RasterPipelineHandle(usize);
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct RasterPipelineHandle(u32);
+
+impl From<RasterPipelineHandle> for u32 {
+    fn from(value: RasterPipelineHandle) -> Self {
+        value.0
+    }
+}
+
+impl From<u32> for RasterPipelineHandle {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl Default for RasterPipelineHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
+
+impl RasterPipelineHandle {
+    pub fn valid(&self) -> bool {
+        self.0 != u32::MAX
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RasterPipelineDesc {
@@ -241,16 +266,16 @@ impl PipelineResolver<'_> {
     pub fn resolve_raster_pipeline(
         &self,
         handle: RasterPipelineHandle,
-    ) -> Result<Arc<RasterPipeline>, Error> {
+    ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
         let pipeline = self
             .raster_pipelines
-            .get(handle.0)
+            .get(handle.0 as usize)
             .ok_or(Error::InvalidRasterPipeline(handle))?;
         if let Some(pipeline) = &pipeline.pipeline {
-            Ok(pipeline.clone())
+            Ok((pipeline.pipeline, pipeline.program.pipeline_layout))
         } else {
             let compiled = block_on(pipeline.compile.eval(&self.cache))?;
-            Ok(compiled)
+            Ok((compiled.pipeline, compiled.program.pipeline_layout))
         }
     }
 }
@@ -285,7 +310,7 @@ impl PipelineCache {
                 *handle
             } else {
                 let mut pipelines = self.raster_pipelines.lock();
-                let handle = RasterPipelineHandle(pipelines.len());
+                let handle = RasterPipelineHandle(pipelines.len() as u32);
                 let program = CompileRasterProgram::new(
                     &self.device,
                     desc.descriptors_layout,

@@ -24,6 +24,9 @@ use crate::Error;
 
 use super::RenderDevice;
 
+pub const PASS_DESCRIPTOR_SLOT_INDEX: usize = 0;
+pub const OBJECT_DESCRIPTOR_SLOT_INDEX: usize = 1;
+pub const MATERIAL_DESCRIPTOR_SLOT_IDNEX: usize = 2;
 pub const DYNAMIC_DESCRIPTOR_SLOT_INDEX: usize = 3;
 pub const MAX_DESCRIPTOR_SETS: usize = 4;
 

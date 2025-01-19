@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod descriptors;
+mod draw_stream;
 mod dynamic;
 mod error;
 mod image_pool;
@@ -25,6 +26,7 @@ mod texture;
 mod uniforms;
 
 pub use descriptors::*;
+pub use draw_stream::*;
 use dynamic::*;
 pub use error::*;
 pub use image_pool::*;
