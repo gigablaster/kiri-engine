@@ -28,8 +28,6 @@ pub(super) struct Binding<T: Copy> {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ImageBindingData {
     pub handle: ImageHandle,
-    pub aspect: vk::ImageAspectFlags,
-    pub view: vk::ImageView,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,12 +82,7 @@ impl<'a> DescriptorSetBuilder<'a> {
         }
     }
 
-    pub fn bind_image(
-        mut self,
-        slot: &str,
-        image: ImageHandle,
-        aspect: vk::ImageAspectFlags,
-    ) -> Result<Self, Error> {
+    pub fn bind_image(mut self, slot: &str, image: ImageHandle) -> Result<Self, Error> {
         let slot = self
             .layout
             .get_slot(slot)
@@ -98,11 +91,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: ImageBindingData {
-                handle: image,
-                aspect,
-                view: vk::ImageView::null(),
-            },
+            data: ImageBindingData { handle: image },
         });
         Ok(self)
     }

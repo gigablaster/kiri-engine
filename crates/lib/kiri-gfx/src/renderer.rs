@@ -18,7 +18,7 @@ use std::{ptr::NonNull, sync::Arc};
 
 use futures::executor::block_on;
 use kiri_backend::{
-    ash::vk::{self},
+    ash::vk::{self, DescriptorImageInfo},
     AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount,
     GpuDescriptor, Image, ImageViewDesc, RenderDevice, Swapchain,
 };
@@ -26,8 +26,8 @@ use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
-    DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, PipelineCache,
-    RenderContext, RenderResourceResolver,
+    descriptors, DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error,
+    PipelineCache, RenderContext, RenderResourceResolver,
 };
 
 pub type ImageHandle = Handle<vk::ImageView>;
@@ -322,11 +322,16 @@ impl Renderer {
         // Present
         self.device.present(target, &frame)?;
         // Cleanup
+        let mut drop_descriptors = Vec::new();
         trash_descriptors.drain(..).for_each(|x| {
-            descriptors.remove(x);
+            if let Some((descriptor, ..)) = descriptors.remove(x) {
+                if let Some(descriptor) = descriptor {
+                    drop_descriptors.push(descriptor);
+                }
+            }
         });
         self.device.end_frame(frame);
-
+        self.device.drop_descriptors(drop_descriptors);
         Ok(FrameState::Rendered)
     }
 
@@ -341,7 +346,6 @@ impl Renderer {
                 }
             }
         }
-        self.device.drop_descriptors(drop_list);
         self.device
             .with_descriptor_allocator(|context| -> Result<(), Error> {
                 let dirty = self.dirty_descriptors.lock().drain(..).collect::<Vec<_>>();
@@ -350,10 +354,17 @@ impl Renderer {
                 let mut writes = Vec::with_capacity(16384);
                 for handle in dirty {
                     // Allocate and assing new descriptor set
-                    let data = descriptors.get_cold(handle).unwrap();
+                    let data = descriptors
+                        .get_cold(handle)
+                        .ok_or(Error::InvalidDescriptorHandle(handle))?;
                     let descriptor_set = context.allocate(data.layout, &data.count, 1)?.remove(0);
                     let ds = *descriptor_set.raw();
-                    descriptors.replace(handle, Some(descriptor_set));
+                    // Remove old descriptor if any
+                    if let Some(descriptor) =
+                        descriptors.replace(handle, Some(descriptor_set)).unwrap()
+                    {
+                        drop_list.push(descriptor);
+                    }
                     let data = descriptors.get_cold_mut(handle).unwrap();
                     if let Some(name) = &data.name {
                         self.device.set_object_name(ds, name);
@@ -361,22 +372,15 @@ impl Renderer {
 
                     // Process images
                     for image in &mut data.images {
-                        // Update image view if needed
-                        if image.data.view == vk::ImageView::null() {
-                            image.data.view = images
-                                .get(image.data.handle)
-                                .copied()
-                                .ok_or(Error::InvalidImageHandle(image.data.handle))?;
-                        }
                         // Add to write list.
+                        let view = *images
+                            .get(image.data.handle)
+                            .ok_or(Error::InvalidImageHandle(image.data.handle))?;
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .image_info(slice::from_ref(
-                                    image_writes.add(
-                                        vk::DescriptorImageInfo::default()
-                                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                            .image_view(image.data.view),
-                                    ),
+                                    image_writes
+                                        .add(vk::DescriptorImageInfo::default().image_view(view)),
                                 ))
                                 .descriptor_count(1)
                                 .descriptor_type(image.ty)
@@ -471,16 +475,23 @@ impl Renderer {
                 unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
                 Ok(())
             })?;
+        self.device.drop_descriptors(drop_list);
         Ok(())
     }
 
     fn invalidate_image_views(&self, image: ImageHandle) {
-        self.descriptors.write().for_each_mut(|_, data| {
-            data.images
-                .iter_mut()
-                .filter(|x| x.data.handle == image)
-                .for_each(|x| x.data.view = vk::ImageView::null());
-        })
+        let mut dirty = self.dirty_descriptors.lock();
+        // Find all descriptors that linked to changed image and add them to dirty list
+        self.descriptors
+            .read()
+            .enumerate()
+            .filter_map(|(handle, _, data)| {
+                data.images
+                    .iter()
+                    .any(|x| x.data.handle == image)
+                    .then_some(handle)
+            })
+            .for_each(|handle| dirty.push(handle));
     }
 }
 

@@ -21,7 +21,7 @@ use kiri_backend::{
         self,
         vk::{self, Rect2D},
     },
-    RasterPipeline, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
 };
 
 use crate::{

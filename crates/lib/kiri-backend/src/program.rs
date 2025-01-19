@@ -346,7 +346,7 @@ fn create_shader(
     ))
 }
 
-pub fn create_descriptor_layout(
+pub(super) fn create_descriptor_layout(
     device: &RenderDevice,
     stage: vk::ShaderStageFlags,
     layout: &DescriptorSetLayoutDesc,

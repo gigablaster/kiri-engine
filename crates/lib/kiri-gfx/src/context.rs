@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use kiri_backend::{ash::vk, Image};
+use kiri_backend::Image;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
