@@ -1,14 +1,19 @@
-use kiri_backend::ash::{self, vk};
+use std::sync::Arc;
 
-use crate::{ImageHandle, PassDispatcher};
+use kiri_backend::{
+    ash::{self, vk},
+    Image,
+};
+
+use crate::PassDispatcher;
 
 /// Copy result image to backbuffer and prepare it for presentation
 pub struct FinalCompositionPassDispatcher {
-    image: ImageHandle,
+    image: Arc<Image>,
 }
 
 impl FinalCompositionPassDispatcher {
-    pub fn new(image: ImageHandle) -> Self {
+    pub fn new(image: Arc<Image>) -> Self {
         Self { image }
     }
 }
@@ -20,7 +25,6 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
         command_buffer: ash::vk::CommandBuffer,
         resolver: &crate::RenderResourceResolver,
     ) -> Result<(), crate::Error> {
-        let image = resolver.resolve_image(self.image)?;
         unsafe {
             let barriers = [
                 vk::ImageMemoryBarrier::default()
@@ -41,7 +45,7 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
                     .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
                     .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .image(image.raw)
+                    .image(self.image.raw)
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -61,7 +65,7 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
             );
             device.cmd_blit_image(
                 command_buffer,
-                image.raw,
+                self.image.raw,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 resolver.backbuffer.raw,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -69,8 +73,8 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
                     .src_offsets([
                         vk::Offset3D::default(),
                         vk::Offset3D::default()
-                            .x(image.desc.dims[0] as _)
-                            .y(image.desc.dims[1] as _)
+                            .x(self.image.desc.dims[0] as _)
+                            .y(self.image.desc.dims[1] as _)
                             .z(1),
                     ])
                     .src_subresource(vk::ImageSubresourceLayers {

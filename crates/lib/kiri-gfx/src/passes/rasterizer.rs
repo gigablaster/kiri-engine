@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::mem;
+use std::sync::Arc;
 
 use arrayvec::ArrayVec;
 use kiri_backend::{
@@ -21,19 +21,14 @@ use kiri_backend::{
         self,
         vk::{self, Rect2D},
     },
-    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS, MAX_DESCRIPTOR_SETS,
+    Image, ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
-use crate::{
-    BufferPointer, DescriptorHandle, Error, ImageHandle, PassDispatcher, RasterPipelineHandle,
-    RenderResourceResolver,
-};
+use crate::{DrawStream, Error, ImageHandle, PassDispatcher, RenderResourceResolver};
 
-const MAX_DYNAMIC_OFFSETS: usize = 2;
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RenderTarget {
-    pub image: ImageHandle,
+    pub image: Arc<Image>,
     pub initial_layout: Option<vk::ImageLayout>,
     pub final_layout: Option<vk::ImageLayout>,
     pub load: vk::AttachmentLoadOp,
@@ -42,7 +37,7 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    pub fn new(image: ImageHandle) -> Self {
+    pub fn new(image: Arc<Image>) -> Self {
         Self {
             image,
             initial_layout: None,
@@ -91,10 +86,10 @@ impl RenderTarget {
 
     fn build(
         &self,
-        resolver: &RenderResourceResolver,
+        aspect: vk::ImageAspectFlags,
         layout: vk::ImageLayout,
     ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let view = resolver.resolve_image_view(self.image)?;
+        let view = self.image.view(ImageViewDesc::new(aspect))?;
         let info = vk::RenderingAttachmentInfo::default()
             .image_layout(layout)
             .image_view(view)
@@ -105,10 +100,10 @@ impl RenderTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ImageDependency {
     pub aspect: vk::ImageAspectFlags,
-    pub image: ImageHandle,
+    pub image: Arc<Image>,
     pub initial_layout: vk::ImageLayout,
     pub desired_layout: Option<vk::ImageLayout>,
     pub src_access: vk::AccessFlags2,
@@ -118,7 +113,7 @@ pub struct ImageDependency {
 }
 
 impl ImageDependency {
-    pub fn color(image: ImageHandle) -> Self {
+    pub fn color(image: Arc<Image>) -> Self {
         Self {
             aspect: vk::ImageAspectFlags::COLOR,
             image,
@@ -131,7 +126,7 @@ impl ImageDependency {
         }
     }
 
-    pub fn depth(image: ImageHandle) -> Self {
+    pub fn depth(image: Arc<Image>) -> Self {
         Self {
             aspect: vk::ImageAspectFlags::DEPTH,
             image,
@@ -151,7 +146,6 @@ impl ImageDependency {
 
     fn build<'a>(
         self,
-        resolver: &RenderResourceResolver<'a>,
         desired_layout: vk::ImageLayout,
     ) -> Result<vk::ImageMemoryBarrier2<'a>, Error> {
         Ok(vk::ImageMemoryBarrier2::default()
@@ -168,80 +162,7 @@ impl ImageDependency {
                 base_array_layer: 0,
                 layer_count: vk::REMAINING_ARRAY_LAYERS,
             })
-            .image(resolver.resolve_image(self.image)?.raw))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct DrawCommand {
-    vertex_count: u32,
-    instance_count: u32,
-    first_vertex: u32,
-    first_instance: u32,
-}
-
-#[derive(Debug)]
-pub enum DrawCount {
-    Fixed(usize),
-    Indirect(BufferPointer, usize),
-}
-
-#[derive(Debug)]
-pub struct Draw {
-    pub pipeline: RasterPipelineHandle,
-    pub commands: BufferPointer,
-    pub count: DrawCount,
-    pub stride: usize,
-    pub descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
-    pub dynamic_offsets: ArrayVec<u32, MAX_DYNAMIC_OFFSETS>,
-}
-
-impl Draw {
-    pub fn direct(
-        pipeline: RasterPipelineHandle,
-        commands: BufferPointer,
-        draw_count: usize,
-    ) -> Self {
-        Self {
-            pipeline,
-            commands,
-            count: DrawCount::Fixed(draw_count),
-            stride: mem::size_of::<DrawCommand>(),
-            descriptors: [DescriptorHandle::invalid(); 4],
-            dynamic_offsets: Default::default(),
-        }
-    }
-
-    pub fn indirect(
-        pipeline: RasterPipelineHandle,
-        commands: BufferPointer,
-        count: BufferPointer,
-        max_draw_count: usize,
-    ) -> Self {
-        Self {
-            pipeline,
-            commands,
-            count: DrawCount::Indirect(count, max_draw_count),
-            stride: mem::size_of::<DrawCommand>(),
-            descriptors: [DescriptorHandle::invalid(); 4],
-            dynamic_offsets: Default::default(),
-        }
-    }
-
-    pub fn descriptor(mut self, index: usize, descriptor: DescriptorHandle) -> Self {
-        self.descriptors[index] = descriptor;
-        self
-    }
-
-    pub fn stride(mut self, stride: usize) -> Self {
-        self.stride = stride;
-        self
-    }
-
-    pub fn push_dynamic_offset(mut self, offset: u32) -> Self {
-        self.dynamic_offsets.push(offset);
-        self
+            .image(self.image.raw))
     }
 }
 
@@ -249,7 +170,7 @@ pub struct RasterizerPassBuilder<'a> {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     dependencies: Vec<ImageDependency>,
-    draws: Vec<Draw>,
+    streams: Vec<DrawStream>,
     area: Option<Rect2D>,
     name: &'a str,
 }
@@ -263,11 +184,11 @@ impl<'a> RasterizerPassBuilder<'a> {
         Self {
             color_targets: color_target
                 .iter()
-                .copied()
+                .cloned()
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth_target,
             dependencies: Default::default(),
-            draws: Default::default(),
+            streams: Default::default(),
             area: None,
             name,
         }
@@ -283,8 +204,8 @@ impl<'a> RasterizerPassBuilder<'a> {
         self
     }
 
-    pub fn draw(&mut self, stream: Draw) {
-        self.draws.push(stream);
+    pub fn draw(&mut self, stream: DrawStream) {
+        self.streams.push(stream);
     }
 
     pub fn build(self) -> Box<dyn PassDispatcher> {
@@ -293,7 +214,7 @@ impl<'a> RasterizerPassBuilder<'a> {
             &self.color_targets,
             self.depth_target,
             self.dependencies,
-            self.draws,
+            self.streams,
             self.area,
         ))
     }
@@ -303,7 +224,7 @@ pub struct RasterizerPassDispatcher {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     dependencies: Vec<ImageDependency>,
-    draws: Vec<Draw>,
+    streams: Vec<DrawStream>,
     area: Option<vk::Rect2D>,
     name: String,
 }
@@ -314,15 +235,15 @@ impl RasterizerPassDispatcher {
         color_targets: &[RenderTarget],
         depth_target: Option<RenderTarget>,
         dependencies: Vec<ImageDependency>,
-        draws: Vec<Draw>,
+        streams: Vec<DrawStream>,
         area: Option<vk::Rect2D>,
     ) -> Self {
         Self {
             name: name.to_owned(),
-            color_targets: color_targets.iter().copied().collect(),
+            color_targets: color_targets.iter().cloned().collect(),
             dependencies,
             depth_target,
-            draws,
+            streams,
             area,
         }
     }
@@ -342,13 +263,17 @@ impl PassDispatcher for RasterizerPassDispatcher {
         puffin::profile_function!();
         let mut color_attachments = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for color in &self.color_targets {
-            color_attachments
-                .push(color.build(resolver, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)?);
+            color_attachments.push(color.build(
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )?);
         }
         let mut depth_attachment = None;
         if let Some(depth) = &self.depth_target {
-            depth_attachment =
-                Some(depth.build(resolver, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)?);
+            depth_attachment = Some(depth.build(
+                vk::ImageAspectFlags::DEPTH,
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            )?);
         }
 
         // From initial layout to attachments
@@ -360,7 +285,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if initial_layout != vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::SHADER_READ)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .old_layout(initial_layout)
@@ -379,7 +304,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
                 // Write-write barrier
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -398,9 +323,9 @@ impl PassDispatcher for RasterizerPassDispatcher {
         }
         self.dependencies
             .iter()
-            .copied()
+            .cloned()
             .try_for_each(|x| -> Result<(), Error> {
-                barriers.push(x.build(resolver, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
+                barriers.push(x.build(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
                 Ok(())
             })?;
         if let Some(target) = &self.depth_target {
@@ -410,7 +335,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if initial_layout != vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .old_layout(initial_layout)
@@ -430,7 +355,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
                 // Write-write barrier
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -460,12 +385,8 @@ impl PassDispatcher for RasterizerPassDispatcher {
         let dims = self
             .color_targets
             .iter()
-            .map(|x| resolver.resolve_image(x.image).unwrap().desc.dims)
-            .chain(
-                self.depth_target
-                    .iter()
-                    .map(|x| resolver.resolve_image(x.image).unwrap().desc.dims),
-            )
+            .map(|x| x.image.desc.dims)
+            .chain(self.depth_target.iter().map(|x| x.image.desc.dims))
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
         assert!(!dims.is_empty(), "Need at least one render target");
         assert!(
@@ -488,51 +409,8 @@ impl PassDispatcher for RasterizerPassDispatcher {
             rendering_info = rendering_info.depth_attachment(depth);
         }
         unsafe { device.cmd_begin_rendering(command_buffer, &rendering_info) };
-        for draw in &self.draws {
-            let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS];
-            for (index, descriptor) in draw.descriptors.iter().enumerate() {
-                descriptors[index] = resolver
-                    .resolve_descriptor_set(*descriptor)
-                    .unwrap_or(resolver.empty_descriptor_set);
-            }
-            let draw_buffer = resolver.resolve_buffer(draw.commands.handle)?;
-            let pipeline = resolver.resolve_raster_pipeline(draw.pipeline)?;
-            unsafe {
-                device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline.pipeline,
-                );
-                device.cmd_bind_descriptor_sets(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline.program.pipeline_layout,
-                    0,
-                    &descriptors,
-                    &draw.dynamic_offsets,
-                );
-                match draw.count {
-                    DrawCount::Fixed(count) => device.cmd_draw_indirect(
-                        command_buffer,
-                        draw_buffer,
-                        draw.commands.offset,
-                        count as _,
-                        draw.stride as _,
-                    ),
-                    DrawCount::Indirect(count, max_draw_count) => {
-                        let count_buffer = resolver.resolve_buffer(count.handle)?;
-                        device.cmd_draw_indirect_count(
-                            command_buffer,
-                            draw_buffer,
-                            draw.commands.offset,
-                            count_buffer,
-                            count.offset,
-                            max_draw_count as _,
-                            draw.stride as _,
-                        );
-                    }
-                }
-            }
+        for stream in &self.streams {
+            stream.execute(device, command_buffer, render_area, resolver)?;
         }
         unsafe { device.cmd_end_rendering(command_buffer) };
 
@@ -545,7 +423,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if final_layout != vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -569,7 +447,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if final_layout != vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(resolver.resolve_image(target.image)?.raw)
+                        .image(target.image.raw)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
