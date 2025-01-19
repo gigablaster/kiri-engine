@@ -26,8 +26,8 @@ use kiri_assets::{load_or_compile_asset, ShaderAssetSource};
 use kiri_backend::{
     ash::vk::{self},
     compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache,
-    DescriptorSetLayoutDesc, Pipeline, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
-    RenderPassLayout, ShaderDesc,
+    DescriptorSetLayoutDesc, InputVertexStreamLayout, Pipeline, RasterPipelineCreateDesc,
+    RasterProgram, RenderDevice, RenderPassLayout, ShaderDesc,
 };
 use kiri_common::{block_on, spawn};
 use log::warn;
@@ -125,6 +125,7 @@ pub struct PipelineDesc {
     pub fragment_shader: String,
     pub pass_layout: &'static RenderPassLayout<'static>,
     pub descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
+    pub input_layout: &'static [InputVertexStreamLayout<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
 }
@@ -133,6 +134,7 @@ impl PipelineDesc {
     pub fn new(
         vertex_shader: &str,
         fragment_shader: &str,
+        input_layout: &'static [InputVertexStreamLayout<'static>],
         render_pass: &'static RenderPassLayout<'static>,
         descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Self {
@@ -141,6 +143,7 @@ impl PipelineDesc {
             fragment_shader: fragment_shader.into(),
             pass_layout: render_pass,
             descriptors_layout,
+            input_layout,
             specialization: Default::default(),
             desc: Default::default(),
         }
@@ -163,6 +166,7 @@ pub struct CompileRasterPipeline {
     pipeline_cache: vk::PipelineCache,
     program: Lazy<RasterProgram>,
     pass_layout: &'static RenderPassLayout<'static>,
+    input_layout: &'static [InputVertexStreamLayout<'static>],
     specialization: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
 }
@@ -187,6 +191,7 @@ impl LazyWorker for CompileRasterPipeline {
             self.pipeline_cache,
             &program,
             self.pass_layout,
+            self.input_layout,
             &self.specialization,
             self.desc,
             None,
@@ -206,6 +211,7 @@ impl CompileRasterPipeline {
             pipeline_cache,
             program,
             pass_layout: desc.pass_layout,
+            input_layout: desc.input_layout,
             specialization: desc.specialization.clone(),
             desc: desc.desc,
         }
