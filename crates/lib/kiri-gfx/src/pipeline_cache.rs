@@ -23,9 +23,10 @@ use std::{
 
 use kiri_assets::{load_or_compile_asset, ShaderAssetSource};
 use kiri_backend::{
-    ash::vk, compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache,
-    RasterPipeline, RasterPipelineCreateDesc, RasterProgram, RenderDevice, RenderPassLayout,
-    ShaderDesc,
+    ash::vk::{self},
+    compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache,
+    DescriptorSetLayoutDesc, RasterPipeline, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
+    RenderPassLayout, ShaderDesc,
 };
 use kiri_common::{block_on, spawn};
 use log::warn;
@@ -37,6 +38,7 @@ use crate::Error;
 #[derive(Debug, Clone)]
 pub struct CompileRasterProgram {
     device: Arc<RenderDevice>,
+    layout: &'static [DescriptorSetLayoutDesc<'static>],
     vertex_shader: String,
     fragment_shader: String,
 }
@@ -64,6 +66,7 @@ impl LazyWorker for CompileRasterProgram {
         .await?;
         Ok(RasterProgram::new(
             &self.device,
+            self.layout,
             &[
                 ShaderDesc::vertex(&vertex_shader.bytecode),
                 ShaderDesc::fragment(&fragment_shader.bytecode),
@@ -73,9 +76,15 @@ impl LazyWorker for CompileRasterProgram {
 }
 
 impl CompileRasterProgram {
-    pub fn new(device: &Arc<RenderDevice>, vertex_shader: String, fragment_shader: String) -> Self {
+    pub fn new(
+        device: &Arc<RenderDevice>,
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
+        vertex_shader: String,
+        fragment_shader: String,
+    ) -> Self {
         Self {
             device: device.clone(),
+            layout,
             vertex_shader,
             fragment_shader,
         }
@@ -90,6 +99,7 @@ pub struct RasterPipelineDesc {
     pub vertex_shader: String,
     pub fragment_shader: String,
     pub pass_layout: &'static RenderPassLayout<'static>,
+    pub descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     pub specialization: Vec<(u32, u32)>,
     pub desc: RasterPipelineCreateDesc,
 }
@@ -99,11 +109,13 @@ impl RasterPipelineDesc {
         vertex_shader: &str,
         fragment_shader: &str,
         render_pass: &'static RenderPassLayout<'static>,
+        descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Self {
         Self {
             vertex_shader: vertex_shader.into(),
             fragment_shader: fragment_shader.into(),
             pass_layout: render_pass,
+            descriptors_layout,
             specialization: Default::default(),
             desc: Default::default(),
         }
@@ -212,12 +224,12 @@ impl Debug for PipelineCache {
     }
 }
 
-pub(super) struct PipelineCacheResolver<'a> {
+pub(super) struct PipelineResolver<'a> {
     cache: Arc<LazyCache>,
     raster_pipelines: MutexGuard<'a, Vec<RasterPipelineCacheEntry>>,
 }
 
-impl Debug for PipelineCacheResolver<'_> {
+impl Debug for PipelineResolver<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PipelineCacheResolver")
             .field("raster_pipelines", &self.raster_pipelines)
@@ -225,7 +237,7 @@ impl Debug for PipelineCacheResolver<'_> {
     }
 }
 
-impl PipelineCacheResolver<'_> {
+impl PipelineResolver<'_> {
     pub fn resolve_raster_pipeline(
         &self,
         handle: RasterPipelineHandle,
@@ -244,22 +256,22 @@ impl PipelineCacheResolver<'_> {
 }
 
 impl PipelineCache {
-    pub fn new<P: AsRef<Path>>(device: &Arc<RenderDevice>, cache_path: Option<P>) -> Self {
+    pub fn new<P: AsRef<Path>>(device: Arc<RenderDevice>, cache_path: Option<P>) -> Self {
         let pipeline_cache_path = cache_path.map(|path| path.as_ref().to_path_buf());
         let pipeline_cache = pipeline_cache_path
             .clone()
             .map(|path| {
-                load_or_create_pipeline_cache(device, path).unwrap_or(vk::PipelineCache::null())
+                load_or_create_pipeline_cache(&device, path).unwrap_or(vk::PipelineCache::null())
             })
             .unwrap_or(vk::PipelineCache::null());
 
         Self {
-            device: device.clone(),
             pipeline_cache,
             pipeline_cache_path,
             cache: LazyCache::create(),
             raster_pipelines: Default::default(),
             raster_handle_to_pipeline: Default::default(),
+            device,
         }
     }
 
@@ -276,6 +288,7 @@ impl PipelineCache {
                 let handle = RasterPipelineHandle(pipelines.len());
                 let program = CompileRasterProgram::new(
                     &self.device,
+                    desc.descriptors_layout,
                     desc.vertex_shader.clone(),
                     desc.fragment_shader.clone(),
                 )
@@ -293,8 +306,8 @@ impl PipelineCache {
         }
     }
 
-    pub(super) fn resolve_pipelines(&self) -> PipelineCacheResolver {
-        PipelineCacheResolver {
+    pub(super) fn resolve(&self) -> PipelineResolver {
+        PipelineResolver {
             cache: self.cache.clone(),
             raster_pipelines: self.raster_pipelines.lock(),
         }

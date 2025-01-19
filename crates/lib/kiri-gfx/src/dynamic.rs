@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, PhysicalDevice};
+use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, PhysicalDevice, RenderDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};
@@ -112,8 +112,9 @@ impl DynamicGpuMemory {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DynamicGpuMemoryPool {
+    device: Arc<RenderDevice>,
     pool: Vec<Arc<DynamicGpuMemory>>,
     used: Vec<Arc<DynamicGpuMemory>>,
     recycle: Vec<Arc<DynamicGpuMemory>>,
@@ -122,7 +123,15 @@ pub struct DynamicGpuMemoryPool {
 const DYNAMIC_PAGE_SIZE: u64 = 16 * 1024 * 1024;
 
 impl DynamicGpuMemoryPool {
-    pub fn get(&mut self, renderer: &Renderer) -> Result<Arc<DynamicGpuMemory>, Error> {
+    pub fn new(device: Arc<RenderDevice>) -> Self {
+        Self {
+            device,
+            pool: Default::default(),
+            used: Default::default(),
+            recycle: Default::default(),
+        }
+    }
+    pub fn take(&mut self, renderer: &Renderer) -> Result<Arc<DynamicGpuMemory>, Error> {
         if let Some(page) = self.pool.pop() {
             self.used.push(page.clone());
             Ok(page)

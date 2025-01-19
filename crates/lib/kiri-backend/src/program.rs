@@ -80,22 +80,15 @@ pub struct DescriptorSetDesc<'a> {
     pub count: usize,
 }
 
-impl<'a> DescriptorSetDesc<'a> {
-    pub fn single(name: &'a str, ty: vk::DescriptorType) -> Self {
-        Self { name, ty, count: 1 }
-    }
-
-    pub fn count(name: &'a str, ty: vk::DescriptorType, count: usize) -> Self {
-        Self { name, ty, count }
-    }
-}
+pub const EMPTY_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[],
+    compute_groups_size: None,
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DescriptorSetLayoutDesc<'a> {
     pub layout: &'a [(usize, DescriptorSetDesc<'a>)],
-    pub push_constant_size: Option<(u32, u32)>,
     pub compute_groups_size: Option<(u32, u32, u32)>,
-    pub update_after_bind: bool,
 }
 
 impl<'a> DescriptorSetLayoutDesc<'a> {

@@ -20,7 +20,7 @@ use kiri_backend::{
     ImageViewDesc, RenderDevice,
 };
 use kiri_common::{Handle, HotColdPool, TempList};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
 
@@ -69,7 +69,7 @@ pub struct DescriptorSetData {
 
 #[derive(Debug)]
 pub struct DescriptorSetBuilder<'a> {
-    layout: &'a DescriptorSetLayoutDesc,
+    layout: DescriptorSetLayoutDesc<'static>,
     stages: vk::ShaderStageFlags,
     images: Vec<Binding<ImageBindingData>>,
     unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
@@ -80,7 +80,7 @@ pub struct DescriptorSetBuilder<'a> {
 }
 
 impl<'a> DescriptorSetBuilder<'a> {
-    pub fn new(stages: vk::ShaderStageFlags, layout: &'a DescriptorSetLayoutDesc) -> Self {
+    pub fn new(stages: vk::ShaderStageFlags, layout: DescriptorSetLayoutDesc<'static>) -> Self {
         let count = layout.get_descriptor_count();
         Self {
             layout,
@@ -100,7 +100,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             .get_slot(slot)
             .ok_or(Error::TextureSlotNotFound(slot.to_owned()))?;
         self.images.push(Binding {
-            slot,
+            slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: ImageBindingData {
@@ -123,7 +123,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             .get_slot(slot)
             .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.unifom_buffers.push(Binding {
-            slot,
+            slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
@@ -147,7 +147,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             .get_slot(slot)
             .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.storage_buffers.push(Binding {
-            slot,
+            slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
@@ -170,7 +170,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             .get_slot(slot)
             .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_uniform_buffers.push(Binding {
-            slot,
+            slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData {
@@ -192,7 +192,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             .get_slot(slot)
             .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_storage_buffers.push(Binding {
-            slot,
+            slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: DynamicBufferBindingData {
@@ -223,27 +223,76 @@ impl<'a> DescriptorSetBuilder<'a> {
     }
 }
 
-const MAX_DESCRIPTORS: usize = 64536;
+const MAX_DESCRIPTORS: usize = 16384;
 
 #[derive(Debug)]
-pub struct DescriptorSetManager {
+pub(super) struct DescriptorManager {
     device: Arc<RenderDevice>,
     descriptors: RwLock<DescriptorPool>,
-    dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
-    descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
+    dirty: Mutex<Vec<DescriptorHandle>>,
+    to_destroy: Mutex<Vec<DescriptorHandle>>,
 }
 
-impl DescriptorSetManager {
+#[derive(Debug)]
+pub(super) struct DescriptorResolver<'a> {
+    descriptors: RwLockReadGuard<'a, DescriptorPool>,
+}
+
+impl DescriptorResolver<'_> {
+    pub fn resolve(&self, handle: DescriptorHandle) -> Result<vk::DescriptorSet, Error> {
+        self.descriptors
+            .get(handle)
+            .copied()
+            .ok_or(Error::InvalidDescriptorHandle(handle))
+    }
+}
+
+pub struct DescriptorUpdateContext<'a> {
+    device: &'a RenderDevice,
+    descriptors: RwLockWriteGuard<'a, DescriptorPool>,
+    dirty: MutexGuard<'a, Vec<DescriptorHandle>>,
+    to_destroy: MutexGuard<'a, Vec<DescriptorHandle>>,
+}
+
+impl DescriptorUpdateContext<'_> {
+    pub fn create_descriptor(
+        &mut self,
+        builder: DescriptorSetBuilder,
+    ) -> Result<DescriptorHandle, Error> {
+        let data = builder.build(self.device)?;
+        let handle = self.descriptors.push(vk::DescriptorSet::null(), data);
+        self.dirty.push(handle);
+        Ok(handle)
+    }
+
+    pub fn update_descriptor(
+        &mut self,
+        handle: DescriptorHandle,
+        builder: DescriptorSetBuilder,
+    ) -> Result<(), Error> {
+        let data = builder.build(self.device)?;
+        if self.descriptors.replace_cold(handle, data).is_some() {
+            self.dirty.push(handle);
+        }
+        Ok(())
+    }
+
+    pub fn destroy_descriptor(&mut self, handle: DescriptorHandle) {
+        self.to_destroy.push(handle);
+    }
+}
+
+impl DescriptorManager {
     pub fn new(device: Arc<RenderDevice>) -> Self {
         Self {
             device,
             descriptors: RwLock::new(HotColdPool::new(MAX_DESCRIPTORS)),
-            dirty_descriptors: Default::default(),
-            descriptors_to_destroy: Default::default(),
+            dirty: Default::default(),
+            to_destroy: Default::default(),
         }
     }
 
-    pub fn create_descriptor_set(
+    pub fn create_descriptor(
         &self,
         builder: DescriptorSetBuilder,
     ) -> Result<DescriptorHandle, Error> {
@@ -252,37 +301,55 @@ impl DescriptorSetManager {
             .descriptors
             .write()
             .push(vk::DescriptorSet::null(), data);
-        self.dirty_descriptors.lock().push(handle);
+        self.dirty.lock().push(handle);
         Ok(handle)
     }
 
-    pub fn update_descriptor_set(
+    pub fn update_descriptor(
         &self,
         handle: DescriptorHandle,
         builder: DescriptorSetBuilder,
     ) -> Result<(), Error> {
         let data = builder.build(&self.device)?;
         self.descriptors.write().replace_cold(handle, data);
-        self.dirty_descriptors.lock().push(handle);
+        self.dirty.lock().push(handle);
         Ok(())
     }
 
-    pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
-        self.descriptors_to_destroy.lock().push(handle);
+    pub fn destroy_descriptor(&self, handle: DescriptorHandle) {
+        self.to_destroy.lock().push(handle);
+    }
+
+    pub fn update(&self) -> DescriptorUpdateContext {
+        let descriptors = self.descriptors.write();
+        let dirty = self.dirty.lock();
+        let to_destroy = self.to_destroy.lock();
+        DescriptorUpdateContext {
+            device: &self.device,
+            descriptors: descriptors,
+            dirty: dirty,
+            to_destroy: to_destroy,
+        }
+    }
+
+    pub fn resolve(&self) -> DescriptorResolver {
+        DescriptorResolver {
+            descriptors: self.descriptors.read(),
+        }
     }
 
     pub fn update_descriptors(&self) -> Result<(), Error> {
         puffin::profile_function!();
         let mut descriptors = self.descriptors.write();
         let mut drop_list = Vec::new();
-        for handle in self.descriptors_to_destroy.lock().drain(..) {
+        let mut dirty = self.dirty.lock();
+        for handle in self.to_destroy.lock().drain(..) {
             if let Some((_, mut data)) = descriptors.remove(handle) {
                 if let Some(descriptor) = data.descriptor.take() {
                     drop_list.push(descriptor);
                 }
             }
         }
-        let mut dirty = self.dirty_descriptors.lock();
         self.device
             .with_descriptor_allocator(|context| -> Result<(), Error> {
                 let image_writes = TempList::new();
