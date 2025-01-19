@@ -13,38 +13,50 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use kiri_backend::{ash::vk, DescriptorSetLayoutDesc, DescriptorTotalCount, RenderDevice};
+use std::{slice, sync::Arc};
 
-use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
+use kiri_backend::{
+    ash::vk, Buffer, DescriptorSetLayoutDesc, DescriptorTotalCount, GpuDescriptor, Image,
+    ImageViewDesc, RenderDevice,
+};
+use kiri_common::{Handle, HotColdPool, TempList};
+use parking_lot::{Mutex, RwLock};
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Binding<T: Copy> {
+use crate::Error;
+
+pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+
+#[derive(Debug)]
+pub struct Binding<T> {
     pub slot: u32,
     pub element: u32,
     pub ty: vk::DescriptorType,
     pub data: T,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct ImageBindingData {
-    pub handle: ImageHandle,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct StaticBufferBindingData {
-    pub handle: BufferHandle,
-    pub offset: u64,
-    pub size: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct DynamicBufferBindingData {
-    pub handle: BufferHandle,
-    pub size: u64,
+#[derive(Debug)]
+pub struct ImageBindingData {
+    pub image: Arc<Image>,
+    pub view: vk::ImageView,
 }
 
 #[derive(Debug)]
-pub(super) struct DescriptorSetData {
+pub struct StaticBufferBindingData {
+    pub buffer: Arc<Buffer>,
+    pub offset: u32,
+    pub size: u32,
+}
+
+#[derive(Debug)]
+pub(super) struct DynamicBufferBindingData {
+    pub buffer: Arc<Buffer>,
+    pub size: u32,
+}
+
+#[derive(Debug)]
+pub struct DescriptorSetData {
+    pub descriptor: Option<GpuDescriptor>,
     pub count: DescriptorTotalCount,
     pub layout: vk::DescriptorSetLayout,
     pub images: Vec<Binding<ImageBindingData>>,
@@ -82,7 +94,7 @@ impl<'a> DescriptorSetBuilder<'a> {
         }
     }
 
-    pub fn bind_image(mut self, slot: &str, image: ImageHandle) -> Result<Self, Error> {
+    pub fn bind_image(mut self, slot: &str, image: Arc<Image>) -> Result<Self, Error> {
         let slot = self
             .layout
             .get_slot(slot)
@@ -91,12 +103,21 @@ impl<'a> DescriptorSetBuilder<'a> {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: ImageBindingData { handle: image },
+            data: ImageBindingData {
+                view: image.view(ImageViewDesc::new(vk::ImageAspectFlags::COLOR))?,
+                image,
+            },
         });
         Ok(self)
     }
 
-    pub fn bind_uniform_buffer(mut self, slot: &str, buffer: BufferSlice) -> Result<Self, Error> {
+    pub fn bind_uniform_buffer(
+        mut self,
+        slot: &str,
+        buffer: Arc<Buffer>,
+        offset: usize,
+        size: usize,
+    ) -> Result<Self, Error> {
         let slot = self
             .layout
             .get_slot(slot)
@@ -106,15 +127,21 @@ impl<'a> DescriptorSetBuilder<'a> {
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                handle: buffer.handle,
-                offset: buffer.offset,
-                size: buffer.size,
+                offset: offset as u32,
+                size: size as u32,
+                buffer,
             },
         });
         Ok(self)
     }
 
-    pub fn bind_storage_buffer(mut self, slot: &str, buffer: BufferSlice) -> Result<Self, Error> {
+    pub fn bind_storage_buffer(
+        mut self,
+        slot: &str,
+        buffer: Arc<Buffer>,
+        offset: usize,
+        size: u32,
+    ) -> Result<Self, Error> {
         let slot = self
             .layout
             .get_slot(slot)
@@ -124,9 +151,9 @@ impl<'a> DescriptorSetBuilder<'a> {
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                handle: buffer.handle,
-                offset: buffer.offset,
-                size: buffer.size,
+                offset: offset as u32,
+                size: size as u32,
+                buffer,
             },
         });
         Ok(self)
@@ -135,8 +162,8 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_uniform_buffer(
         mut self,
         slot: &str,
-        handle: BufferHandle,
-        size: u64,
+        buffer: Arc<Buffer>,
+        size: usize,
     ) -> Result<Self, Error> {
         let slot = self
             .layout
@@ -146,7 +173,10 @@ impl<'a> DescriptorSetBuilder<'a> {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData { handle, size },
+            data: DynamicBufferBindingData {
+                size: size as u32,
+                buffer,
+            },
         });
         Ok(self)
     }
@@ -154,8 +184,8 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_storage_buffer(
         mut self,
         slot: &str,
-        handle: BufferHandle,
-        size: u64,
+        buffer: Arc<Buffer>,
+        size: usize,
     ) -> Result<Self, Error> {
         let slot = self
             .layout
@@ -165,7 +195,10 @@ impl<'a> DescriptorSetBuilder<'a> {
             slot,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData { handle, size },
+            data: DynamicBufferBindingData {
+                size: size as u32,
+                buffer,
+            },
         });
         Ok(self)
     }
@@ -175,8 +208,9 @@ impl<'a> DescriptorSetBuilder<'a> {
         self
     }
 
-    pub(super) fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
+    fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
         Ok(DescriptorSetData {
+            descriptor: None,
             count: self.layout.get_descriptor_count(),
             layout: device.get_or_create_layout(self.stages, self.layout)?,
             images: self.images,
@@ -186,5 +220,205 @@ impl<'a> DescriptorSetBuilder<'a> {
             dynamic_storage_buffers: self.dynamic_storage_buffers,
             name: self.name.map(|x| x.to_owned()),
         })
+    }
+}
+
+const MAX_DESCRIPTORS: usize = 64536;
+
+#[derive(Debug)]
+pub struct DescriptorSetManager {
+    device: Arc<RenderDevice>,
+    descriptors: RwLock<DescriptorPool>,
+    dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
+    descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
+}
+
+impl DescriptorSetManager {
+    pub fn new(device: Arc<RenderDevice>) -> Self {
+        Self {
+            device,
+            descriptors: RwLock::new(HotColdPool::new(MAX_DESCRIPTORS)),
+            dirty_descriptors: Default::default(),
+            descriptors_to_destroy: Default::default(),
+        }
+    }
+
+    pub fn create_descriptor_set(
+        &self,
+        builder: DescriptorSetBuilder,
+    ) -> Result<DescriptorHandle, Error> {
+        let data = builder.build(&self.device)?;
+        let handle = self
+            .descriptors
+            .write()
+            .push(vk::DescriptorSet::null(), data);
+        self.dirty_descriptors.lock().push(handle);
+        Ok(handle)
+    }
+
+    pub fn update_descriptor_set(
+        &self,
+        handle: DescriptorHandle,
+        builder: DescriptorSetBuilder,
+    ) -> Result<(), Error> {
+        let data = builder.build(&self.device)?;
+        self.descriptors.write().replace_cold(handle, data);
+        self.dirty_descriptors.lock().push(handle);
+        Ok(())
+    }
+
+    pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
+        self.descriptors_to_destroy.lock().push(handle);
+    }
+
+    pub fn update_descriptors(&self) -> Result<(), Error> {
+        puffin::profile_function!();
+        let mut descriptors = self.descriptors.write();
+        let mut drop_list = Vec::new();
+        for handle in self.descriptors_to_destroy.lock().drain(..) {
+            if let Some((_, mut data)) = descriptors.remove(handle) {
+                if let Some(descriptor) = data.descriptor.take() {
+                    drop_list.push(descriptor);
+                }
+            }
+        }
+        let mut dirty = self.dirty_descriptors.lock();
+        self.device
+            .with_descriptor_allocator(|context| -> Result<(), Error> {
+                let image_writes = TempList::new();
+                let buffer_writes = TempList::new();
+                let mut writes = Vec::with_capacity(MAX_DESCRIPTORS);
+                // Process all dirty descriptors
+                for handle in dirty.iter().copied() {
+                    // Allocate and assing new descriptor set
+                    let data = if let Some(data) = descriptors.get_cold_mut(handle) {
+                        data
+                    } else {
+                        // Skip invalid descriptors
+                        continue;
+                    };
+                    let descriptor_set = context.allocate(data.layout, &data.count, 1)?.remove(0);
+                    let ds = *descriptor_set.raw();
+                    // Remove old descriptor if any
+                    if let Some(descriptor) = data.descriptor.replace(descriptor_set) {
+                        drop_list.push(descriptor);
+                    }
+                    if let Some(name) = &data.name {
+                        self.device.set_object_name(ds, name);
+                    }
+
+                    // Process images
+                    for image in &data.images {
+                        // Add to write list.
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .image_info(slice::from_ref(
+                                    image_writes.add(
+                                        vk::DescriptorImageInfo::default()
+                                            .image_view(image.data.view)
+                                            .image_layout(
+                                                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                            ),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(image.ty)
+                                .dst_array_element(image.element)
+                                .dst_binding(image.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process uniform buffers
+                    for buffer in &data.unifom_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(buffer.data.buffer.raw)
+                                            .offset(buffer.data.offset as _)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process storage buffers
+                    for buffer in &data.storage_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(buffer.data.buffer.raw)
+                                            .offset(buffer.data.offset as _)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process dynamic uniform buffers
+                    for buffer in &data.dynamic_uniform_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(buffer.data.buffer.raw)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process dynamic storage buffers
+                    for buffer in &data.dynamic_storage_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(buffer.data.buffer.raw)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                }
+                unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
+                Ok(())
+            })?;
+        // Update actual vulkan objects for all dirty descriptors
+        for handle in dirty.iter().copied() {
+            let ds = *descriptors
+                .get_cold(handle)
+                .unwrap()
+                .descriptor
+                .as_ref()
+                .unwrap()
+                .raw();
+            descriptors.replace(handle, ds);
+        }
+        dirty.clear();
+        self.device.drop_descriptors(drop_list);
+        Ok(())
     }
 }

@@ -32,11 +32,9 @@ use crate::{
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
-pub type DescriptorHandle = Handle<Option<GpuDescriptor>>;
 
 pub(super) type ImagePool = HotColdPool<vk::ImageView, (Arc<Image>, ImageViewDesc)>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>>;
-pub(super) type DescriptorPool = HotColdPool<Option<GpuDescriptor>, DescriptorSetData>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
@@ -104,14 +102,11 @@ pub struct Renderer {
     pub device: Arc<RenderDevice>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
-    descriptors: RwLock<DescriptorPool>,
     sampled_images_to_update: Mutex<Vec<ImageHandle>>,
     storage_images_to_update: Mutex<Vec<ImageHandle>>,
     storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     pipeline_cache: PipelineCache,
-    dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
-    descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
     empty_descriptor_set: GpuDescriptor,
     bindless_descriptor_layout: vk::DescriptorSetLayout,
     bindless_descriptor: GpuDescriptor,
@@ -121,7 +116,6 @@ unsafe impl Sync for Renderer {}
 unsafe impl Send for Renderer {}
 
 const MAX_RESOURCE_COUNT: usize = 64536;
-const MAX_DESCRIPTORS: usize = 8192;
 
 impl Renderer {
     pub fn new(device: &Arc<RenderDevice>, config: &GameAppConfig) -> Result<Arc<Self>, Error> {
@@ -272,20 +266,6 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn create_descriptor_set(
-        &self,
-        builder: DescriptorSetBuilder,
-    ) -> Result<DescriptorHandle, Error> {
-        let data = builder.build(&self.device)?;
-        let handle = self.descriptors.write().push(None, data);
-        self.dirty_descriptors.lock().push(handle);
-        Ok(handle)
-    }
-
-    pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
-        self.descriptors_to_destroy.lock().push(handle);
-    }
-
     pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
         &self,
         swapchain: &Swapchain,
@@ -421,8 +401,13 @@ impl Renderer {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .image_info(slice::from_ref(
-                                    image_writes
-                                        .add(vk::DescriptorImageInfo::default().image_view(view)),
+                                    image_writes.add(
+                                        vk::DescriptorImageInfo::default()
+                                            .image_view(view)
+                                            .image_layout(
+                                                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                            ),
+                                    ),
                                 ))
                                 .descriptor_count(1)
                                 .descriptor_type(image.ty)
@@ -514,7 +499,7 @@ impl Renderer {
                         );
                     }
                 }
-                // All bindless descriptors
+                // All updated bindless resources
 
                 unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
                 Ok(())
