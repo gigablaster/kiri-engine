@@ -15,8 +15,8 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{ImageHandle, Renderer};
-use kiri_backend::{ash::vk, Image, ImageCreateDesc, ImageViewDesc};
+use crate::Renderer;
+use kiri_backend::{ash::vk, Image, ImageCreateDesc};
 use log::debug;
 use parking_lot::Mutex;
 
@@ -42,14 +42,14 @@ struct TempImageKey {
 #[derive(Debug)]
 pub struct RenderTargetPool {
     renderer: Arc<Renderer>,
-    images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
+    images: Mutex<HashMap<TempImageKey, Vec<Arc<Image>>>>,
 }
 
 #[derive(Debug)]
 pub struct TransientImage<'a> {
     pool: &'a RenderTargetPool,
     key: TempImageKey,
-    pub handle: ImageHandle,
+    pub image: Arc<Image>,
 }
 
 impl RenderTargetPool {
@@ -67,18 +67,17 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
-        aspect: vk::ImageAspectFlags,
     ) -> Result<TransientImage, Error> {
         assert!(
             usage.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT)
                 || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
             "Must be an attachment"
         );
-        let (key, image) = self.get_or_allocate_image(format, dims, usage, aspect)?;
+        let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
         Ok(TransientImage {
             pool: self,
             key,
-            handle: image,
+            image,
         })
     }
 
@@ -87,8 +86,7 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [u32; 2],
         usage: vk::ImageUsageFlags,
-        aspect: vk::ImageAspectFlags,
-    ) -> Result<(TempImageKey, ImageHandle), Error> {
+    ) -> Result<(TempImageKey, Arc<Image>), Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {
             dims,
@@ -110,27 +108,21 @@ impl RenderTargetPool {
                     .usage(usage),
                 None,
             )?);
-            let handle = self
-                .renderer
-                .register_image(image, ImageViewDesc::new(aspect))?;
-            Ok((key, handle))
+            Ok((key, image))
         }
     }
 
     pub fn purge(&self) {
-        let mut images = self.images.lock();
-        images
-            .drain()
-            .for_each(|(_, mut group)| group.drain(..).for_each(|x| self.renderer.remove_image(x)));
+        self.images.lock().clear();
     }
 
-    fn recycle(&self, image: ImageHandle, key: TempImageKey) {
+    fn recycle(&self, image: Arc<Image>, key: TempImageKey) {
         self.images.lock().entry(key).or_default().push(image);
     }
 }
 
 impl Drop for TransientImage<'_> {
     fn drop(&mut self) {
-        self.pool.recycle(self.handle, self.key);
+        self.pool.recycle(self.image.clone(), self.key);
     }
 }
