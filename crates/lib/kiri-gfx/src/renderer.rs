@@ -14,26 +14,24 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{path::PathBuf, ptr::NonNull, sync::Arc};
+use std::{ptr::NonNull, sync::Arc};
 
 use kiri_backend::{
     ash::vk::{self},
-    load_or_create_pipeline_cache, save_pipeline_cache, Buffer, BufferCreateDesc, BufferDesc,
-    Frame, Image, ImageViewDesc, RenderDevice,
+    Buffer, BufferCreateDesc, GpuDescriptor, Image, ImageViewDesc, RenderDevice,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
-use log::warn;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, PipelineCache};
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
-pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+pub type DescriptorHandle = Handle<Option<GpuDescriptor>>;
 
 pub(super) type ImagePool = HotColdPool<vk::ImageView, (Arc<Image>, ImageViewDesc)>;
 pub(super) type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>>;
-pub(super) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+pub(super) type DescriptorPool = HotColdPool<Option<GpuDescriptor>, DescriptorSetData>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
@@ -107,6 +105,8 @@ pub struct Renderer {
     storage_buffers_to_update: Mutex<Vec<BufferHandle>>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     pipeline_cache: PipelineCache,
+    dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
+    descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
 }
 
 unsafe impl Sync for Renderer {}
@@ -127,6 +127,8 @@ impl Renderer {
             storage_images_to_update: Default::default(),
             storage_buffers_to_update: Default::default(),
             pipeline_cache: PipelineCache::new(device, config.cache()),
+            dirty_descriptors: Default::default(),
+            descriptors_to_destroy: Default::default(),
         }))
     }
 
@@ -219,14 +221,13 @@ impl Renderer {
         builder: DescriptorSetBuilder,
     ) -> Result<DescriptorHandle, Error> {
         let data = builder.build(&self.device)?;
-        Ok(self
-            .descriptors
-            .write()
-            .push(vk::DescriptorSet::null(), data))
+        let handle = self.descriptors.write().push(None, data);
+        self.dirty_descriptors.lock().push(handle);
+        Ok(handle)
     }
 
     pub fn destroy_descriptor_set(&self, handle: DescriptorHandle) {
-        self.descriptors.write().remove(handle);
+        self.descriptors_to_destroy.lock().push(handle);
     }
 
     // pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
@@ -323,144 +324,147 @@ impl Renderer {
     //     Ok(FrameState::Rendered)
     // }
 
-    fn update_descriptors(
-        &self,
-        frame: &Frame,
-        images: &ImagePool,
-        buffers: &BufferPool,
-    ) -> Result<(), Error> {
+    fn update_descriptors(&self, images: &ImagePool, buffers: &BufferPool) -> Result<(), Error> {
         puffin::profile_function!();
-        frame.with_descriptor_allocator(&self.device.raw, |context| -> Result<(), Error> {
-            let mut descriptors = self.descriptors.write();
-            let image_writes = TempList::new();
-            let buffer_writes = TempList::new();
-            let mut writes = Vec::with_capacity(16384);
-            let all_handles = descriptors
-                .enumerate()
-                .map(|(handle, _, _)| handle)
-                .collect::<Vec<_>>();
-            for handle in all_handles {
-                // Allocate and assing new descriptor set
-                let data = descriptors.get_cold(handle).unwrap();
-                let descriptor_set = context.allocate(data.layout, data.count)?;
-                descriptors.replace(handle, descriptor_set);
-                let data = descriptors.get_cold_mut(handle).unwrap();
-                if let Some(name) = &data.name {
-                    self.device.set_object_name(descriptor_set, name);
-                }
-
-                // Process images
-                for image in &mut data.images {
-                    // Update image view if needed
-                    if image.data.view == vk::ImageView::null() {
-                        image.data.view = images
-                            .get(image.data.handle)
-                            .copied()
-                            .ok_or(Error::InvalidImageHandle(image.data.handle))?;
-                    }
-                    // Add to write list.
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .image_info(slice::from_ref(
-                                image_writes.add(
-                                    vk::DescriptorImageInfo::default()
-                                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                        .image_view(image.data.view),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(image.ty)
-                            .dst_array_element(image.element)
-                            .dst_binding(image.slot)
-                            .dst_set(descriptor_set),
-                    );
-                }
-                // Process uniform buffers
-                for buffer in &data.unifom_buffers {
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .buffer_info(slice::from_ref(
-                                buffer_writes.add(
-                                    vk::DescriptorBufferInfo::default()
-                                        .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvalidBufferHandle(buffer.data.handle),
-                                        )?)
-                                        .offset(buffer.data.offset as _)
-                                        .range(buffer.data.size as _),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(buffer.ty)
-                            .dst_array_element(buffer.element)
-                            .dst_binding(buffer.slot)
-                            .dst_set(descriptor_set),
-                    );
-                }
-                // Process storage buffers
-                for buffer in &data.storage_buffers {
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .buffer_info(slice::from_ref(
-                                buffer_writes.add(
-                                    vk::DescriptorBufferInfo::default()
-                                        .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvalidBufferHandle(buffer.data.handle),
-                                        )?)
-                                        .offset(buffer.data.offset as _)
-                                        .range(buffer.data.size as _),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(buffer.ty)
-                            .dst_array_element(buffer.element)
-                            .dst_binding(buffer.slot)
-                            .dst_set(descriptor_set),
-                    );
-                }
-                // Process dynamic uniform buffers
-                for buffer in &data.dynamic_uniform_buffers {
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .buffer_info(slice::from_ref(
-                                buffer_writes.add(
-                                    vk::DescriptorBufferInfo::default()
-                                        .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvalidBufferHandle(buffer.data.handle),
-                                        )?)
-                                        .range(buffer.data.size as _),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(buffer.ty)
-                            .dst_array_element(buffer.element)
-                            .dst_binding(buffer.slot)
-                            .dst_set(descriptor_set),
-                    );
-                }
-                // Process dynamic storage buffers
-                for buffer in &data.dynamic_storage_buffers {
-                    writes.push(
-                        vk::WriteDescriptorSet::default()
-                            .buffer_info(slice::from_ref(
-                                buffer_writes.add(
-                                    vk::DescriptorBufferInfo::default()
-                                        .buffer(*buffers.get(buffer.data.handle).ok_or(
-                                            Error::InvalidBufferHandle(buffer.data.handle),
-                                        )?)
-                                        .range(buffer.data.size as _),
-                                ),
-                            ))
-                            .descriptor_count(1)
-                            .descriptor_type(buffer.ty)
-                            .dst_array_element(buffer.element)
-                            .dst_binding(buffer.slot)
-                            .dst_set(descriptor_set),
-                    );
+        let mut descriptors = self.descriptors.write();
+        let mut drop_list = Vec::new();
+        for to_destroy in self.descriptors_to_destroy.lock().drain(..) {
+            if let Some((mut descriptor, _)) = descriptors.remove(to_destroy) {
+                if let Some(descriptor) = descriptor.take() {
+                    drop_list.push(descriptor);
                 }
             }
-            unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
-            Ok(())
-        })?;
+        }
+        self.device.drop_descriptors(drop_list);
+        self.device
+            .with_descriptor_allocator(|context| -> Result<(), Error> {
+                let dirty = self.dirty_descriptors.lock().drain(..).collect::<Vec<_>>();
+                let image_writes = TempList::new();
+                let buffer_writes = TempList::new();
+                let mut writes = Vec::with_capacity(16384);
+                for handle in dirty {
+                    // Allocate and assing new descriptor set
+                    let data = descriptors.get_cold(handle).unwrap();
+                    let descriptor_set = context.allocate(data.layout, &data.count, 1)?.remove(0);
+                    let ds = *descriptor_set.raw();
+                    descriptors.replace(handle, Some(descriptor_set));
+                    let data = descriptors.get_cold_mut(handle).unwrap();
+                    if let Some(name) = &data.name {
+                        self.device.set_object_name(ds, name);
+                    }
+
+                    // Process images
+                    for image in &mut data.images {
+                        // Update image view if needed
+                        if image.data.view == vk::ImageView::null() {
+                            image.data.view = images
+                                .get(image.data.handle)
+                                .copied()
+                                .ok_or(Error::InvalidImageHandle(image.data.handle))?;
+                        }
+                        // Add to write list.
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .image_info(slice::from_ref(
+                                    image_writes.add(
+                                        vk::DescriptorImageInfo::default()
+                                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                            .image_view(image.data.view),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(image.ty)
+                                .dst_array_element(image.element)
+                                .dst_binding(image.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process uniform buffers
+                    for buffer in &data.unifom_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
+                                            )?)
+                                            .offset(buffer.data.offset as _)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process storage buffers
+                    for buffer in &data.storage_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
+                                            )?)
+                                            .offset(buffer.data.offset as _)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process dynamic uniform buffers
+                    for buffer in &data.dynamic_uniform_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
+                                            )?)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                    // Process dynamic storage buffers
+                    for buffer in &data.dynamic_storage_buffers {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .buffer_info(slice::from_ref(
+                                    buffer_writes.add(
+                                        vk::DescriptorBufferInfo::default()
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
+                                            )?)
+                                            .range(buffer.data.size as _),
+                                    ),
+                                ))
+                                .descriptor_count(1)
+                                .descriptor_type(buffer.ty)
+                                .dst_array_element(buffer.element)
+                                .dst_binding(buffer.slot)
+                                .dst_set(ds),
+                        );
+                    }
+                }
+                unsafe { self.device.raw.update_descriptor_sets(&writes, &[]) };
+                Ok(())
+            })?;
         Ok(())
     }
 

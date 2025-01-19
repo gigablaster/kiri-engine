@@ -22,7 +22,7 @@ use kiri_backend::{
 
 use crate::{
     BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, Error, ImageHandle, ImagePool,
-    PipelineCache, PipelineCacheResolver, RasterPipelineHandle,
+    PipelineCacheResolver, RasterPipelineHandle,
 };
 
 #[derive(Debug)]
@@ -88,10 +88,13 @@ impl<'a> RenderResourceResolver<'a> {
         &self,
         handle: DescriptorHandle,
     ) -> Result<vk::DescriptorSet, Error> {
-        self.descriptors
+        Ok(*self
+            .descriptors
             .get(handle)
-            .copied()
-            .ok_or(Error::InvalidDescriptorHandle(handle))
+            .ok_or(Error::InvalidDescriptorHandle(handle))?
+            .as_ref()
+            .expect("Dirty descriptor sets must be updated at this point")
+            .raw())
     }
 }
 

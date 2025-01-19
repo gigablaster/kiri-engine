@@ -42,6 +42,10 @@ pub use swapchain::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemoryBlock = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+pub type GpuDescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
+pub type GpuDescriptor = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+pub use gpu_descriptor::DescriptorTotalCount;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ImageUploadData<'a> {

@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use kiri_backend::{ash::vk, DescriptorSetCount, DescriptorSetLayoutDesc, RenderDevice};
+use kiri_backend::{ash::vk, DescriptorSetLayoutDesc, DescriptorTotalCount, RenderDevice};
 
 use crate::{BufferHandle, BufferSlice, Error, ImageHandle};
 
@@ -47,7 +47,7 @@ pub(super) struct DynamicBufferBindingData {
 
 #[derive(Debug)]
 pub(super) struct DescriptorSetData {
-    pub count: DescriptorSetCount,
+    pub count: DescriptorTotalCount,
     pub layout: vk::DescriptorSetLayout,
     pub images: Vec<Binding<ImageBindingData>>,
     pub unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
@@ -75,11 +75,11 @@ impl<'a> DescriptorSetBuilder<'a> {
         Self {
             layout,
             stages,
-            images: Vec::with_capacity((count.sampled_images + count.combined_image_samplers) as _),
-            unifom_buffers: Vec::with_capacity(count.unifroms_buffers as _),
-            storage_buffers: Vec::with_capacity(count.storage_buffers as _),
-            dynamic_uniform_buffers: Vec::with_capacity(count.dynamic_uniform_buffers as _),
-            dynamic_storage_buffers: Vec::with_capacity(count.dynamic_storage_buffers as _),
+            images: Vec::with_capacity((count.sampled_image + count.combined_image_sampler) as _),
+            unifom_buffers: Vec::with_capacity(count.uniform_buffer as _),
+            storage_buffers: Vec::with_capacity(count.storage_buffer as _),
+            dynamic_uniform_buffers: Vec::with_capacity(count.uniform_buffer_dynamic as _),
+            dynamic_storage_buffers: Vec::with_capacity(count.storage_buffer_dynamic as _),
             name: None,
         }
     }

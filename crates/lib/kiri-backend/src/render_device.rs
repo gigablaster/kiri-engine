@@ -13,17 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CString, mem, slice, sync::Arc};
+use std::{collections::HashMap, ffi::CString, marker::PhantomData, mem, slice, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use gpu_alloc_ash::AshMemoryDevice;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
+use gpu_descriptor_ash::AshDescriptorDevice;
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
-    create_descriptor_layout, staging::Staging, DescriptorSetLayoutDesc, Error, GpuMemoryBlock,
-    Instance,
+    create_descriptor_layout, staging::Staging, DescriptorSetLayoutDesc, Error, GpuDescriptor,
+    GpuDescriptorAllocator, GpuMemoryBlock, Instance,
 };
 
 use super::{
@@ -52,7 +54,8 @@ pub struct RenderDevice {
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Queue>,
     layouts: RwLock<HashMap<DescriptorSetLayoutDesc, vk::DescriptorSetLayout>>,
-    allocator: Mutex<GpuAllocator>,
+    memory_allocator: Mutex<GpuAllocator>,
+    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     staging: Mutex<Staging>,
 }
 
@@ -64,7 +67,7 @@ impl Debug for RenderDevice {
 
 #[derive(Debug)]
 pub(super) struct Queue {
-    family_index: u32,
+    pub family_index: u32,
     raw: Mutex<vk::Queue>,
 }
 
@@ -99,11 +102,61 @@ impl Queue {
     }
 }
 
+pub struct DescriptorAllocatorContext<'a, E: From<Error>> {
+    device: &'a ash::Device,
+    allocator: &'a mut GpuDescriptorAllocator,
+    phantom_data: PhantomData<E>,
+}
+
+impl<E: From<Error>> DescriptorAllocatorContext<'_, E> {
+    pub fn allocate(
+        &mut self,
+        layout: vk::DescriptorSetLayout,
+        layout_descriptor_count: &DescriptorTotalCount,
+        count: usize,
+    ) -> Result<Vec<GpuDescriptor>, E> {
+        Ok(self.allocate_impl(layout, layout_descriptor_count, count, false)?)
+    }
+
+    pub fn allocate_bindless(
+        &mut self,
+        layout: vk::DescriptorSetLayout,
+        layout_descriptor_count: &DescriptorTotalCount,
+        count: usize,
+    ) -> Result<Vec<GpuDescriptor>, Error> {
+        Ok(self.allocate_impl(layout, layout_descriptor_count, count, true)?)
+    }
+
+    fn allocate_impl(
+        &mut self,
+        layout: vk::DescriptorSetLayout,
+        layout_descriptor_count: &DescriptorTotalCount,
+        count: usize,
+        bindless: bool,
+    ) -> Result<Vec<GpuDescriptor>, Error> {
+        let flags = if bindless {
+            DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND
+        } else {
+            DescriptorSetLayoutCreateFlags::empty()
+        };
+        Ok(unsafe {
+            self.allocator.allocate(
+                AshDescriptorDevice::wrap(self.device),
+                &layout,
+                flags,
+                layout_descriptor_count,
+                count as _,
+            )
+        }?)
+    }
+}
+
 impl RenderDevice {
     pub fn new(
         instance: &Arc<Instance>,
         surface: &Surface,
         preferences: &[PhysicalDeviceType],
+        max_update_after_bind_descriptors_in_all_pools: Option<usize>,
     ) -> Result<Arc<Self>, Error> {
         let physical_devices = instance.enumerate_physical_devices()?;
         let pdevice = physical_devices
@@ -227,8 +280,11 @@ impl RenderDevice {
             raw: device,
             debug,
             layouts: Default::default(),
-            allocator: Mutex::new(allocator),
+            memory_allocator: Mutex::new(allocator),
             physical_device: pdevice,
+            descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(
+                max_update_after_bind_descriptors_in_all_pools.unwrap_or(0) as _,
+            )),
         }))
     }
 
@@ -287,6 +343,29 @@ impl RenderDevice {
         cb(&mut self.current_drop_list.lock());
     }
 
+    pub fn drop_descriptors(&self, descriptors: impl IntoIterator<Item = GpuDescriptor>) {
+        self.with_drop_list(|drop_list| {
+            for descriptor in descriptors {
+                drop_list.drop_descriptor(descriptor);
+            }
+        });
+    }
+
+    pub fn with_descriptor_allocator<
+        CB: FnOnce(&mut DescriptorAllocatorContext<E>) -> Result<(), E>,
+        E: From<Error>,
+    >(
+        &self,
+        cb: CB,
+    ) -> Result<(), E> {
+        let mut allocator = self.descriptor_allocator.lock();
+        cb(&mut DescriptorAllocatorContext {
+            device: &self.raw,
+            allocator: &mut allocator,
+            phantom_data: PhantomData,
+        })
+    }
+
     pub(super) fn with_staging<CB: FnOnce(&mut Staging) -> Result<(), Error>>(
         &self,
         cb: CB,
@@ -335,7 +414,11 @@ impl RenderDevice {
                 self.raw
                     .wait_for_fences(&[frame.render_fence], true, u64::MAX)?
             };
-            frame.reset(&self.raw, &mut self.allocator.lock())?;
+            frame.reset(
+                &self.raw,
+                &mut self.memory_allocator.lock(),
+                &mut self.descriptor_allocator.lock(),
+            )?;
         }
         let upload_finished = self.staging.lock().upload(&self.raw)?;
         Ok((frame.clone(), upload_finished))
@@ -402,7 +485,7 @@ impl RenderDevice {
         usage: gpu_alloc::UsageFlags,
         dedicated: bool,
     ) -> Result<GpuMemoryBlock, Error> {
-        let mut allocator = self.allocator.lock();
+        let mut allocator = self.memory_allocator.lock();
         let request = gpu_alloc::Request {
             size: requirement.size.max(requirement.alignment),
             align_mask: requirement.alignment,
@@ -428,19 +511,20 @@ impl Drop for RenderDevice {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         let mut drop_list = self.current_drop_list.lock();
-        let mut allocator = self.allocator.lock();
-        self.staging.lock().free(&self.raw, &mut allocator);
-        drop_list.purge(&self.raw, &mut allocator);
+        let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
+        self.staging.lock().free(&self.raw, &mut memory_allocator);
+        drop_list.purge(&self.raw, &mut memory_allocator, &mut descriptor_allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())
                 .expect("Nothing should hold a frame at point when we destroy rendering context")
-                .reset(&self.raw, &mut allocator)
+                .reset(&self.raw, &mut memory_allocator, &mut descriptor_allocator)
                 .unwrap();
         });
         self.frames.iter_mut().for_each(|x| {
             Arc::get_mut(&mut x.lock())
                 .expect("Nothing should hold frame at this point")
-                .free(&self.raw, &mut allocator);
+                .free(&self.raw, &mut memory_allocator, &mut descriptor_allocator);
         });
         self.samplers
             .drain()
@@ -449,7 +533,8 @@ impl Drop for RenderDevice {
             self.raw.destroy_descriptor_set_layout(layout, None)
         });
         unsafe {
-            allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
+            memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
+            descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw));
             self.raw.destroy_device(None);
         }
     }

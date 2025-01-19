@@ -18,9 +18,10 @@ use std::{collections::HashMap, ffi::CString, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byte_slice_cast::AsSliceOf;
+use gpu_descriptor::DescriptorTotalCount;
 use kiri_common::TempList;
 
-use crate::{DescriptorSetCount, Error, SamplerDesc, MAX_RESOURCES};
+use crate::{Error, SamplerDesc, MAX_RESOURCES};
 
 use super::RenderDevice;
 
@@ -150,23 +151,23 @@ pub struct DescriptorSetLayoutDesc {
 }
 
 impl DescriptorSetLayoutDesc {
-    pub fn get_descriptor_count(&self) -> DescriptorSetCount {
-        let mut count = DescriptorSetCount::default();
+    pub fn get_descriptor_count(&self) -> DescriptorTotalCount {
+        let mut count = DescriptorTotalCount::default();
         for (_, data) in self.layout.iter() {
             match data.ty {
-                vk::DescriptorType::SAMPLED_IMAGE => count.sampled_images += data.count,
-                vk::DescriptorType::UNIFORM_BUFFER => count.unifroms_buffers += data.count,
-                vk::DescriptorType::STORAGE_BUFFER => count.storage_buffers += data.count,
+                vk::DescriptorType::SAMPLED_IMAGE => count.sampled_image += data.count,
+                vk::DescriptorType::UNIFORM_BUFFER => count.uniform_buffer += data.count,
+                vk::DescriptorType::STORAGE_BUFFER => count.storage_buffer += data.count,
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                    count.dynamic_uniform_buffers += data.count
+                    count.uniform_buffer_dynamic += data.count
                 }
                 vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    count.dynamic_storage_buffers += data.count
+                    count.uniform_buffer_dynamic += data.count
                 }
                 vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                    count.combined_image_samplers += data.count
+                    count.combined_image_sampler += data.count
                 }
-                vk::DescriptorType::STORAGE_IMAGE => count.storage_images += data.count,
+                vk::DescriptorType::STORAGE_IMAGE => count.storage_image += data.count,
                 ty => panic!("Descriptor set type {:?} not supported", ty),
             }
         }

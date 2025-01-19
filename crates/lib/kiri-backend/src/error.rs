@@ -52,6 +52,10 @@ pub enum Error {
     ShaderReflectionFailed(#[from] rspirv_reflect::ReflectError),
     #[error("Image is too big")]
     ImageTooBig,
+    #[error("Descriptor pool fragmentation")]
+    Fragmentation,
+    #[error("Out of pool memory")]
+    OutOfPoolMemory,
 }
 
 impl From<vk::Result> for Error {
@@ -63,6 +67,37 @@ impl From<vk::Result> for Error {
             vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => Self::OutOfDeviceMemory,
             vk::Result::ERROR_TOO_MANY_OBJECTS => Self::TooManyObjects,
             _ => panic!("Unexpected error {:?}", value),
+        }
+    }
+}
+
+impl From<gpu_descriptor::AllocationError> for Error {
+    fn from(value: gpu_descriptor::AllocationError) -> Self {
+        match value {
+            gpu_descriptor::AllocationError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
+            gpu_descriptor::AllocationError::OutOfHostMemory => Self::OutOfHostMemory,
+            gpu_descriptor::AllocationError::Fragmentation => Self::Fragmentation,
+        }
+    }
+}
+
+impl From<gpu_descriptor::CreatePoolError> for Error {
+    fn from(value: gpu_descriptor::CreatePoolError) -> Self {
+        match value {
+            gpu_descriptor::CreatePoolError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
+            gpu_descriptor::CreatePoolError::OutOfHostMemory => Self::OutOfHostMemory,
+            gpu_descriptor::CreatePoolError::Fragmentation => Self::Fragmentation,
+        }
+    }
+}
+
+impl From<gpu_descriptor::DeviceAllocationError> for Error {
+    fn from(value: gpu_descriptor::DeviceAllocationError) -> Self {
+        match value {
+            gpu_descriptor::DeviceAllocationError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
+            gpu_descriptor::DeviceAllocationError::OutOfHostMemory => Self::OutOfHostMemory,
+            gpu_descriptor::DeviceAllocationError::OutOfPoolMemory => Self::OutOfPoolMemory,
+            gpu_descriptor::DeviceAllocationError::FragmentedPool => Self::Fragmentation,
         }
     }
 }

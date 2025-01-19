@@ -15,46 +15,16 @@
 
 use core::slice;
 use std::{
-    cell::Cell,
     collections::HashMap,
-    sync::Arc,
     thread::{self, ThreadId},
 };
 
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{Error, GpuAllocator};
+use crate::{Error, GpuAllocator, GpuDescriptorAllocator};
 
 use super::DropList;
-
-const DESCRIPTORS_PER_PAGE: u32 = 64;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorSetCount {
-    pub sampled_images: u32,
-    pub storage_buffers: u32,
-    pub unifroms_buffers: u32,
-    pub dynamic_storage_buffers: u32,
-    pub dynamic_uniform_buffers: u32,
-    pub combined_image_samplers: u32,
-    pub storage_images: u32,
-}
-
-#[derive(Debug, Clone)]
-struct DescriptorAllocator {
-    pool: vk::DescriptorPool,
-    free: Cell<u32>,
-    total: u32,
-}
-
-unsafe impl Send for DescriptorAllocator {}
-unsafe impl Sync for DescriptorAllocator {}
-
-#[derive(Debug, Default)]
-struct DescriptorAllocatorPool {
-    pools: HashMap<DescriptorSetCount, Vec<Arc<DescriptorAllocator>>>,
-}
 
 #[derive(Debug, Default)]
 struct CommandBufferPool {
@@ -67,7 +37,6 @@ struct CommandBufferPool {
 pub struct Frame {
     drop_list: DropList,
     per_thread_pools: Mutex<HashMap<ThreadId, CommandBufferPool>>,
-    descriptor_allocators: Mutex<DescriptorAllocatorPool>,
     /// Submit this fence when submit rendering
     pub render_fence: vk::Fence,
     /// Signal this semaphore when finsihed rendering
@@ -131,7 +100,6 @@ impl Frame {
                 render_finished,
                 drop_list,
                 per_thread_pools: Default::default(),
-                descriptor_allocators: Default::default(),
             })
         }
     }
@@ -139,9 +107,11 @@ impl Frame {
     pub(super) fn reset(
         &mut self,
         device: &ash::Device,
-        allocator: &mut GpuAllocator,
+        memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
     ) -> Result<(), Error> {
-        self.drop_list.purge(device, allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator);
         unsafe {
             device.reset_fences(&[self.render_fence])?;
         }
@@ -149,22 +119,26 @@ impl Frame {
             .lock()
             .iter_mut()
             .try_for_each(|(_, x)| x.recycle(device))?;
-        self.descriptor_allocators.lock().reset(device);
 
         Ok(())
     }
 
-    pub(super) fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator) {
+    pub(super) fn free(
+        &mut self,
+        device: &ash::Device,
+        memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
+    ) {
         unsafe {
             device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.render_finished, None);
         }
-        self.drop_list.purge(device, allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator);
         self.per_thread_pools
             .lock()
             .drain()
             .for_each(|(_, x)| x.free(device));
-        self.descriptor_allocators.lock().free(device);
     }
 
     pub(super) fn assign_drop_list(&mut self, drop_list: DropList) {
@@ -185,181 +159,6 @@ impl Frame {
             let cb = pool.get(device, level)?;
             pools.insert(therad_id, pool);
             Ok(cb)
-        }
-    }
-
-    pub fn with_descriptor_allocator<
-        E: std::error::Error,
-        CB: FnOnce(&mut DescriptorAllocatorContext) -> Result<(), E>,
-    >(
-        &self,
-        device: &ash::Device,
-        cb: CB,
-    ) -> Result<(), E> {
-        cb(&mut DescriptorAllocatorContext {
-            device,
-            pool: &mut self.descriptor_allocators.lock(),
-        })
-    }
-
-    pub fn get_descriptor(
-        &self,
-        device: &ash::Device,
-        layout: vk::DescriptorSetLayout,
-        count: DescriptorSetCount,
-    ) -> Result<vk::DescriptorSet, Error> {
-        let mut context = DescriptorAllocatorContext {
-            device,
-            pool: &mut self.descriptor_allocators.lock(),
-        };
-        context.allocate(layout, count)
-    }
-}
-
-impl DescriptorAllocator {
-    pub fn new(device: &ash::Device, count: DescriptorSetCount, sets: u32) -> Result<Self, Error> {
-        let mut sizes = Vec::with_capacity(7);
-        if count.sampled_images > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: count.sampled_images * sets,
-            })
-        }
-        if count.storage_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: count.storage_buffers * sets,
-            })
-        }
-        if count.unifroms_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: count.unifroms_buffers * sets,
-            })
-        }
-        if count.dynamic_storage_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-                descriptor_count: count.dynamic_storage_buffers * sets,
-            })
-        }
-        if count.dynamic_uniform_buffers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                descriptor_count: count.dynamic_uniform_buffers * sets,
-            })
-        }
-        if count.combined_image_samplers > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: count.combined_image_samplers * sets,
-            })
-        }
-        if count.storage_images > 0 {
-            sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: count.storage_images * sets,
-            })
-        }
-        let pool = unsafe {
-            device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(sets)
-                    .pool_sizes(&sizes),
-                None,
-            )
-        }?;
-        Ok(Self {
-            pool,
-            free: Cell::new(sets),
-            total: sets,
-        })
-    }
-
-    pub fn free(&self, device: &ash::Device) {
-        unsafe { device.destroy_descriptor_pool(self.pool, None) }
-    }
-
-    pub fn reset(&self, device: &ash::Device) -> Result<(), Error> {
-        self.free.set(self.total);
-        Ok(unsafe {
-            device.reset_descriptor_pool(self.pool, vk::DescriptorPoolResetFlags::default())
-        }?)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.free.get() == 0
-    }
-
-    pub fn allocate(
-        &self,
-        device: &ash::Device,
-        layout: vk::DescriptorSetLayout,
-    ) -> Result<Option<vk::DescriptorSet>, Error> {
-        if self.free.get() == 0 {
-            return Ok(None);
-        }
-        let mut allocate_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(self.pool)
-            .set_layouts(slice::from_ref(&layout));
-        allocate_info.descriptor_set_count = 1;
-        self.free.set(self.free.get() - 1);
-        Ok(Some(
-            unsafe { device.allocate_descriptor_sets(&allocate_info) }?[0],
-        ))
-    }
-}
-
-impl DescriptorAllocatorPool {
-    pub fn get_pool(
-        &mut self,
-        device: &ash::Device,
-        count: DescriptorSetCount,
-    ) -> Result<Arc<DescriptorAllocator>, Error> {
-        let pool = self.pools.entry(count).or_default();
-        let allocator = if let Some(allocator) = pool.iter().find(|x| !x.is_empty()) {
-            allocator
-        } else {
-            let allocator = DescriptorAllocator::new(device, count, DESCRIPTORS_PER_PAGE)?;
-            let index = pool.len();
-            pool.push(allocator.into());
-            &mut pool[index]
-        };
-        Ok(allocator.clone())
-    }
-
-    pub fn reset(&self, device: &ash::Device) {
-        self.pools.iter().for_each(|(_, pool)| {
-            pool.iter().for_each(|x| x.reset(device).unwrap());
-        });
-    }
-
-    pub fn free(&mut self, device: &ash::Device) {
-        self.pools
-            .drain()
-            .for_each(|(_, mut pool)| pool.drain(..).for_each(|x| x.free(device)));
-    }
-}
-
-pub struct DescriptorAllocatorContext<'a> {
-    device: &'a ash::Device,
-    pool: &'a mut DescriptorAllocatorPool,
-}
-
-impl DescriptorAllocatorContext<'_> {
-    pub fn allocate(
-        &mut self,
-        layout: vk::DescriptorSetLayout,
-        count: DescriptorSetCount,
-    ) -> Result<vk::DescriptorSet, Error> {
-        loop {
-            if let Some(descriptor_set) = self
-                .pool
-                .get_pool(self.device, count)?
-                .allocate(self.device, layout)?
-            {
-                return Ok(descriptor_set);
-            }
         }
     }
 }
