@@ -30,7 +30,7 @@ pub struct RenderResourceResolver<'a> {
     buffers: &'a BufferPool,
     images: &'a ImagePool,
     descriptors: &'a DescriptorPool,
-    pipeline_resolver: &'a PipelineCacheResolver<'a>,
+    pipeline_resolver: PipelineCacheResolver<'a>,
     pub empty_descriptor_set: vk::DescriptorSet,
     pub backbuffer: &'a Image,
 }
@@ -41,7 +41,7 @@ impl<'a> RenderResourceResolver<'a> {
         buffers: &'a BufferPool,
         images: &'a ImagePool,
         descriptors: &'a DescriptorPool,
-        pipeline_resolver: &'a PipelineCacheResolver,
+        pipeline_resolver: PipelineCacheResolver<'a>,
         empty_descriptor_set: vk::DescriptorSet,
     ) -> Self {
         Self {

@@ -197,6 +197,9 @@ pub struct PipelineCache {
     raster_handle_to_pipeline: RwLock<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
 }
 
+unsafe impl Send for PipelineCache {}
+unsafe impl Sync for PipelineCache {}
+
 impl Debug for PipelineCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PipelineCache")

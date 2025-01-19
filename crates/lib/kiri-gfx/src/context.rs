@@ -26,7 +26,7 @@ pub struct RenderContext<'a> {
     dynamic: &'a DynamicGpuMemory,
     passes: Mutex<Vec<Box<dyn PassDispatcher>>>,
     descriptors: &'a RwLock<DescriptorPool>,
-    trash_descriptors: Mutex<Vec<DescriptorHandle>>,
+    temp_descriptors: Mutex<Vec<DescriptorHandle>>,
     pub backbuffer: &'a Image,
 }
 
@@ -45,7 +45,7 @@ impl<'a> RenderContext<'a> {
             dynamic,
             passes: Default::default(),
             descriptors,
-            trash_descriptors: Default::default(),
+            temp_descriptors: Default::default(),
             backbuffer,
         }
     }
@@ -68,11 +68,11 @@ impl<'a> RenderContext<'a> {
         &self,
         builder: DescriptorSetBuilder,
     ) -> Result<DescriptorHandle, Error> {
-        let handle = self.descriptors.write().push(
-            vk::DescriptorSet::null(),
-            builder.build(&self.renderer.device)?,
-        );
-        self.trash_descriptors.lock().push(handle);
+        let handle = self
+            .descriptors
+            .write()
+            .push(None, builder.build(&self.renderer.device)?);
+        self.temp_descriptors.lock().push(handle);
         Ok(handle)
     }
 
@@ -81,9 +81,6 @@ impl<'a> RenderContext<'a> {
     }
 
     pub(super) fn consume(self) -> (Vec<DescriptorHandle>, Vec<Box<dyn PassDispatcher>>) {
-        (
-            self.trash_descriptors.into_inner(),
-            self.passes.into_inner(),
-        )
+        (self.temp_descriptors.into_inner(), self.passes.into_inner())
     }
 }

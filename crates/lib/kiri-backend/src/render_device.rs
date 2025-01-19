@@ -339,6 +339,17 @@ impl RenderDevice {
         result
     }
 
+    pub fn submit(
+        &self,
+        cbs: &[vk::CommandBuffer],
+        fence: vk::Fence,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        signal: &[vk::Semaphore],
+    ) -> Result<(), Error> {
+        self.universal_queue
+            .submit(&self.raw, cbs, fence, wait, signal)
+    }
+
     pub(super) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
     }
@@ -364,6 +375,36 @@ impl RenderDevice {
             allocator: &mut allocator,
             phantom_data: PhantomData,
         })
+    }
+
+    pub fn allocate_descriptor_sets(
+        &self,
+        layout: vk::DescriptorSetLayout,
+        layout_descriptor_count: &DescriptorTotalCount,
+        count: usize,
+    ) -> Result<Vec<GpuDescriptor>, Error> {
+        let mut allocator = self.descriptor_allocator.lock();
+        DescriptorAllocatorContext::<Error> {
+            device: &self.raw,
+            allocator: &mut allocator,
+            phantom_data: PhantomData,
+        }
+        .allocate(layout, layout_descriptor_count, count)
+    }
+
+    pub fn allocate_bindless_descriptor_sets(
+        &self,
+        layout: vk::DescriptorSetLayout,
+        layout_descriptor_count: &DescriptorTotalCount,
+        count: usize,
+    ) -> Result<Vec<GpuDescriptor>, Error> {
+        let mut allocator = self.descriptor_allocator.lock();
+        DescriptorAllocatorContext::<Error> {
+            device: &self.raw,
+            allocator: &mut allocator,
+            phantom_data: PhantomData,
+        }
+        .allocate_bindless(layout, layout_descriptor_count, count)
     }
 
     pub(super) fn with_staging<CB: FnOnce(&mut Staging) -> Result<(), Error>>(

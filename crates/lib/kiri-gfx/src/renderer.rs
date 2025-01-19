@@ -16,14 +16,19 @@
 use core::slice;
 use std::{ptr::NonNull, sync::Arc};
 
+use futures::executor::block_on;
 use kiri_backend::{
     ash::vk::{self},
-    Buffer, BufferCreateDesc, GpuDescriptor, Image, ImageViewDesc, RenderDevice,
+    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount,
+    GpuDescriptor, Image, ImageViewDesc, RenderDevice, Swapchain,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, TempList};
 use parking_lot::{Mutex, RwLock};
 
-use crate::{DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, PipelineCache};
+use crate::{
+    DescriptorSetBuilder, DescriptorSetData, DynamicGpuMemoryPool, Error, PipelineCache,
+    RenderContext, RenderResourceResolver,
+};
 
 pub type ImageHandle = Handle<vk::ImageView>;
 pub type BufferHandle = Handle<vk::Buffer>;
@@ -107,6 +112,7 @@ pub struct Renderer {
     pipeline_cache: PipelineCache,
     dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
     descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
+    empty_descriptor_set: GpuDescriptor,
 }
 
 unsafe impl Sync for Renderer {}
@@ -129,6 +135,16 @@ impl Renderer {
             pipeline_cache: PipelineCache::new(device, config.cache()),
             dirty_descriptors: Default::default(),
             descriptors_to_destroy: Default::default(),
+            empty_descriptor_set: device
+                .allocate_descriptor_sets(
+                    device.get_or_create_layout(
+                        vk::ShaderStageFlags::ALL,
+                        &DescriptorSetLayoutDesc::default(),
+                    )?,
+                    &DescriptorTotalCount::default(),
+                    1,
+                )?
+                .remove(0),
         }))
     }
 
@@ -230,99 +246,89 @@ impl Renderer {
         self.descriptors_to_destroy.lock().push(handle);
     }
 
-    // pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
-    //     &self,
-    //     swapchain: &Swapchain,
-    //     render: RenderCB,
-    // ) -> Result<FrameState, Error> {
-    //     puffin::profile_function!();
-    //     // Preparations
-    //     let target = match swapchain.acquire_next_image()? {
-    //         AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
-    //         AcquiredSurface::Image(target) => target,
-    //     };
-    //     let frame = self.device.begin_frame()?;
-    //     let mut dynamic_memory = self.dynamic_memory.lock();
-    //     dynamic_memory.recycle();
-    //     let dynamic = dynamic_memory.get(self)?;
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
+        &self,
+        swapchain: &Swapchain,
+        render: RenderCB,
+    ) -> Result<FrameState, Error> {
+        puffin::profile_function!();
+        // Preparations
+        let target = match swapchain.acquire_next_image()? {
+            AcquiredSurface::NeedRecreate => return Ok(FrameState::NeedRecreateSwapchain),
+            AcquiredSurface::Image(target) => target,
+        };
+        let (frame, staging_semaphore) = self.device.begin_frame()?;
+        let mut dynamic_memory = self.dynamic_memory.lock();
+        dynamic_memory.recycle();
+        let dynamic = dynamic_memory.get(self)?;
 
-    //     // Generate render streams
-    //     let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
-    //     render(&context)?;
+        // Generate render streams
+        let context = RenderContext::new(self, &dynamic, &self.descriptors, target.image);
+        render(&context)?;
 
-    //     // Prepare
-    //     let staging_wait = self.staging.lock().upload()?;
-    //     self.compile_pipelines()?;
-    //     let images = self.images.write();
-    //     let buffers = self.buffers.write();
-    //     let pipelines = self.pipelines.write();
+        // Prepare
+        let images = self.images.write();
+        let buffers = self.buffers.write();
 
-    //     self.update_descriptors(&frame, &images, &buffers)?;
+        self.update_descriptors(&images, &buffers)?;
 
-    //     // Actual rendering
-    //     let command_buffer =
-    //         frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
-    //     let (mut trash_descriptors, passes) = context.consume();
-    //     unsafe {
-    //         self.device.raw.begin_command_buffer(
-    //             command_buffer,
-    //             &vk::CommandBufferBeginInfo::default()
-    //                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-    //         )?;
-    //     }
-    //     let mut descriptors = self.descriptors.write();
-    //     let empty_descriptor_set = frame.get_descriptor(
-    //         &self.device.raw,
-    //         self.device.get_or_create_layout(
-    //             vk::ShaderStageFlags::ALL_GRAPHICS,
-    //             &DescriptorSetLayoutDesc::default(),
-    //         )?,
-    //         DescriptorSetCount::default(),
-    //     )?;
-    //     self.device
-    //         .set_object_name(empty_descriptor_set, "Empty descriptor set");
-    //     let resolver = RenderResourceResolver {
-    //         buffers: &buffers,
-    //         images: &images,
-    //         descriptors: &descriptors,
-    //         pipelines: &pipelines,
-    //         empty_descriptor_set,
-    //         backbuffer: target.image,
-    //     };
-    //     for pass in passes {
-    //         self.device.begin_label(command_buffer, pass.name());
-    //         pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
-    //         self.device.end_label(command_buffer);
-    //     }
-    //     unsafe {
-    //         self.device.raw.end_command_buffer(command_buffer)?;
-    //     }
-    //     // Submit
-    //     self.device.submit(
-    //         &[command_buffer],
-    //         frame.render_fence,
-    //         &[
-    //             (
-    //                 staging_wait,
-    //                 vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
-    //             ),
-    //             (
-    //                 target.acquire_semaphore,
-    //                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-    //             ),
-    //         ],
-    //         &[frame.render_finished],
-    //     )?;
-    //     // Present
-    //     self.device.present(target, &frame)?;
-    //     // Cleanup
-    //     trash_descriptors.drain(..).for_each(|x| {
-    //         descriptors.remove(x);
-    //     });
-    //     self.device.end_frame(frame);
+        block_on(self.pipeline_cache.compile_pending_pipelines())?;
 
-    //     Ok(FrameState::Rendered)
-    // }
+        // Actual rendering
+        let command_buffer =
+            frame.get_command_buffer(&self.device.raw, vk::CommandBufferLevel::PRIMARY)?;
+        let (mut trash_descriptors, passes) = context.consume();
+        unsafe {
+            self.device.raw.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+        }
+        let mut descriptors = self.descriptors.write();
+        let resolver = RenderResourceResolver::new(
+            target.image,
+            &buffers,
+            &images,
+            &descriptors,
+            self.pipeline_cache.resolve_pipelines(),
+            *self.empty_descriptor_set.raw(),
+        );
+        for pass in passes {
+            self.device.begin_label(command_buffer, pass.name());
+            pass.dispatch(&self.device.raw, command_buffer, &resolver)?;
+            self.device.end_label(command_buffer);
+        }
+        unsafe {
+            self.device.raw.end_command_buffer(command_buffer)?;
+        }
+        drop(resolver);
+        // Submit
+        self.device.submit(
+            &[command_buffer],
+            frame.render_fence,
+            &[
+                (
+                    staging_semaphore,
+                    vk::PipelineStageFlags::VERTEX_INPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                ),
+                (
+                    target.acquire_semaphore,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ),
+            ],
+            &[frame.render_finished],
+        )?;
+        // Present
+        self.device.present(target, &frame)?;
+        // Cleanup
+        trash_descriptors.drain(..).for_each(|x| {
+            descriptors.remove(x);
+        });
+        self.device.end_frame(frame);
+
+        Ok(FrameState::Rendered)
+    }
 
     fn update_descriptors(&self, images: &ImagePool, buffers: &BufferPool) -> Result<(), Error> {
         puffin::profile_function!();

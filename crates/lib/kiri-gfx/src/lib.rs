@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// mod context;
+mod context;
 mod descriptors;
 mod dispatch;
 mod dynamic;
@@ -26,7 +26,7 @@ mod renderer;
 mod texture;
 mod uniforms;
 
-// pub use context::*;
+pub use context::*;
 pub use descriptors::*;
 pub use dispatch::*;
 use dynamic::*;
