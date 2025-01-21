@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod descriptors;
 mod draw_stream;
 mod dynamic;
 mod error;
@@ -24,7 +23,6 @@ mod pipeline_cache;
 mod renderer;
 mod uniforms;
 
-pub use descriptors::*;
 pub use draw_stream::*;
 use dynamic::*;
 pub use error::*;
