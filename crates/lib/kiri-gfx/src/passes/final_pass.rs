@@ -1,19 +1,14 @@
-use std::sync::Arc;
+use kiri_backend::ash::{self, vk};
 
-use kiri_backend::{
-    ash::{self, vk},
-    Image,
-};
-
-use crate::PassDispatcher;
+use crate::{ImageHandle, PassDispatcher};
 
 /// Copy result image to backbuffer and prepare it for presentation
 pub struct FinalCompositionPassDispatcher {
-    image: Arc<Image>,
+    image: ImageHandle,
 }
 
 impl FinalCompositionPassDispatcher {
-    pub fn new(image: Arc<Image>) -> Self {
+    pub fn new(image: ImageHandle) -> Self {
         Self { image }
     }
 }
@@ -25,6 +20,8 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
         command_buffer: ash::vk::CommandBuffer,
         resolver: &crate::RenderResourceResolver,
     ) -> Result<(), crate::Error> {
+        let image = resolver.resolve_image(self.image)?;
+        let dims = resolver.resolve_image_desc(self.image)?.dims;
         unsafe {
             let barriers = [
                 vk::ImageMemoryBarrier::default()
@@ -32,7 +29,7 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
                     .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .image(resolver.backbuffer.raw)
+                    .image(image)
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -45,7 +42,7 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
                     .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
                     .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .image(self.image.raw)
+                    .image(resolver.resolve_image(self.image)?)
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -65,17 +62,14 @@ impl PassDispatcher for FinalCompositionPassDispatcher {
             );
             device.cmd_blit_image(
                 command_buffer,
-                self.image.raw,
+                image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 resolver.backbuffer.raw,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[vk::ImageBlit::default()
                     .src_offsets([
                         vk::Offset3D::default(),
-                        vk::Offset3D::default()
-                            .x(self.image.desc.dims[0] as _)
-                            .y(self.image.desc.dims[1] as _)
-                            .z(1),
+                        vk::Offset3D::default().x(dims[0] as _).y(dims[1] as _).z(1),
                     ])
                     .src_subresource(vk::ImageSubresourceLayers {
                         aspect_mask: vk::ImageAspectFlags::COLOR,

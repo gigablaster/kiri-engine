@@ -19,11 +19,11 @@ use futures::executor::block_on;
 use kiri_backend::{
     ash::{
         self,
-        vk::{self, DescriptorSet},
+        vk::{self},
     },
     AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount,
-    GpuDescriptor, Image, ImageCreateDesc, ImageUploadData, ImageViewDesc, RenderDevice, Swapchain,
-    EMPTY_DESCRIPTOR_SET,
+    GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData, ImageViewDesc, RenderDevice,
+    Swapchain, EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -161,6 +161,22 @@ impl<'a> RenderResourceResolver<'a> {
             .view(desc)?)
     }
 
+    pub fn resolve_image(&self, handle: ImageHandle) -> Result<vk::Image, Error> {
+        Ok(self
+            .images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .raw)
+    }
+
+    pub fn resolve_image_desc(&self, handle: ImageHandle) -> Result<&ImageDesc, Error> {
+        Ok(&self
+            .images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .desc)
+    }
+
     pub fn resolve_raster_pipeline(
         &self,
         handle: RasterPipelineHandle,
@@ -243,30 +259,30 @@ impl Drop for RenderContext<'_> {
     }
 }
 
-#[derive(Debug)]
-struct Binding<T> {
+#[derive(Debug, Clone, Copy)]
+struct Binding<T: Copy> {
     pub slot: u32,
     pub element: u32,
     pub ty: vk::DescriptorType,
     pub data: T,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct ImageBindingData {
-    pub image: Arc<Image>,
-    pub view: vk::ImageView,
+    image: ImageHandle,
+    desc: ImageViewDesc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct StaticBufferBindingData {
-    pub buffer: Arc<Buffer>,
+    pub buffer: BufferHandle,
     pub offset: u32,
     pub size: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct DynamicBufferBindingData {
-    pub buffer: Arc<Buffer>,
+    pub buffer: BufferHandle,
     pub size: u32,
 }
 
@@ -310,7 +326,12 @@ impl<'a> DescriptorSetBuilder<'a> {
         }
     }
 
-    pub fn bind_image(mut self, slot: &str, image: Arc<Image>) -> Result<Self, Error> {
+    pub fn bind_image(
+        mut self,
+        slot: &str,
+        image: ImageHandle,
+        desc: ImageViewDesc,
+    ) -> Result<Self, Error> {
         let slot = self
             .layout
             .get_slot(slot)
@@ -319,10 +340,7 @@ impl<'a> DescriptorSetBuilder<'a> {
             slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
-            data: ImageBindingData {
-                view: image.view(ImageViewDesc::new(vk::ImageAspectFlags::COLOR))?,
-                image,
-            },
+            data: ImageBindingData { image, desc },
         });
         Ok(self)
     }
@@ -330,7 +348,7 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_uniform_buffer(
         mut self,
         slot: &str,
-        buffer: Arc<Buffer>,
+        buffer: BufferHandle,
         offset: usize,
         size: usize,
     ) -> Result<Self, Error> {
@@ -354,7 +372,7 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_storage_buffer(
         mut self,
         slot: &str,
-        buffer: Arc<Buffer>,
+        buffer: BufferHandle,
         offset: usize,
         size: u32,
     ) -> Result<Self, Error> {
@@ -378,7 +396,7 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_uniform_buffer(
         mut self,
         slot: &str,
-        buffer: Arc<Buffer>,
+        buffer: BufferHandle,
         size: usize,
     ) -> Result<Self, Error> {
         let slot = self
@@ -400,7 +418,7 @@ impl<'a> DescriptorSetBuilder<'a> {
     pub fn bind_dynamic_storage_buffer(
         mut self,
         slot: &str,
-        buffer: Arc<Buffer>,
+        buffer: BufferHandle,
         size: usize,
     ) -> Result<Self, Error> {
         let slot = self
@@ -588,7 +606,13 @@ impl Renderer {
         }
     }
 
-    fn update_descriptors(&self, descriptors: &mut DescriptorPool) -> Result<(), Error> {
+    // We want descriptors, buffers and images to be locked at this point. So we pass them from outside.
+    fn update_descriptors(
+        &self,
+        descriptors: &mut DescriptorPool,
+        buffers: &BufferPool,
+        images: &ImagePool,
+    ) -> Result<(), Error> {
         puffin::profile_function!();
         let mut drop_list = Vec::new();
         let mut dirty = self.dirty_descriptors.lock();
@@ -624,7 +648,14 @@ impl Renderer {
                                 .image_info(slice::from_ref(
                                     image_writes.add(
                                         vk::DescriptorImageInfo::default()
-                                            .image_view(image.data.view)
+                                            .image_view(
+                                                images
+                                                    .get(image.data.image)
+                                                    .ok_or(Error::InvalidImageHandle(
+                                                        image.data.image,
+                                                    ))?
+                                                    .view(image.data.desc)?,
+                                            )
                                             .image_layout(
                                                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                                             ),
@@ -644,7 +675,9 @@ impl Renderer {
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(buffer.data.buffer.raw)
+                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            )?)
                                             .offset(buffer.data.offset as _)
                                             .range(buffer.data.size as _),
                                     ),
@@ -663,7 +696,9 @@ impl Renderer {
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(buffer.data.buffer.raw)
+                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            )?)
                                             .offset(buffer.data.offset as _)
                                             .range(buffer.data.size as _),
                                     ),
@@ -682,7 +717,9 @@ impl Renderer {
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(buffer.data.buffer.raw)
+                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            )?)
                                             .range(buffer.data.size as _),
                                     ),
                                 ))
@@ -700,7 +737,9 @@ impl Renderer {
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(buffer.data.buffer.raw)
+                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            )?)
                                             .range(buffer.data.size as _),
                                     ),
                                 ))
@@ -753,13 +792,14 @@ impl Renderer {
         render(&mut context)?;
         let passes = context.consume();
         let mut descriptors = self.descriptors.write();
-        self.update_descriptors(&mut descriptors)?;
+        let mut buffers = self.buffers.write();
+        let mut images = self.images.write();
+
+        self.update_descriptors(&mut descriptors, &buffers, &images)?;
 
         // Prepare
         block_on(self.pipeline_cache.compile_pending_pipelines())?;
 
-        let mut buffers = self.buffers.write();
-        let mut images = self.images.write();
         let mut buffers_to_destroy = self.buffers_to_destroy.lock();
         let mut images_to_destroy = self.images_to_destroy.lock();
         let mut descriptors_to_destroy = self.descriptors_to_destroy.lock();

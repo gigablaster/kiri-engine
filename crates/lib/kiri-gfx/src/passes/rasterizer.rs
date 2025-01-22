@@ -13,22 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
-
 use arrayvec::ArrayVec;
 use kiri_backend::{
     ash::{
         self,
         vk::{self, Rect2D},
     },
-    Image, ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 use crate::{DrawStream, Error, ImageHandle, PassDispatcher, RenderResourceResolver};
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct RenderTarget {
-    pub image: Arc<Image>,
+    pub image: ImageHandle,
     pub initial_layout: Option<vk::ImageLayout>,
     pub final_layout: Option<vk::ImageLayout>,
     pub load: vk::AttachmentLoadOp,
@@ -37,7 +35,7 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    pub fn new(image: Arc<Image>) -> Self {
+    pub fn new(image: ImageHandle) -> Self {
         Self {
             image,
             initial_layout: None,
@@ -86,10 +84,11 @@ impl RenderTarget {
 
     fn build(
         &self,
+        resolver: &RenderResourceResolver,
         aspect: vk::ImageAspectFlags,
         layout: vk::ImageLayout,
     ) -> Result<vk::RenderingAttachmentInfo, Error> {
-        let view = self.image.view(ImageViewDesc::new(aspect))?;
+        let view = resolver.resolve_image_view(self.image, ImageViewDesc::new(aspect))?;
         let info = vk::RenderingAttachmentInfo::default()
             .image_layout(layout)
             .image_view(view)
@@ -100,10 +99,10 @@ impl RenderTarget {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ImageDependency {
     pub aspect: vk::ImageAspectFlags,
-    pub image: Arc<Image>,
+    pub image: ImageHandle,
     pub initial_layout: vk::ImageLayout,
     pub desired_layout: Option<vk::ImageLayout>,
     pub src_access: vk::AccessFlags2,
@@ -113,7 +112,7 @@ pub struct ImageDependency {
 }
 
 impl ImageDependency {
-    pub fn color(image: Arc<Image>) -> Self {
+    pub fn color(image: ImageHandle) -> Self {
         Self {
             aspect: vk::ImageAspectFlags::COLOR,
             image,
@@ -126,7 +125,7 @@ impl ImageDependency {
         }
     }
 
-    pub fn depth(image: Arc<Image>) -> Self {
+    pub fn depth(image: ImageHandle) -> Self {
         Self {
             aspect: vk::ImageAspectFlags::DEPTH,
             image,
@@ -146,6 +145,7 @@ impl ImageDependency {
 
     fn build<'a>(
         self,
+        resolver: &RenderResourceResolver,
         desired_layout: vk::ImageLayout,
     ) -> Result<vk::ImageMemoryBarrier2<'a>, Error> {
         Ok(vk::ImageMemoryBarrier2::default()
@@ -162,7 +162,7 @@ impl ImageDependency {
                 base_array_layer: 0,
                 layer_count: vk::REMAINING_ARRAY_LAYERS,
             })
-            .image(self.image.raw))
+            .image(resolver.resolve_image(self.image)?))
     }
 }
 
@@ -264,6 +264,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
         let mut color_attachments = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for color in &self.color_targets {
             color_attachments.push(color.build(
+                resolver,
                 vk::ImageAspectFlags::COLOR,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             )?);
@@ -271,6 +272,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
         let mut depth_attachment = None;
         if let Some(depth) = &self.depth_target {
             depth_attachment = Some(depth.build(
+                resolver,
                 vk::ImageAspectFlags::DEPTH,
                 vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             )?);
@@ -285,7 +287,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if initial_layout != vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::SHADER_READ)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .old_layout(initial_layout)
@@ -304,7 +306,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
                 // Write-write barrier
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -325,7 +327,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             .iter()
             .cloned()
             .try_for_each(|x| -> Result<(), Error> {
-                barriers.push(x.build(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
+                barriers.push(x.build(resolver, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?);
                 Ok(())
             })?;
         if let Some(target) = &self.depth_target {
@@ -335,7 +337,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if initial_layout != vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .old_layout(initial_layout)
@@ -355,7 +357,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
                 // Write-write barrier
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -385,8 +387,12 @@ impl PassDispatcher for RasterizerPassDispatcher {
         let dims = self
             .color_targets
             .iter()
-            .map(|x| x.image.desc.dims)
-            .chain(self.depth_target.iter().map(|x| x.image.desc.dims))
+            .map(|x| resolver.resolve_image_desc(x.image).unwrap().dims)
+            .chain(
+                self.depth_target
+                    .iter()
+                    .map(|x| resolver.resolve_image_desc(x.image).unwrap().dims),
+            )
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
         assert!(!dims.is_empty(), "Need at least one render target");
         assert!(
@@ -423,7 +429,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if final_layout != vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -447,7 +453,7 @@ impl PassDispatcher for RasterizerPassDispatcher {
             if final_layout != vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
                 barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .image(target.image.raw)
+                        .image(resolver.resolve_image(target.image)?)
                         .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ)
                         .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
