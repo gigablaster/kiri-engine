@@ -263,7 +263,6 @@ impl Drop for RenderContext<'_> {
 struct Binding<T: Copy> {
     pub slot: u32,
     pub element: u32,
-    pub ty: vk::DescriptorType,
     pub data: T,
 }
 
@@ -271,13 +270,7 @@ struct Binding<T: Copy> {
 struct ImageBindingData {
     image: ImageHandle,
     desc: ImageViewDesc,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct StaticBufferBindingData {
-    pub buffer: BufferHandle,
-    pub offset: u32,
-    pub size: u32,
+    ty: vk::DescriptorType,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -292,129 +285,99 @@ struct DescriptorSetData {
     count: DescriptorTotalCount,
     layout: vk::DescriptorSetLayout,
     images: Vec<Binding<ImageBindingData>>,
-    unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
-    storage_buffers: Vec<Binding<StaticBufferBindingData>>,
-    dynamic_uniform_buffers: Vec<Binding<DynamicBufferBindingData>>,
-    dynamic_storage_buffers: Vec<Binding<DynamicBufferBindingData>>,
+    uniforms: Vec<Binding<BufferSlice>>,
+    storages: Vec<Binding<BufferSlice>>,
+    dynamic_uniforms: Vec<Binding<DynamicBufferBindingData>>,
+    dynamic_storages: Vec<Binding<DynamicBufferBindingData>>,
     name: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DescriptorSetBuilder<'a> {
-    layout: DescriptorSetLayoutDesc<'static>,
-    stages: vk::ShaderStageFlags,
-    images: Vec<Binding<ImageBindingData>>,
-    unifom_buffers: Vec<Binding<StaticBufferBindingData>>,
-    storage_buffers: Vec<Binding<StaticBufferBindingData>>,
-    dynamic_uniform_buffers: Vec<Binding<DynamicBufferBindingData>>,
-    dynamic_storage_buffers: Vec<Binding<DynamicBufferBindingData>>,
-    name: Option<&'a str>,
+    pub layout: DescriptorSetLayoutDesc<'static>,
+    pub stages: vk::ShaderStageFlags,
+    pub images: &'a [ImageHandle],
+    pub unifoms: &'a [BufferSlice],
+    pub storages: &'a [BufferSlice],
+    pub dynamic_uniforms: &'a [(BufferHandle, usize)],
+    pub dynamic_storage_buffers: &'a [(BufferHandle, usize)],
+    pub name: Option<&'a str>,
 }
 
 impl<'a> DescriptorSetBuilder<'a> {
-    pub fn new(stages: vk::ShaderStageFlags, layout: DescriptorSetLayoutDesc<'static>) -> Self {
-        let count = layout.get_descriptor_count();
-        Self {
-            layout,
-            stages,
-            images: Vec::with_capacity((count.sampled_image + count.combined_image_sampler) as _),
-            unifom_buffers: Vec::with_capacity(count.uniform_buffer as _),
-            storage_buffers: Vec::with_capacity(count.storage_buffer as _),
-            dynamic_uniform_buffers: Vec::with_capacity(count.uniform_buffer_dynamic as _),
-            dynamic_storage_buffers: Vec::with_capacity(count.storage_buffer_dynamic as _),
-            name: None,
-        }
-    }
-
-    pub fn bind_image(mut self, slot: usize, image: ImageHandle, desc: ImageViewDesc) -> Self {
-        self.images.push(Binding {
-            slot: slot as u32,
-            element: 0,
-            ty: self.layout.get_desc(slot).unwrap().ty,
-            data: ImageBindingData { image, desc },
-        });
-        self
-    }
-
-    pub fn bind_uniform_buffer(mut self, slot: usize, buffer: BufferSlice) -> Self {
-        self.unifom_buffers.push(Binding {
-            slot: slot as u32,
-            element: 0,
-            ty: self.layout.get_desc(slot).unwrap().ty,
-            data: StaticBufferBindingData {
-                offset: buffer.offset as u32,
-                size: buffer.size as u32,
-                buffer: buffer.handle,
-            },
-        });
-        self
-    }
-
-    pub fn bind_storage_buffer(mut self, slot: usize, buffer: BufferSlice) -> Self {
-        self.storage_buffers.push(Binding {
-            slot: slot as u32,
-            element: 0,
-            ty: self.layout.get_desc(slot).unwrap().ty,
-            data: StaticBufferBindingData {
-                offset: buffer.offset as u32,
-                size: buffer.size as u32,
-                buffer: buffer.handle,
-            },
-        });
-        self
-    }
-
-    pub fn bind_dynamic_uniform_buffer(
-        mut self,
-        slot: usize,
-        buffer: BufferHandle,
-        size: usize,
-    ) -> Self {
-        self.dynamic_uniform_buffers.push(Binding {
-            slot: slot as u32,
-            element: 0,
-            ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData {
-                size: size as u32,
-                buffer,
-            },
-        });
-        self
-    }
-
-    pub fn bind_dynamic_storage_buffer(
-        mut self,
-        slot: usize,
-        buffer: BufferHandle,
-        size: usize,
-    ) -> Self {
-        self.dynamic_storage_buffers.push(Binding {
-            slot: slot as u32,
-            element: 0,
-            ty: self.layout.get_desc(slot).unwrap().ty,
-            data: DynamicBufferBindingData {
-                size: size as u32,
-                buffer,
-            },
-        });
-        self
-    }
-
-    pub fn name(mut self, name: &'a str) -> Self {
-        self.name = Some(name);
-        self
-    }
-
     fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
+        let images = self
+            .layout
+            .by_types(&[
+                vk::DescriptorType::SAMPLED_IMAGE,
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            ])
+            .zip(self.images)
+            .map(|((slot, desc), image)| Binding {
+                slot: slot as u32,
+                element: 0,
+                data: ImageBindingData {
+                    image: *image,
+                    desc: ImageViewDesc::color(),
+                    ty: desc.ty,
+                },
+            })
+            .collect();
+        let uniforms = self
+            .layout
+            .by_types(&[vk::DescriptorType::UNIFORM_BUFFER])
+            .zip(self.unifoms)
+            .map(|((slot, _), buffer)| Binding {
+                slot: slot as u32,
+                element: 0,
+                data: *buffer,
+            })
+            .collect();
+        let storages = self
+            .layout
+            .by_types(&[vk::DescriptorType::STORAGE_BUFFER])
+            .zip(self.storages)
+            .map(|((slot, _), buffer)| Binding {
+                slot: slot as u32,
+                element: 0,
+                data: *buffer,
+            })
+            .collect();
+        let dynamic_uniforms = self
+            .layout
+            .by_types(&[vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC])
+            .zip(self.dynamic_uniforms)
+            .map(|((slot, _), (buffer, size))| Binding {
+                slot: slot as u32,
+                element: 0,
+                data: DynamicBufferBindingData {
+                    buffer: *buffer,
+                    size: *size as u32,
+                },
+            })
+            .collect();
+        let dynamic_storages = self
+            .layout
+            .by_types(&[vk::DescriptorType::STORAGE_BUFFER_DYNAMIC])
+            .zip(self.dynamic_uniforms)
+            .map(|((slot, _), (buffer, size))| Binding {
+                slot: slot as u32,
+                element: 0,
+                data: DynamicBufferBindingData {
+                    buffer: *buffer,
+                    size: *size as u32,
+                },
+            })
+            .collect();
         Ok(DescriptorSetData {
             descriptor: None,
             count: self.layout.get_descriptor_count(),
             layout: device.get_or_create_layout(self.stages, self.layout)?,
-            images: self.images,
-            unifom_buffers: self.unifom_buffers,
-            storage_buffers: self.storage_buffers,
-            dynamic_uniform_buffers: self.dynamic_uniform_buffers,
-            dynamic_storage_buffers: self.dynamic_storage_buffers,
+            images,
+            uniforms,
+            storages,
+            dynamic_uniforms,
+            dynamic_storages,
             name: self.name.map(|x| x.to_owned()),
         })
     }
@@ -679,56 +642,56 @@ impl Renderer {
                                     ),
                                 ))
                                 .descriptor_count(1)
-                                .descriptor_type(image.ty)
+                                .descriptor_type(image.data.ty)
                                 .dst_array_element(image.element)
                                 .dst_binding(image.slot)
                                 .dst_set(ds),
                         );
                     }
                     // Process uniform buffers
-                    for buffer in &data.unifom_buffers {
+                    for buffer in &data.uniforms {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
-                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
                                             )?)
                                             .offset(buffer.data.offset as _)
                                             .range(buffer.data.size as _),
                                     ),
                                 ))
                                 .descriptor_count(1)
-                                .descriptor_type(buffer.ty)
+                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                                 .dst_array_element(buffer.element)
                                 .dst_binding(buffer.slot)
                                 .dst_set(ds),
                         );
                     }
                     // Process storage buffers
-                    for buffer in &data.storage_buffers {
+                    for buffer in &data.storages {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .buffer_info(slice::from_ref(
                                     buffer_writes.add(
                                         vk::DescriptorBufferInfo::default()
-                                            .buffer(*buffers.get(buffer.data.buffer).ok_or(
-                                                Error::InvalidBufferHandle(buffer.data.buffer),
+                                            .buffer(*buffers.get(buffer.data.handle).ok_or(
+                                                Error::InvalidBufferHandle(buffer.data.handle),
                                             )?)
                                             .offset(buffer.data.offset as _)
                                             .range(buffer.data.size as _),
                                     ),
                                 ))
                                 .descriptor_count(1)
-                                .descriptor_type(buffer.ty)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                                 .dst_array_element(buffer.element)
                                 .dst_binding(buffer.slot)
                                 .dst_set(ds),
                         );
                     }
                     // Process dynamic uniform buffers
-                    for buffer in &data.dynamic_uniform_buffers {
+                    for buffer in &data.dynamic_uniforms {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .buffer_info(slice::from_ref(
@@ -741,14 +704,14 @@ impl Renderer {
                                     ),
                                 ))
                                 .descriptor_count(1)
-                                .descriptor_type(buffer.ty)
+                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                                 .dst_array_element(buffer.element)
                                 .dst_binding(buffer.slot)
                                 .dst_set(ds),
                         );
                     }
                     // Process dynamic storage buffers
-                    for buffer in &data.dynamic_storage_buffers {
+                    for buffer in &data.dynamic_storages {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .buffer_info(slice::from_ref(
@@ -761,7 +724,7 @@ impl Renderer {
                                     ),
                                 ))
                                 .descriptor_count(1)
-                                .descriptor_type(buffer.ty)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
                                 .dst_array_element(buffer.element)
                                 .dst_binding(buffer.slot)
                                 .dst_set(ds),
@@ -773,14 +736,11 @@ impl Renderer {
             })?;
         // Update actual vulkan objects for all dirty descriptors
         for handle in dirty.iter().copied() {
-            let ds = *descriptors
-                .get_cold(handle)
-                .unwrap()
-                .descriptor
-                .as_ref()
-                .unwrap()
-                .raw();
-            descriptors.replace(handle, ds);
+            if let Some(ds) = descriptors.get_cold(handle) {
+                if let Some(ds) = &ds.descriptor {
+                    descriptors.replace(handle, *ds.raw());
+                }
+            }
         }
         dirty.clear();
         self.device.drop_descriptors(drop_list);

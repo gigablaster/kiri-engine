@@ -20,19 +20,15 @@ use crate::{
     Renderer,
 };
 use kiri_assets::{
-    load_or_compile_asset, ImageAssetType, ImageData, ImageSource, MeshAssetMaterial,
-    MeshMaterialBlend, RenderMeshVertex,
+    load_or_compile_asset, ImageAssetType, ImageSource, MeshAssetMaterial, MeshMaterialBlend,
+    RenderMeshVertex,
 };
 use kiri_backend::{
-    ash::{
-        ext::color_write_enable::Device,
-        vk::{self, DescriptorSet},
-    },
-    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc, Image, ImageCreateDesc,
-    ImageUploadData, ImageViewDesc, RenderDevice,
+    ash::vk::{self, DescriptorSet},
+    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc, ImageCreateDesc, ImageUploadData,
 };
 use kiri_common::NodeIndex;
-use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A, Vec4};
+use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 use turbosloth::{async_trait, IntoLazy, LazyWorker, RunContext};
 
 #[derive(Debug, Clone, Copy)]
@@ -461,18 +457,19 @@ impl LazyWorker for LoadMaterial {
             emissive_power,
         })?;
 
-        let descriptor = self.renderer.with_descriptors().create_descriptor(
-            DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::ALL_GRAPHICS,
-                MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
-            )
-            .bind_image(0, images[0].handle, ImageViewDesc::color())
-            .bind_image(1, images[1].handle, ImageViewDesc::color())
-            .bind_image(2, images[2].handle, ImageViewDesc::color())
-            .bind_image(3, images[3].handle, ImageViewDesc::color())
-            .bind_image(4, images[4].handle, ImageViewDesc::color())
-            .bind_uniform_buffer(5, uniform),
-        )?;
+        let descriptor =
+            self.renderer
+                .with_descriptors()
+                .create_descriptor(DescriptorSetBuilder {
+                    layout: MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
+                    stages: vk::ShaderStageFlags::ALL_GRAPHICS,
+                    images: &images
+                        .iter()
+                        .map(|texture| texture.handle)
+                        .collect::<Vec<_>>(),
+                    unifoms: &[uniform],
+                    ..Default::default()
+                })?;
         let order = match self.source.blend {
             MeshMaterialBlend::Opaque => RenderMeshMaterialOrder::Opaque,
             MeshMaterialBlend::AlphaBlend => RenderMeshMaterialOrder::Transparent,
