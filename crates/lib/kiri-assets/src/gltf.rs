@@ -129,6 +129,10 @@ impl MeshAssetMaterial {
             images.insert(image);
         });
     }
+
+    pub fn get_image(&self, name: &str, default: ImageSource) -> ImageSource {
+        self.images.get(name).cloned().unwrap_or(default)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]

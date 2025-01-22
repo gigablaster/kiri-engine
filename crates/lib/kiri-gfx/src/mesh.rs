@@ -13,13 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem, sync::Arc};
+use std::{collections::HashMap, hash::Hash, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, Error, Renderer};
-use kiri_assets::RenderMeshVertex;
-use kiri_backend::{ash::vk::DescriptorSet, BufferCreateDesc};
+use crate::{BufferHandle, BufferPointer, DescriptorHandle, Error, Renderer};
+use kiri_assets::{
+    load_or_compile_asset, ImageAssetType, ImageData, ImageSource, MeshAssetMaterial,
+    MeshMaterialBlend, RenderMeshVertex,
+};
+use kiri_backend::{
+    ash::{
+        ext::color_write_enable::Device,
+        vk::{self, DescriptorSet},
+    },
+    BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, Image, ImageCreateDesc,
+    ImageUploadData, RenderDevice,
+};
 use kiri_common::NodeIndex;
-use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
+use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A, Vec4};
+use turbosloth::{async_trait, IntoLazy, LazyWorker, RunContext};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RenderMeshMaterialType {
@@ -97,7 +108,7 @@ impl RenderMeshBuilder {
         self.surfaces.push(RenderMeshSurface {
             first_index,
             index_count,
-            material: material,
+            material,
         });
     }
 
@@ -259,7 +270,168 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
 
 impl Drop for RenderModel {
     fn drop(&mut self) {
-        self.renderer.remove_buffer(self.vertices);
-        self.renderer.remove_buffer(self.indices);
+        self.renderer.destroy_buffer(self.vertices);
+        self.renderer.destroy_buffer(self.indices);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadTexture {
+    renderer: Arc<Renderer>,
+    source: ImageSource,
+}
+
+impl Hash for LoadTexture {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+    }
+}
+
+impl LoadTexture {
+    pub fn new(renderer: Arc<Renderer>, source: ImageSource) -> Self {
+        Self { renderer, source }
+    }
+}
+
+#[async_trait]
+impl LazyWorker for LoadTexture {
+    type Output = Result<Image, Error>;
+
+    async fn run(self, _ctx: RunContext) -> Self::Output {
+        let image = load_or_compile_asset(self.source).await?;
+        let data = image
+            .mips
+            .iter()
+            .map(|mip| ImageUploadData { data: &mip })
+            .collect::<Vec<_>>();
+        Ok(Image::new(
+            &self.renderer.device,
+            ImageCreateDesc::texture(image.format, image.dims),
+            Some(&data),
+        )?)
+    }
+}
+
+#[derive(Debug)]
+pub struct MeshMaterial {
+    remderer: Arc<Renderer>,
+    ty: RenderMeshMaterialType,
+    order: RenderMeshMaterialOrder,
+    descriptor: DescriptorHandle,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadMaterial {
+    renderer: Arc<Renderer>,
+    source: MeshAssetMaterial,
+}
+
+impl Hash for LoadMaterial {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+    }
+}
+
+impl LoadMaterial {
+    pub fn new(renderer: Arc<Renderer>, source: MeshAssetMaterial) -> Self {
+        Self { renderer, source }
+    }
+}
+
+pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[
+        (
+            0,
+            DescriptorSetDesc {
+                name: "base_color",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            1,
+            DescriptorSetDesc {
+                name: "metallic_roughness",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            2,
+            DescriptorSetDesc {
+                name: "normals",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            3,
+            DescriptorSetDesc {
+                name: "occlusion",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            4,
+            DescriptorSetDesc {
+                name: "occlusion",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            5,
+            DescriptorSetDesc {
+                name: "material",
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count: 1,
+            },
+        ),
+    ],
+    compute_groups_size: None,
+};
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct GpuMeshMaterial {
+    alpha_cut: f32,
+    emissive_power: f32,
+}
+
+#[async_trait]
+impl LazyWorker for LoadMaterial {
+    type Output = Result<Arc<MeshMaterial>, Error>;
+
+    async fn run(self, ctx: RunContext) -> Self::Output {
+        let images = [
+            self.source.get_image(
+                "base_color",
+                ImageSource::color([127, 127, 127, 255]).srgb(true),
+            ),
+            self.source
+                .get_image("metallic_roughness", ImageSource::color([0, 0, 192, 255])),
+            self.source.get_image(
+                "normals",
+                ImageSource::color([127, 127, 255, 255]).ty(ImageAssetType::Rg),
+            ),
+            self.source
+                .get_image("occlusion", ImageSource::color([0, 0, 0, 0])),
+            self.source
+                .get_image("emission", ImageSource::color([0, 0, 0, 0])),
+        ]
+        .map(|image| LoadTexture::new(self.renderer.clone(), image));
+        let images = futures::future::try_join_all(
+            images.into_iter().map(|image| image.into_lazy().eval(&ctx)),
+        )
+        .await?;
+        let emissive_power = self
+            .source
+            .scalars
+            .get("emissive_power")
+            .copied()
+            .unwrap_or(0.0);
+
+        todo!()
     }
 }

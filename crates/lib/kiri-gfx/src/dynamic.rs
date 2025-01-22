@@ -37,7 +37,7 @@ unsafe impl Sync for DynamicGpuMemory {}
 
 impl DynamicGpuMemory {
     pub fn new(renderer: &Renderer, size: u64) -> Result<Self, Error> {
-        let buffer = Arc::new(Buffer::new(
+        let buffer = Buffer::new(
             &renderer.device,
             BufferCreateDesc::shared(size)
                 .name("Dynamic data")
@@ -45,7 +45,7 @@ impl DynamicGpuMemory {
                 .device_address()
                 .indirect_draw()
                 .uniform_buffer(),
-        )?);
+        )?;
         let mapping = buffer.mapping.unwrap();
         Ok(Self {
             buffer_handle: renderer.register_buffer(buffer),

@@ -42,7 +42,7 @@ impl<T: Copy> Drop for ConstUniformBuffer<T> {
         self.pages
             .lock()
             .drain(..)
-            .for_each(|x| self.renderer.remove_buffer(x.handle));
+            .for_each(|x| self.renderer.destroy_buffer(x.handle));
     }
 }
 
