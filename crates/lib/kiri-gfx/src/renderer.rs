@@ -328,14 +328,10 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_image(
         mut self,
-        slot: &str,
+        slot: usize,
         image: ImageHandle,
         desc: ImageViewDesc,
     ) -> Result<Self, Error> {
-        let slot = self
-            .layout
-            .get_slot(slot)
-            .ok_or(Error::TextureSlotNotFound(slot.to_owned()))?;
         self.images.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -347,15 +343,11 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_uniform_buffer(
         mut self,
-        slot: &str,
+        slot: usize,
         buffer: BufferHandle,
         offset: usize,
         size: usize,
     ) -> Result<Self, Error> {
-        let slot = self
-            .layout
-            .get_slot(slot)
-            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.unifom_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -371,15 +363,11 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_storage_buffer(
         mut self,
-        slot: &str,
+        slot: usize,
         buffer: BufferHandle,
         offset: usize,
         size: u32,
     ) -> Result<Self, Error> {
-        let slot = self
-            .layout
-            .get_slot(slot)
-            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.storage_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -395,14 +383,10 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_dynamic_uniform_buffer(
         mut self,
-        slot: &str,
+        slot: usize,
         buffer: BufferHandle,
         size: usize,
     ) -> Result<Self, Error> {
-        let slot = self
-            .layout
-            .get_slot(slot)
-            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_uniform_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -417,14 +401,10 @@ impl<'a> DescriptorSetBuilder<'a> {
 
     pub fn bind_dynamic_storage_buffer(
         mut self,
-        slot: &str,
+        slot: usize,
         buffer: BufferHandle,
         size: usize,
     ) -> Result<Self, Error> {
-        let slot = self
-            .layout
-            .get_slot(slot)
-            .ok_or(Error::BindingSlotNotFound(slot.to_owned()))?;
         self.dynamic_storage_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
