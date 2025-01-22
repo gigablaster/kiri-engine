@@ -17,9 +17,10 @@ use std::io;
 
 use kiri_backend::ash::vk;
 use thiserror::Error;
-use turbosloth::lazy::LazyEvalError;
 
-use crate::{BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle};
+use crate::{
+    BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle, RasterProgramHandle,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -43,10 +44,10 @@ pub enum Error {
     InvalidDescriptorHandle(DescriptorHandle),
     #[error("Texture slot {0} not found")]
     TextureSlotNotFound(String),
-    #[error("Lazy eval error: {0}")]
-    LazyEvalError(#[from] LazyEvalError),
     #[error("Invalid raster pipeline handle {0:?}")]
-    InvalidRasterPipeline(RasterPipelineHandle),
+    InvalidRasterPipelineHandle(RasterPipelineHandle),
+    #[error("Invalid raster program handle: {0:?}")]
+    InvalidRasterProgramHandle(RasterProgramHandle),
 }
 
 impl From<vk::Result> for Error {

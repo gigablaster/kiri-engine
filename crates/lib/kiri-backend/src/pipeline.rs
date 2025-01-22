@@ -161,22 +161,6 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-#[derive(Debug)]
-pub struct Pipeline {
-    device: Arc<RenderDevice>,
-    pub pipeline: vk::Pipeline,
-    pub pipeline_layout: vk::PipelineLayout,
-    pub pipeline_bind_point: vk::PipelineBindPoint,
-}
-
-impl Drop for Pipeline {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.raw.destroy_pipeline(self.pipeline, None);
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexAttrubute {
     pub location: u32,
@@ -211,13 +195,13 @@ impl InputVertexStreamLayout<'_> {
 pub fn compile_raster_pipeline(
     device: &RenderDevice,
     cache: vk::PipelineCache,
-    program: &Arc<RasterProgram>,
+    program: &RasterProgram,
     pass_layout: &RenderPassLayout,
     streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
     desc: RasterPipelineCreateDesc,
     name: Option<&str>,
-) -> Result<Pipeline, Error> {
+) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
     let mut specialization_values = Cursor::new(Vec::new());
     let specialization_entires = specialization
         .iter()
@@ -367,12 +351,7 @@ pub fn compile_raster_pipeline(
         device.set_object_name(pipeline, name);
     }
 
-    Ok(Pipeline {
-        device: program.device.clone(),
-        pipeline,
-        pipeline_layout: program.pipeline_layout,
-        pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-    })
+    Ok((pipeline, program.pipeline_layout))
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";

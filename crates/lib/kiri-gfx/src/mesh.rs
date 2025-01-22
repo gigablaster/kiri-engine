@@ -29,7 +29,6 @@ use kiri_backend::{
 };
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
-use turbosloth::{async_trait, IntoLazy, LazyWorker, RunContext};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RenderMeshMaterialType {
@@ -274,91 +273,6 @@ impl Drop for RenderModel {
     }
 }
 
-#[derive(Debug)]
-pub struct RenderTexture {
-    renderer: Arc<Renderer>,
-    handle: ImageHandle,
-}
-
-impl Drop for RenderTexture {
-    fn drop(&mut self) {
-        self.renderer.destroy_image(self.handle);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoadTexture {
-    renderer: Arc<Renderer>,
-    source: ImageSource,
-}
-
-impl Hash for LoadTexture {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source.hash(state);
-    }
-}
-
-impl LoadTexture {
-    pub fn new(renderer: Arc<Renderer>, source: ImageSource) -> Self {
-        Self { renderer, source }
-    }
-}
-
-#[async_trait]
-impl LazyWorker for LoadTexture {
-    type Output = Result<RenderTexture, Error>;
-
-    async fn run(self, _ctx: RunContext) -> Self::Output {
-        let image = load_or_compile_asset(self.source).await?;
-        let data = image
-            .mips
-            .iter()
-            .map(|mip| ImageUploadData { data: &mip })
-            .collect::<Vec<_>>();
-        Ok(RenderTexture {
-            handle: self.renderer.create_image(
-                ImageCreateDesc::texture(image.format, image.dims),
-                Some(&data),
-            )?,
-            renderer: self.renderer,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct MeshMaterial {
-    remderer: Arc<Renderer>,
-    ty: RenderMeshMaterialType,
-    order: RenderMeshMaterialOrder,
-    descriptor: DescriptorHandle,
-}
-
-impl Drop for MeshMaterial {
-    fn drop(&mut self) {
-        self.remderer
-            .with_descriptors()
-            .destroy_descriptor(self.descriptor);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoadMaterial {
-    renderer: Arc<Renderer>,
-    source: MeshAssetMaterial,
-}
-
-impl Hash for LoadMaterial {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source.hash(state);
-    }
-}
-
-impl LoadMaterial {
-    pub fn new(renderer: Arc<Renderer>, source: MeshAssetMaterial) -> Self {
-        Self { renderer, source }
-    }
-}
-
 pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
         (
@@ -412,74 +326,3 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
     ],
     compute_groups_size: None,
 };
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct GpuMeshMaterial {
-    alpha_cut: f32,
-    emissive_power: f32,
-}
-
-#[async_trait]
-impl LazyWorker for LoadMaterial {
-    type Output = Result<MeshMaterial, Error>;
-
-    async fn run(self, ctx: RunContext) -> Self::Output {
-        let images = [
-            self.source.get_image(
-                "base_color",
-                ImageSource::color([127, 127, 127, 255]).srgb(true),
-            ),
-            self.source
-                .get_image("metallic_roughness", ImageSource::color([0, 0, 192, 255])),
-            self.source.get_image(
-                "normals",
-                ImageSource::color([127, 127, 255, 255]).ty(ImageAssetType::Rg),
-            ),
-            self.source
-                .get_image("occlusion", ImageSource::color([0, 0, 0, 0])),
-            self.source
-                .get_image("emission", ImageSource::color([0, 0, 0, 0])),
-        ]
-        .map(|image| LoadTexture::new(self.renderer.clone(), image));
-        let images = futures::future::try_join_all(
-            images.into_iter().map(|image| image.into_lazy().eval(&ctx)),
-        )
-        .await?;
-        let emissive_power = self
-            .source
-            .scalars
-            .get("emissive_power")
-            .copied()
-            .unwrap_or(0.0);
-        let uniform = self.renderer.allocate_uniform(GpuMeshMaterial {
-            alpha_cut: self.source.blend.get_alpha_cut(),
-            emissive_power,
-        })?;
-
-        let descriptor =
-            self.renderer
-                .with_descriptors()
-                .create_descriptor(DescriptorSetBuilder {
-                    layout: MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
-                    stages: vk::ShaderStageFlags::ALL_GRAPHICS,
-                    images: &images
-                        .iter()
-                        .map(|texture| texture.handle)
-                        .collect::<Vec<_>>(),
-                    unifoms: &[uniform],
-                    ..Default::default()
-                })?;
-        let order = match self.source.blend {
-            MeshMaterialBlend::Opaque => RenderMeshMaterialOrder::Opaque,
-            MeshMaterialBlend::AlphaBlend => RenderMeshMaterialOrder::Transparent,
-            MeshMaterialBlend::AlphaTest(_) => RenderMeshMaterialOrder::Masked,
-        };
-        Ok(MeshMaterial {
-            ty: RenderMeshMaterialType::PBR,
-            order,
-            descriptor,
-            remderer: self.renderer,
-        })
-    }
-}

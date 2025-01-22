@@ -183,7 +183,7 @@ impl Program for RasterProgram {
 
 impl RasterProgram {
     pub fn new(
-        device: &Arc<RenderDevice>,
+        device: Arc<RenderDevice>,
         layout: &'static [DescriptorSetLayoutDesc<'static>],
         shaders: &[ShaderDesc],
     ) -> Result<Self, Error> {
@@ -204,12 +204,12 @@ impl RasterProgram {
         let create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
         let pipeline_layout = unsafe { device.raw.create_pipeline_layout(&create_info, None) }?;
         Ok(Self {
-            device: device.clone(),
             stages,
             shaders: modules,
             pipeline_layout,
             descriptor_layouts: layouts,
             layout,
+            device,
         })
     }
 }

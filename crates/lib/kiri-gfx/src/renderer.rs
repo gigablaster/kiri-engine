@@ -13,33 +13,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, ptr::NonNull, slice, sync::Arc};
+use std::{mem, ptr::NonNull, slice, sync::Arc, u32};
 
-use futures::executor::block_on;
 use kiri_backend::{
     ash::{
         self,
         vk::{self},
     },
-    AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount,
-    GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData, ImageViewDesc, RenderDevice,
-    Swapchain, EMPTY_DESCRIPTOR_SET,
+    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc,
+    DescriptorTotalCount, GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData,
+    ImageViewDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
+    RenderPassLayout, ShaderDesc, Swapchain, EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use rayon::iter::{ParallelDrainRange, ParallelIterator};
 
-use crate::{
-    DynamicGpuMemory, DynamicGpuMemoryPool, DynamicWriter, Error, PipelineCache, PipelineResolver,
-    RasterPipelineHandle,
-};
+use crate::{DynamicGpuMemory, DynamicGpuMemoryPool, DynamicWriter, Error};
 
 pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+#[derive(Debug, Clone, Copy)]
+pub struct RasterProgramHandle(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterPipelineHandle(u32);
 
 type BufferPool = HotColdPool<vk::Buffer, Buffer>;
 type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+type RasterPipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
+type RasterProgramPool = Vec<RasterProgram>;
 type ImagePool = Pool<Image>;
+
+impl From<RasterPipelineHandle> for u32 {
+    fn from(value: RasterPipelineHandle) -> Self {
+        value.0
+    }
+}
+
+impl From<u32> for RasterPipelineHandle {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl Default for RasterPipelineHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameState {
@@ -101,6 +123,16 @@ impl From<BufferSlice> for BufferPointer {
     }
 }
 
+#[derive(Debug)]
+struct RasterPipelineDesc {
+    program: RasterProgramHandle,
+    pass_layout: &'static RenderPassLayout<'static>,
+    descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
+    input_layout: &'static [InputVertexStreamLayout<'static>],
+    specialization: Vec<(u32, u32)>,
+    desc: RasterPipelineCreateDesc,
+}
+
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
     dynamic: &'a DynamicGpuMemory,
@@ -117,7 +149,7 @@ unsafe impl Send for RenderContext<'_> {}
 pub struct RenderResourceResolver<'a> {
     buffers: &'a BufferPool,
     images: &'a ImagePool,
-    pipeline_resolver: PipelineResolver<'a>,
+    raster_pipelines: &'a RasterPipelinePool,
     descriptor_resolver: DescriptorResolver<'a>,
     pub empty_descriptor_set: vk::DescriptorSet,
     pub backbuffer: &'a Image,
@@ -128,14 +160,14 @@ impl<'a> RenderResourceResolver<'a> {
         backbuffer: &'a Image,
         buffers: &'a BufferPool,
         images: &'a ImagePool,
-        pipeline_resolver: PipelineResolver<'a>,
+        raster_pipelines: &'a RasterPipelinePool,
         descriptor_resolver: DescriptorResolver<'a>,
         empty_descriptor_set: vk::DescriptorSet,
     ) -> Self {
         Self {
             buffers,
             images,
-            pipeline_resolver,
+            raster_pipelines,
             descriptor_resolver,
             empty_descriptor_set,
             backbuffer,
@@ -181,7 +213,10 @@ impl<'a> RenderResourceResolver<'a> {
         &self,
         handle: RasterPipelineHandle,
     ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
-        self.pipeline_resolver.resolve_raster_pipeline(handle)
+        self.raster_pipelines
+            .get(handle.0 as usize)
+            .copied()
+            .ok_or(Error::InvalidRasterPipelineHandle(handle))
     }
 
     pub fn resolve_descriptor_set(
@@ -438,8 +473,12 @@ pub struct Renderer {
     pub device: Arc<RenderDevice>,
     buffers: RwLock<BufferPool>,
     images: RwLock<ImagePool>,
+    raster_programs: RwLock<RasterProgramPool>,
+    raster_pipelines: Mutex<(
+        Vec<(vk::Pipeline, vk::PipelineLayout)>,
+        Vec<RasterPipelineDesc>,
+    )>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
-    pipeline_cache: PipelineCache,
     descriptors: RwLock<DescriptorPool>,
     dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
     descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
@@ -459,7 +498,8 @@ impl Renderer {
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
             dynamic_memory: Mutex::new(DynamicGpuMemoryPool::new(device.clone())),
-            pipeline_cache: PipelineCache::new(device.clone(), config.cache()),
+            raster_pipelines: Default::default(),
+            raster_programs: Default::default(),
             descriptors: RwLock::new(HotColdPool::new(MAX_DESCRIPTORS)),
             dirty_descriptors: Default::default(),
             descriptors_to_destroy: Default::default(),
@@ -518,6 +558,34 @@ impl Renderer {
 
     pub fn destroy_image(&self, handle: ImageHandle) {
         self.images_to_destroy.lock().push(handle);
+    }
+
+    pub fn create_raster_program(
+        &self,
+        layout: &'static [DescriptorSetLayoutDesc<'static>],
+        vertex_shader: ShaderDesc,
+        fragment_shader: ShaderDesc,
+    ) -> Result<RasterProgramHandle, Error> {
+        let program = RasterProgram::new(
+            self.device.clone(),
+            layout,
+            &[vertex_shader, fragment_shader],
+        )?;
+        let mut programs = self.raster_programs.write();
+        let index = programs.len() as u32;
+        programs.push(program);
+        Ok(RasterProgramHandle(index))
+    }
+
+    pub fn create_raster_pipeline(&self, desc: RasterPipelineDesc) -> RasterPipelineHandle {
+        let mut pipelines = self.raster_pipelines.lock();
+        debug_assert_eq!(pipelines.0.len(), pipelines.1.len());
+        let index = pipelines.0.len() as u32;
+        pipelines
+            .0
+            .push((vk::Pipeline::null(), vk::PipelineLayout::null()));
+        pipelines.1.push(desc);
+        RasterPipelineHandle(index)
     }
 
     pub fn with_descriptors(&self) -> DescriptorUpdateContext {
@@ -584,6 +652,47 @@ impl Renderer {
             .find(|page| page.handle == uniform.handle)
             .iter_mut()
             .for_each(|page| page.allocator.dealloc(uniform.offset));
+    }
+
+    fn compile_pipelines(&self) -> Result<(), Error> {
+        let mut pipelines = self.raster_pipelines.lock();
+        debug_assert_eq!(pipelines.0.len(), pipelines.1.len());
+        let mut to_compile = Vec::new();
+        for index in 0..pipelines.0.len() {
+            if pipelines.0[index].0 == vk::Pipeline::null() {
+                to_compile.push((index, &pipelines.1[index]));
+            }
+        }
+        let compiled = to_compile
+            .par_drain(..)
+            .map(|(index, desc)| self.compile_pipeline(index, desc))
+            .collect::<Vec<_>>();
+        for result in compiled {
+            let (index, pipeline, pipeline_layout) = result?;
+            pipelines.0[index] = (pipeline, pipeline_layout);
+        }
+        Ok(())
+    }
+
+    fn compile_pipeline(
+        &self,
+        index: usize,
+        desc: &RasterPipelineDesc,
+    ) -> Result<(usize, vk::Pipeline, vk::PipelineLayout), Error> {
+        let (pipeline, pipeline_layout) = compile_raster_pipeline(
+            &self.device,
+            vk::PipelineCache::null(),
+            self.raster_programs
+                .read()
+                .get(desc.program.0 as usize)
+                .ok_or(Error::InvalidRasterProgramHandle(desc.program))?,
+            desc.pass_layout,
+            desc.input_layout,
+            &desc.specialization,
+            desc.desc,
+            None,
+        )?;
+        Ok((index, pipeline, pipeline_layout))
     }
 
     // We want descriptors, buffers and images to be locked at this point. So we pass them from outside.
@@ -775,8 +884,9 @@ impl Renderer {
         self.update_descriptors(&mut descriptors, &buffers, &images)?;
 
         // Prepare
-        block_on(self.pipeline_cache.compile_pending_pipelines())?;
+        self.compile_pipelines()?;
 
+        let raster_pipelines = self.raster_pipelines.lock();
         let mut buffers_to_destroy = self.buffers_to_destroy.lock();
         let mut images_to_destroy = self.images_to_destroy.lock();
         let mut descriptors_to_destroy = self.descriptors_to_destroy.lock();
@@ -806,7 +916,7 @@ impl Renderer {
             target.image,
             &buffers,
             &images,
-            self.pipeline_cache.resolve(),
+            &raster_pipelines.0,
             DescriptorResolver {
                 descriptors: self.descriptors.read(),
             },
@@ -837,6 +947,7 @@ impl Renderer {
         images_to_destroy.drain(..).for_each(|handle| {
             images.remove(handle);
         });
+        drop(raster_pipelines);
         drop(descriptors);
         drop(buffers);
         drop(images);
@@ -865,5 +976,18 @@ impl Renderer {
         self.device.present(target, &frame)?;
         self.device.end_frame(frame);
         Ok(FrameState::Rendered)
+    }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        unsafe { self.device.raw.device_wait_idle() };
+        self.raster_pipelines
+            .lock()
+            .0
+            .drain(..)
+            .for_each(|(pipeline, _)| unsafe {
+                self.device.raw.destroy_pipeline(pipeline, None);
+            });
     }
 }
