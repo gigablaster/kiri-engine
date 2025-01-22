@@ -3,17 +3,17 @@ use kiri_backend::ash::{self, vk};
 use crate::{ImageHandle, PassDispatcher};
 
 /// Copy result image to backbuffer and prepare it for presentation
-pub struct FinalCompositionPassDispatcher {
+pub struct CopyToBackbufferPass {
     image: ImageHandle,
 }
 
-impl FinalCompositionPassDispatcher {
+impl CopyToBackbufferPass {
     pub fn new(image: ImageHandle) -> Self {
         Self { image }
     }
 }
 
-impl PassDispatcher for FinalCompositionPassDispatcher {
+impl PassDispatcher for CopyToBackbufferPass {
     fn dispatch(
         &self,
         device: &ash::Device,

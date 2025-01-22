@@ -209,7 +209,7 @@ impl<'a> RasterizerPassBuilder<'a> {
     }
 
     pub fn build(self) -> Box<dyn PassDispatcher> {
-        Box::new(RasterizerPassDispatcher::new(
+        Box::new(RasterizerPass::new(
             self.name,
             &self.color_targets,
             self.depth_target,
@@ -220,7 +220,7 @@ impl<'a> RasterizerPassBuilder<'a> {
     }
 }
 
-pub struct RasterizerPassDispatcher {
+pub struct RasterizerPass {
     color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_target: Option<RenderTarget>,
     dependencies: Vec<ImageDependency>,
@@ -229,7 +229,7 @@ pub struct RasterizerPassDispatcher {
     name: String,
 }
 
-impl RasterizerPassDispatcher {
+impl RasterizerPass {
     fn new(
         name: &str,
         color_targets: &[RenderTarget],
@@ -249,7 +249,7 @@ impl RasterizerPassDispatcher {
     }
 }
 
-impl PassDispatcher for RasterizerPassDispatcher {
+impl PassDispatcher for RasterizerPass {
     fn name(&self) -> &str {
         &self.name
     }
