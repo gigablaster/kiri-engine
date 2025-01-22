@@ -77,7 +77,7 @@ impl<'a> ShaderDesc<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DescriptorSetDesc<'a> {
+pub struct DescriptorDesc<'a> {
     pub name: &'a str,
     pub ty: vk::DescriptorType,
     pub count: usize,
@@ -90,7 +90,7 @@ pub const EMPTY_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDes
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DescriptorSetLayoutDesc<'a> {
-    pub layout: &'a [(usize, DescriptorSetDesc<'a>)],
+    pub layout: &'a [(usize, DescriptorDesc<'a>)],
     pub compute_groups_size: Option<(u32, u32, u32)>,
 }
 
@@ -128,13 +128,13 @@ impl<'a> DescriptorSetLayoutDesc<'a> {
             .find_map(|(slot, desc)| (desc.name == name).then_some(*slot))
     }
 
-    pub fn get_desc(&self, slot: usize) -> Option<&DescriptorSetDesc> {
+    pub fn get_desc(&self, slot: usize) -> Option<&DescriptorDesc> {
         self.layout
             .iter()
             .find_map(|(x, data)| if slot == *x { Some(data) } else { None })
     }
 
-    pub fn get_layout(&self) -> &[(usize, DescriptorSetDesc<'a>)] {
+    pub fn get_layout(&self) -> &[(usize, DescriptorDesc<'a>)] {
         self.layout
     }
 }

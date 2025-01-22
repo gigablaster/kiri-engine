@@ -28,7 +28,7 @@ use kiri_gfx::{
         MAIN_RENDER_PASS_LAYOUT,
     },
     ImageUploadData, PipelineCache, RasterPipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
-    RenderModel, RenderModelBuilder, Renderer, Texture, TextureBuilder,
+    RenderModel, RenderModelBuilder, RenderTexture, Renderer, TextureBuilder,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
 use log::{debug, error};
@@ -37,7 +37,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use crate::Error;
 
 pub type ModelHandle = Handle<Resource<RenderModel>>;
-pub type TextureHandle = Handle<Resource<Texture>>;
+pub type TextureHandle = Handle<Resource<RenderTexture>>;
 pub type MaterialHandle = Handle<Resource<RenderMeshMaterial>>;
 
 const MAX_RESOURCES: usize = 0xffff;
@@ -159,7 +159,7 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
 }
 
 pub trait ResourceLoader {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>>;
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<RenderTexture>>;
     fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>>;
 }
 
@@ -167,14 +167,14 @@ pub trait ResourceLoader {
 pub struct ResourceManager {
     pub renderer: Arc<Renderer>,
     pub pipeline_cache: Arc<PipelineCache>,
-    textures: ResourceType<ImageSource, Texture>,
+    textures: ResourceType<ImageSource, RenderTexture>,
     materials: ResourceType<MeshAssetMaterial, RenderMeshMaterial>,
     models: ResourceType<String, RenderModel>,
     effect_factory: RwLock<Vec<Box<dyn MeshEffectFactory>>>,
 }
 
 impl ResourceLoader for Arc<ResourceManager> {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<Texture>> {
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<RenderTexture>> {
         let source = source.clone();
         self.textures.get_or_load(source.clone(), || {
             spawn(ResourceManager::load_texture(self.clone(), source))
@@ -236,7 +236,7 @@ impl ResourceManager {
         self.models.resolve(handle)
     }
 
-    pub fn get_texture(&self, handle: TextureHandle) -> Option<Resource<Texture>> {
+    pub fn get_texture(&self, handle: TextureHandle) -> Option<Resource<RenderTexture>> {
         self.textures.resolve(handle)
     }
 
@@ -266,7 +266,7 @@ impl ResourceManager {
     async fn load_texture(
         manager: Arc<ResourceManager>,
         source: ImageSource,
-    ) -> Result<Texture, Error> {
+    ) -> Result<RenderTexture, Error> {
         match &source.data {
             kiri_assets::ImageData::Path(path) => {
                 let asset: ImageAsset =

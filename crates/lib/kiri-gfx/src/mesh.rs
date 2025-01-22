@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, hash::Hash, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, DescriptorHandle, Error, Renderer};
+use crate::{BufferHandle, BufferPointer, DescriptorHandle, Error, ImageHandle, Renderer};
 use kiri_assets::{
     load_or_compile_asset, ImageAssetType, ImageData, ImageSource, MeshAssetMaterial,
     MeshMaterialBlend, RenderMeshVertex,
@@ -25,7 +25,7 @@ use kiri_backend::{
         ext::color_write_enable::Device,
         vk::{self, DescriptorSet},
     },
-    BufferCreateDesc, DescriptorSetDesc, DescriptorSetLayoutDesc, Image, ImageCreateDesc,
+    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc, Image, ImageCreateDesc,
     ImageUploadData, RenderDevice,
 };
 use kiri_common::NodeIndex;
@@ -275,6 +275,18 @@ impl Drop for RenderModel {
     }
 }
 
+#[derive(Debug)]
+pub struct RenderTexture {
+    renderer: Arc<Renderer>,
+    handle: ImageHandle,
+}
+
+impl Drop for RenderTexture {
+    fn drop(&mut self) {
+        self.renderer.destroy_image(self.handle);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadTexture {
     renderer: Arc<Renderer>,
@@ -295,7 +307,7 @@ impl LoadTexture {
 
 #[async_trait]
 impl LazyWorker for LoadTexture {
-    type Output = Result<Image, Error>;
+    type Output = Result<RenderTexture, Error>;
 
     async fn run(self, _ctx: RunContext) -> Self::Output {
         let image = load_or_compile_asset(self.source).await?;
@@ -304,11 +316,13 @@ impl LazyWorker for LoadTexture {
             .iter()
             .map(|mip| ImageUploadData { data: &mip })
             .collect::<Vec<_>>();
-        Ok(Image::new(
-            &self.renderer.device,
-            ImageCreateDesc::texture(image.format, image.dims),
-            Some(&data),
-        )?)
+        Ok(RenderTexture {
+            handle: self.renderer.create_image(
+                ImageCreateDesc::texture(image.format, image.dims),
+                Some(&data),
+            )?,
+            renderer: self.renderer,
+        })
     }
 }
 
@@ -342,7 +356,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
     layout: &[
         (
             0,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "base_color",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -350,7 +364,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
         ),
         (
             1,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "metallic_roughness",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -358,7 +372,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
         ),
         (
             2,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "normals",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -366,7 +380,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
         ),
         (
             3,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "occlusion",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -374,7 +388,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
         ),
         (
             4,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "occlusion",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -382,7 +396,7 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
         ),
         (
             5,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "material",
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 count: 1,
