@@ -57,6 +57,14 @@ impl ImageViewDesc {
         }
     }
 
+    pub fn color() -> Self {
+        Self::new(vk::ImageAspectFlags::COLOR)
+    }
+
+    pub fn depth() -> Self {
+        Self::new(vk::ImageAspectFlags::DEPTH)
+    }
+
     fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
             .format(self.format.unwrap_or(image.desc.format))

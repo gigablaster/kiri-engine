@@ -137,6 +137,16 @@ impl<'a> DescriptorSetLayoutDesc<'a> {
     pub fn get_layout(&self) -> &[(usize, DescriptorDesc<'a>)] {
         self.layout
     }
+
+    pub fn by_types(
+        &self,
+        ty: &'a [vk::DescriptorType],
+    ) -> impl Iterator<Item = (usize, DescriptorDesc)> {
+        self.layout
+            .iter()
+            .copied()
+            .filter(move |x| ty.contains(&x.1.ty))
+    }
 }
 
 const MAX_SHADERS: usize = 2;

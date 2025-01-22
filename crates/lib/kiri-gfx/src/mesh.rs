@@ -15,7 +15,10 @@
 
 use std::{collections::HashMap, hash::Hash, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, DescriptorHandle, Error, ImageHandle, Renderer};
+use crate::{
+    BufferHandle, BufferPointer, DescriptorHandle, DescriptorSetBuilder, Error, ImageHandle,
+    Renderer,
+};
 use kiri_assets::{
     load_or_compile_asset, ImageAssetType, ImageData, ImageSource, MeshAssetMaterial,
     MeshMaterialBlend, RenderMeshVertex,
@@ -26,7 +29,7 @@ use kiri_backend::{
         vk::{self, DescriptorSet},
     },
     BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc, Image, ImageCreateDesc,
-    ImageUploadData, RenderDevice,
+    ImageUploadData, ImageViewDesc, RenderDevice,
 };
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A, Vec4};
@@ -334,6 +337,14 @@ pub struct MeshMaterial {
     descriptor: DescriptorHandle,
 }
 
+impl Drop for MeshMaterial {
+    fn drop(&mut self) {
+        self.remderer
+            .with_descriptors()
+            .destroy_descriptor(self.descriptor);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadMaterial {
     renderer: Arc<Renderer>,
@@ -415,7 +426,7 @@ struct GpuMeshMaterial {
 
 #[async_trait]
 impl LazyWorker for LoadMaterial {
-    type Output = Result<Arc<MeshMaterial>, Error>;
+    type Output = Result<MeshMaterial, Error>;
 
     async fn run(self, ctx: RunContext) -> Self::Output {
         let images = [
@@ -445,7 +456,33 @@ impl LazyWorker for LoadMaterial {
             .get("emissive_power")
             .copied()
             .unwrap_or(0.0);
+        let uniform = self.renderer.allocate_uniform(GpuMeshMaterial {
+            alpha_cut: self.source.blend.get_alpha_cut(),
+            emissive_power,
+        })?;
 
-        todo!()
+        let descriptor = self.renderer.with_descriptors().create_descriptor(
+            DescriptorSetBuilder::new(
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
+            )
+            .bind_image(0, images[0].handle, ImageViewDesc::color())
+            .bind_image(1, images[1].handle, ImageViewDesc::color())
+            .bind_image(2, images[2].handle, ImageViewDesc::color())
+            .bind_image(3, images[3].handle, ImageViewDesc::color())
+            .bind_image(4, images[4].handle, ImageViewDesc::color())
+            .bind_uniform_buffer(5, uniform),
+        )?;
+        let order = match self.source.blend {
+            MeshMaterialBlend::Opaque => RenderMeshMaterialOrder::Opaque,
+            MeshMaterialBlend::AlphaBlend => RenderMeshMaterialOrder::Transparent,
+            MeshMaterialBlend::AlphaTest(_) => RenderMeshMaterialOrder::Masked,
+        };
+        Ok(MeshMaterial {
+            ty: RenderMeshMaterialType::PBR,
+            order,
+            descriptor,
+            remderer: self.renderer,
+        })
     }
 }

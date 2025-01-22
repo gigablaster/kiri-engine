@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::NonNull, slice, sync::Arc};
+use std::{mem, ptr::NonNull, slice, sync::Arc};
 
 use futures::executor::block_on;
 use kiri_backend::{
@@ -25,7 +25,7 @@ use kiri_backend::{
     GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData, ImageViewDesc, RenderDevice,
     Swapchain, EMPTY_DESCRIPTOR_SET,
 };
-use kiri_common::{GameAppConfig, Handle, HotColdPool, Pool, TempList};
+use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
@@ -326,59 +326,42 @@ impl<'a> DescriptorSetBuilder<'a> {
         }
     }
 
-    pub fn bind_image(
-        mut self,
-        slot: usize,
-        image: ImageHandle,
-        desc: ImageViewDesc,
-    ) -> Result<Self, Error> {
+    pub fn bind_image(mut self, slot: usize, image: ImageHandle, desc: ImageViewDesc) -> Self {
         self.images.push(Binding {
             slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: ImageBindingData { image, desc },
         });
-        Ok(self)
+        self
     }
 
-    pub fn bind_uniform_buffer(
-        mut self,
-        slot: usize,
-        buffer: BufferHandle,
-        offset: usize,
-        size: usize,
-    ) -> Result<Self, Error> {
+    pub fn bind_uniform_buffer(mut self, slot: usize, buffer: BufferSlice) -> Self {
         self.unifom_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                offset: offset as u32,
-                size: size as u32,
-                buffer,
+                offset: buffer.offset as u32,
+                size: buffer.size as u32,
+                buffer: buffer.handle,
             },
         });
-        Ok(self)
+        self
     }
 
-    pub fn bind_storage_buffer(
-        mut self,
-        slot: usize,
-        buffer: BufferHandle,
-        offset: usize,
-        size: u32,
-    ) -> Result<Self, Error> {
+    pub fn bind_storage_buffer(mut self, slot: usize, buffer: BufferSlice) -> Self {
         self.storage_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
             ty: self.layout.get_desc(slot).unwrap().ty,
             data: StaticBufferBindingData {
-                offset: offset as u32,
-                size: size as u32,
-                buffer,
+                offset: buffer.offset as u32,
+                size: buffer.size as u32,
+                buffer: buffer.handle,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_dynamic_uniform_buffer(
@@ -386,7 +369,7 @@ impl<'a> DescriptorSetBuilder<'a> {
         slot: usize,
         buffer: BufferHandle,
         size: usize,
-    ) -> Result<Self, Error> {
+    ) -> Self {
         self.dynamic_uniform_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -396,7 +379,7 @@ impl<'a> DescriptorSetBuilder<'a> {
                 buffer,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn bind_dynamic_storage_buffer(
@@ -404,7 +387,7 @@ impl<'a> DescriptorSetBuilder<'a> {
         slot: usize,
         buffer: BufferHandle,
         size: usize,
-    ) -> Result<Self, Error> {
+    ) -> Self {
         self.dynamic_storage_buffers.push(Binding {
             slot: slot as u32,
             element: 0,
@@ -414,7 +397,7 @@ impl<'a> DescriptorSetBuilder<'a> {
                 buffer,
             },
         });
-        Ok(self)
+        self
     }
 
     pub fn name(mut self, name: &'a str) -> Self {
@@ -471,21 +454,19 @@ impl DescriptorUpdateContext<'_> {
         Ok(handle)
     }
 
-    pub fn update_descriptor(
-        &mut self,
-        handle: DescriptorHandle,
-        builder: DescriptorSetBuilder,
-    ) -> Result<(), Error> {
-        let data = builder.build(self.device)?;
-        if self.descriptors.replace_cold(handle, data).is_some() {
-            self.dirty.push(handle);
-        }
-        Ok(())
-    }
-
     pub fn destroy_descriptor(&mut self, handle: DescriptorHandle) {
         self.to_destroy.push(handle);
     }
+}
+
+const UNIFORM_PAGE_SIZE: usize = 64536;
+const MAX_UNIFOMR_SIZE: usize = 16384;
+
+#[derive(Debug)]
+struct UniformPage {
+    handle: BufferHandle,
+    size_range: (usize, usize),
+    allocator: BlockAllocator,
 }
 
 /// Low-level renderer
@@ -501,6 +482,7 @@ pub struct Renderer {
     descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
     buffers_to_destroy: Mutex<Vec<BufferHandle>>,
     images_to_destroy: Mutex<Vec<ImageHandle>>,
+    uniforms: Mutex<Vec<UniformPage>>,
 }
 
 unsafe impl Sync for Renderer {}
@@ -520,6 +502,7 @@ impl Renderer {
             descriptors_to_destroy: Default::default(),
             buffers_to_destroy: Default::default(),
             images_to_destroy: Default::default(),
+            uniforms: Default::default(),
             device,
         }))
     }
@@ -584,6 +567,60 @@ impl Renderer {
             dirty: dirty,
             to_destroy: to_destroy,
         }
+    }
+
+    pub fn allocate_uniform<T: Copy>(&self, data: T) -> Result<BufferSlice, Error> {
+        debug_assert!(mem::size_of::<T>() < MAX_UNIFOMR_SIZE);
+        let mut pages = self.uniforms.lock();
+        let item_size = mem::size_of::<T>();
+        let upper_bound = item_size.next_power_of_two();
+        let lower_bound = item_size.next_power_of_two() / 2 - 1;
+        let allocated = pages
+            .iter_mut()
+            .find_map(|x| {
+                if x.size_range.0 > lower_bound && x.size_range.1 <= upper_bound {
+                    x.allocator
+                        .allocate()
+                        .map(|offset| BufferSlice::new(x.handle, offset, item_size as _))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                // Fixme:: unwrap
+                let buffer = Buffer::new(
+                    &self.device,
+                    BufferCreateDesc::gpu(UNIFORM_PAGE_SIZE as _)
+                        .transfer_destination()
+                        .uniform_buffer(),
+                )
+                .unwrap();
+
+                let mut allocator = BlockAllocator::new(
+                    UNIFORM_PAGE_SIZE as _,
+                    (UNIFORM_PAGE_SIZE / upper_bound) as _,
+                );
+                let offset = allocator.allocate().unwrap();
+                let handle = self.register_buffer(buffer);
+                pages.push(UniformPage {
+                    handle,
+                    allocator,
+                    size_range: (lower_bound, upper_bound),
+                });
+                BufferSlice::new(handle, offset, item_size as _)
+            });
+        drop(pages);
+        self.upload_buffer_data(allocated.into(), &[data])?;
+        Ok(allocated)
+    }
+
+    pub fn free_uniform(&self, uniform: BufferSlice) {
+        let mut pages = self.uniforms.lock();
+        pages
+            .iter_mut()
+            .find(|page| page.handle == uniform.handle)
+            .iter_mut()
+            .for_each(|page| page.allocator.dealloc(uniform.offset));
     }
 
     // We want descriptors, buffers and images to be locked at this point. So we pass them from outside.

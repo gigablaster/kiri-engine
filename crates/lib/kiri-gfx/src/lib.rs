@@ -21,7 +21,6 @@ mod mesh;
 pub mod passes;
 mod pipeline_cache;
 mod renderer;
-mod uniforms;
 
 pub use draw_stream::*;
 use dynamic::*;
