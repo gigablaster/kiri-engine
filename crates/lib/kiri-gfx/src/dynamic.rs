@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{ash::vk, Buffer, BufferCreateDesc, PhysicalDevice, RenderDevice};
+use kiri_backend::{Buffer, BufferCreateDesc, PhysicalDevice, RenderDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};
@@ -36,7 +36,7 @@ unsafe impl Send for DynamicGpuMemory {}
 unsafe impl Sync for DynamicGpuMemory {}
 
 impl DynamicGpuMemory {
-    pub fn new(renderer: &Renderer, size: u64) -> Result<Self, Error> {
+    pub fn new(renderer: &Renderer, size: usize) -> Result<Self, Error> {
         let buffer = Buffer::new(
             &renderer.device,
             BufferCreateDesc::shared(size)
@@ -74,7 +74,7 @@ impl DynamicGpuMemory {
                     size,
                 )
             }
-            Ok(BufferSlice::new(self.buffer_handle, offset, size as u64))
+            Ok(BufferSlice::new(self.buffer_handle, offset, size))
         } else {
             Err(Error::OutOfDynamicMemory)
         }
@@ -120,7 +120,7 @@ pub struct DynamicGpuMemoryPool {
     recycle: Vec<Arc<DynamicGpuMemory>>,
 }
 
-const DYNAMIC_PAGE_SIZE: u64 = 16 * 1024 * 1024;
+const DYNAMIC_PAGE_SIZE: usize = 16 * 1024 * 1024;
 
 impl DynamicGpuMemoryPool {
     pub fn new(device: Arc<RenderDevice>) -> Self {
@@ -154,12 +154,12 @@ pub struct DynamicWriter<'a, T: Copy> {
     memory: *mut u8,
     cursor: usize,
     size: usize,
-    pub offset: u64,
+    pub offset: usize,
     _phantom: PhantomData<&'a T>,
 }
 
 impl<T: Copy> DynamicWriter<'_, T> {
-    fn new(memory: *mut u8, offset: u64, count: usize) -> Self {
+    fn new(memory: *mut u8, offset: usize, count: usize) -> Self {
         Self {
             memory: unsafe { memory.add(offset as _) },
             cursor: 0,

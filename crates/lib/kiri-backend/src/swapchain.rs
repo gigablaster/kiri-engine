@@ -177,7 +177,10 @@ impl Swapchain {
                         ty: vk::ImageType::TYPE_2D,
                         usage: vk::ImageUsageFlags::TRANSFER_DST,
                         format: format.format,
-                        dims: [surface_resolution.width, surface_resolution.height],
+                        dims: [
+                            surface_resolution.width as usize,
+                            surface_resolution.height as usize,
+                        ],
                         mip_levels: 1,
                         array_elements: 1,
                     },

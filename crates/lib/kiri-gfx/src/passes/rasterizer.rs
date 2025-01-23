@@ -403,8 +403,8 @@ impl PassDispatcher for RasterizerPass {
         let render_area = self.area.unwrap_or(vk::Rect2D {
             offset: vk::Offset2D::default(),
             extent: vk::Extent2D {
-                width: dims[0],
-                height: dims[1],
+                width: dims[0] as u32,
+                height: dims[1] as u32,
             },
         });
         let mut rendering_info = vk::RenderingInfo::default()

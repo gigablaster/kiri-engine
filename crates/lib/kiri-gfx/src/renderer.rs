@@ -556,7 +556,7 @@ impl Renderer {
             .read()
             .get_cold(target.handle)
             .ok_or(Error::InvalidBufferHandle(target.handle))?
-            .upload(target.offset, data)?;
+            .upload(target.offset as usize, data)?;
         Ok(())
     }
 
@@ -662,7 +662,7 @@ impl Renderer {
             .iter_mut()
             .find(|page| page.handle == uniform.handle)
             .iter_mut()
-            .for_each(|page| page.allocator.dealloc(uniform.offset));
+            .for_each(|page| page.allocator.dealloc(uniform.offset as usize));
     }
 
     fn compile_pipelines(&self) -> Result<(), Error> {

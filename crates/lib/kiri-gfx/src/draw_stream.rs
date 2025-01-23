@@ -83,7 +83,7 @@ impl DrawStreamBuilder {
         self.stream
             .write_u32::<NativeEndian>(value.handle.into())
             .unwrap();
-        self.stream.write_u64::<NativeEndian>(value.offset).unwrap()
+        self.stream.write_u32::<NativeEndian>(value.offset).unwrap()
     }
 
     /// Resets bind groups and dynamic offsets
@@ -243,7 +243,7 @@ impl DrawStream {
     fn read_buffer_pointer<R: Read>(mut r: R) -> io::Result<BufferPointer> {
         Ok(BufferPointer {
             handle: r.read_u32::<NativeEndian>()?.into(),
-            offset: r.read_u64::<NativeEndian>()?,
+            offset: r.read_u32::<NativeEndian>()?,
         })
     }
 
@@ -295,7 +295,10 @@ impl DrawStream {
                 if mask & (VERTEX_STREAM_MASK << i) == (VERTEX_STREAM_MASK << i) {
                     let buffer = Self::read_buffer_pointer(&mut reader).unwrap();
                     let (buffer, offset) = if buffer.handle.is_valid() {
-                        (resolver.resolve_buffer(buffer.handle)?, buffer.offset)
+                        (
+                            resolver.resolve_buffer(buffer.handle)?,
+                            buffer.offset as u64,
+                        )
                     } else {
                         (vk::Buffer::null(), 0)
                     };

@@ -34,7 +34,7 @@ impl ResolutionScale for [u32; 2] {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TempImageKey {
-    pub dims: [u32; 2],
+    pub dims: [usize; 2],
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
 }
@@ -65,7 +65,7 @@ impl RenderTargetPool {
     pub fn get_image(
         &self,
         format: vk::Format,
-        dims: [u32; 2],
+        dims: [usize; 2],
         usage: vk::ImageUsageFlags,
     ) -> Result<TransientImage, Error> {
         assert!(
@@ -84,7 +84,7 @@ impl RenderTargetPool {
     fn get_or_allocate_image(
         &self,
         format: vk::Format,
-        dims: [u32; 2],
+        dims: [usize; 2],
         usage: vk::ImageUsageFlags,
     ) -> Result<(TempImageKey, Arc<Image>), Error> {
         let mut images = self.images.lock();

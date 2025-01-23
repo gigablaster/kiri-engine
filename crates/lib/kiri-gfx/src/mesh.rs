@@ -13,19 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, hash::Hash, mem, sync::Arc};
+use std::{collections::HashMap, mem, sync::Arc};
 
-use crate::{
-    BufferHandle, BufferPointer, DescriptorHandle, DescriptorSetBuilder, Error, ImageHandle,
-    Renderer,
-};
-use kiri_assets::{
-    load_or_compile_asset, ImageAssetType, ImageSource, MeshAssetMaterial, MeshMaterialBlend,
-    RenderMeshVertex,
-};
+use crate::{BufferHandle, BufferPointer, Error, Renderer};
 use kiri_backend::{
     ash::vk::{self, DescriptorSet},
-    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc, ImageCreateDesc, ImageUploadData,
+    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc,
 };
 use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
@@ -82,8 +75,8 @@ pub struct RenderModel {
 }
 
 pub struct RenderMeshBuilder {
-    pub first_vertex: u64,
-    pub first_index: u64,
+    pub first_vertex: usize,
+    pub first_index: usize,
     pub surfaces: Vec<RenderMeshSurface>,
     pub bounds: BoundingBox,
     pub position_scale: f32,
@@ -91,7 +84,7 @@ pub struct RenderMeshBuilder {
 }
 
 impl RenderMeshBuilder {
-    pub fn new(vertex_offset: u64, index_offset: u64) -> Self {
+    pub fn new(vertex_offset: usize, index_offset: usize) -> Self {
         Self {
             first_vertex: vertex_offset,
             first_index: index_offset,
@@ -127,14 +120,8 @@ impl RenderMeshBuilder {
 
     pub fn build(self, vertices: BufferHandle, indices: BufferHandle) -> RenderMesh {
         RenderMesh {
-            vertex_buffer: BufferPointer::new(
-                vertices,
-                self.first_vertex * mem::size_of::<RenderMeshVertex>() as u64,
-            ),
-            index_buffer: BufferPointer::new(
-                indices,
-                self.first_index * mem::size_of::<u16>() as u64,
-            ),
+            vertex_buffer: BufferPointer::new(vertices, 0),
+            index_buffer: BufferPointer::new(indices, self.first_index * mem::size_of::<u16>()),
             bounds: self.bounds,
             surfaces: self.surfaces,
             position_scale: self.position_scale,

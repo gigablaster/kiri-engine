@@ -24,12 +24,12 @@ use super::{DropList, Error};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
-    pub dims: [u32; 2],
+    pub dims: [usize; 2],
     pub ty: vk::ImageType,
     pub usage: vk::ImageUsageFlags,
     pub format: vk::Format,
-    pub mip_levels: u32,
-    pub array_elements: u32,
+    pub mip_levels: usize,
+    pub array_elements: usize,
 }
 
 impl ImageDesc {
@@ -42,8 +42,8 @@ pub struct ImageViewDesc {
     pub ty: Option<vk::ImageViewType>,
     pub format: Option<vk::Format>,
     pub aspect: vk::ImageAspectFlags,
-    pub base_mip_level: u32,
-    pub level_count: Option<u32>,
+    pub base_mip_level: usize,
+    pub level_count: Option<usize>,
 }
 
 impl ImageViewDesc {
@@ -80,8 +80,8 @@ impl ImageViewDesc {
             )
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: self.aspect,
-                base_mip_level: self.base_mip_level,
-                level_count: self.level_count.unwrap_or(image.desc.mip_levels),
+                base_mip_level: self.base_mip_level as u32,
+                level_count: self.level_count.unwrap_or(image.desc.mip_levels) as u32,
                 base_array_layer: 0,
                 layer_count: 1,
             })
@@ -102,13 +102,13 @@ impl ImageViewDesc {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ImageCreateDesc<'a> {
-    pub dims: [u32; 2],
+    pub dims: [usize; 2],
     pub ty: vk::ImageType,
     pub usage: vk::ImageUsageFlags,
     pub format: vk::Format,
     pub samples: vk::SampleCountFlags,
-    pub mip_levels: u32,
-    pub array_elements: u32,
+    pub mip_levels: usize,
+    pub array_elements: usize,
     pub dedicated: bool,
     pub name: Option<&'a str>,
     pub flags: vk::ImageCreateFlags,
@@ -117,7 +117,7 @@ pub struct ImageCreateDesc<'a> {
 }
 
 impl<'a> ImageCreateDesc<'a> {
-    pub fn new(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn new(format: vk::Format, dims: [usize; 2]) -> Self {
         Self {
             dims,
             ty: vk::ImageType::TYPE_2D,
@@ -134,7 +134,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn texture(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn texture(format: vk::Format, dims: [usize; 2]) -> Self {
         Self {
             dims,
             ty: vk::ImageType::TYPE_2D,
@@ -151,7 +151,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn cubemap(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn cubemap(format: vk::Format, dims: [usize; 2]) -> Self {
         Self {
             dims,
             ty: vk::ImageType::TYPE_2D,
@@ -168,7 +168,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn color_target(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn color_target(format: vk::Format, dims: [usize; 2]) -> Self {
         Self {
             dims,
             ty: vk::ImageType::TYPE_2D,
@@ -185,7 +185,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn depth_stencil_target(format: vk::Format, dims: [u32; 2]) -> Self {
+    pub fn depth_stencil_target(format: vk::Format, dims: [usize; 2]) -> Self {
         Self {
             dims,
             ty: vk::ImageType::TYPE_2D,
@@ -237,12 +237,12 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
-    pub fn mip_levels(mut self, value: u32) -> Self {
+    pub fn mip_levels(mut self, value: usize) -> Self {
         self.mip_levels = value;
         self
     }
 
-    pub fn array_elements(mut self, value: u32) -> Self {
+    pub fn array_elements(mut self, value: usize) -> Self {
         self.array_elements = value;
         self
     }
@@ -264,8 +264,8 @@ impl<'a> ImageCreateDesc<'a> {
 
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
-            .array_layers(self.array_elements)
-            .mip_levels(self.mip_levels)
+            .array_layers(self.array_elements as _)
+            .mip_levels(self.mip_levels as _)
             .usage(self.usage)
             .flags(self.flags)
             .format(self.format)
@@ -279,19 +279,19 @@ impl<'a> ImageCreateDesc<'a> {
     fn to_extent(self) -> vk::Extent3D {
         match self.ty {
             vk::ImageType::TYPE_1D => vk::Extent3D {
-                width: self.dims[0],
+                width: self.dims[0] as u32,
                 height: 1,
                 depth: 1,
             },
             vk::ImageType::TYPE_2D => vk::Extent3D {
-                width: self.dims[0],
-                height: self.dims[1],
+                width: self.dims[0] as u32,
+                height: self.dims[1] as u32,
                 depth: 1,
             },
             vk::ImageType::TYPE_3D => vk::Extent3D {
-                width: self.dims[0],
-                height: self.dims[1],
-                depth: self.array_elements,
+                width: self.dims[0] as u32,
+                height: self.dims[1] as u32,
+                depth: self.array_elements as u32,
             },
             ty => panic!("Unknown image type {:?}", ty),
         }

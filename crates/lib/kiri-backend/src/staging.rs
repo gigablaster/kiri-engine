@@ -45,13 +45,13 @@ pub struct Staging {
     memory: Option<GpuMemoryBlock>,
     mapping: NonNull<u8>,
     semaphore: vk::Semaphore,
-    aligment: u64,
+    aligment: usize,
 }
 
 unsafe impl Send for Staging {}
 unsafe impl Sync for Staging {}
 
-const STAGING_SIZE: u64 = 128 * 1024 * 1024;
+const STAGING_SIZE: usize = 128 * 1024 * 1024;
 
 impl Staging {
     pub fn new(
@@ -82,7 +82,7 @@ impl Staging {
         let staging = unsafe {
             device.create_buffer(
                 &vk::BufferCreateInfo::default()
-                    .size(STAGING_SIZE)
+                    .size(STAGING_SIZE as _)
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC),
                 None,
             )
@@ -118,7 +118,7 @@ impl Staging {
                 .properties
                 .limits
                 .buffer_image_granularity
-                .max(64),
+                .max(64) as usize,
         })
     }
 
@@ -131,7 +131,7 @@ impl Staging {
     ) -> Result<(), Error> {
         let mut current_offset = 0;
         loop {
-            let data_len = mem::size_of_val(data) as u64;
+            let data_len = mem::size_of_val(data);
             let pushed = self.try_push_buffer(
                 target,
                 offset + current_offset,
@@ -168,10 +168,10 @@ impl Staging {
         &mut self,
         target: vk::Image,
         desc: ImageDesc,
-        mip: u32,
+        mip: usize,
         data: &ImageUploadData,
     ) -> Result<bool, Error> {
-        let size = data.data.len() as u64;
+        let size = data.data.len();
         if size > STAGING_SIZE {
             return Err(Error::ImageTooBig);
         }
@@ -186,21 +186,21 @@ impl Staging {
             let dims = desc.dims;
             let op = vk::BufferImageCopy::default()
                 .image_extent(vk::Extent3D {
-                    width: dims[0] >> mip,
-                    height: dims[1] >> mip,
+                    width: (dims[0] >> mip) as u32,
+                    height: (dims[1] >> mip) as u32,
                     depth: 1,
                 })
                 .buffer_offset(offset as _)
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_subresource(vk::ImageSubresourceLayers {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: mip,
+                    mip_level: mip as u32,
                     base_array_layer: 0,
                     layer_count: 1,
                 });
             let range = vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: mip,
+                base_mip_level: mip as u32,
                 level_count: 1,
                 base_array_layer: 0,
                 layer_count: 1,
@@ -223,7 +223,7 @@ impl Staging {
         offset: usize,
         bytes: usize,
         data: *const u8,
-    ) -> Result<u64, Error> {
+    ) -> Result<usize, Error> {
         let can_send = self.allocator.validate(bytes, self.aligment);
         let dst_offset = self
             .allocator
@@ -238,8 +238,8 @@ impl Staging {
         };
         let op = vk::BufferCopy::default()
             .src_offset(dst_offset as _)
-            .dst_offset(offset)
-            .size(can_send);
+            .dst_offset(offset as _)
+            .size(can_send as _);
         self.upload_buffers.entry(target).or_default().push(op);
 
         Ok(can_send)
