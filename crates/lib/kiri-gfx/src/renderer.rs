@@ -13,17 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, ptr::NonNull, slice, sync::Arc, u32};
+use std::{mem, path::PathBuf, ptr::NonNull, slice, sync::Arc, u32};
 
 use kiri_backend::{
     ash::{
         self,
         vk::{self},
     },
-    compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc,
-    DescriptorTotalCount, GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData,
-    ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderDevice,
-    RenderPassLayout, ShaderDesc, Swapchain, EMPTY_DESCRIPTOR_SET,
+    compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
+    Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount, GpuDescriptor, Image,
+    ImageCreateDesc, ImageDesc, ImageUploadData, ImageViewDesc, InputVertexStreamLayout, Program,
+    RasterPipelineCreateDesc, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
+    EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -484,6 +485,8 @@ pub struct Renderer {
     buffers_to_destroy: Mutex<Vec<BufferHandle>>,
     images_to_destroy: Mutex<Vec<ImageHandle>>,
     uniforms: Mutex<Vec<UniformPage>>,
+    cache_path: Option<PathBuf>,
+    cache: vk::PipelineCache,
 }
 
 unsafe impl Sync for Renderer {}
@@ -493,6 +496,12 @@ const MAX_RESOURCE_COUNT: usize = 64536;
 
 impl Renderer {
     pub fn new(device: Arc<RenderDevice>, config: &GameAppConfig) -> Result<Arc<Self>, Error> {
+        let cache_path = config.cache();
+        let cache = cache_path
+            .iter()
+            .map(|path| load_or_create_pipeline_cache(&device, path).unwrap_or_default())
+            .next()
+            .unwrap_or_default();
         Ok(Arc::new(Self {
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
@@ -506,6 +515,8 @@ impl Renderer {
             images_to_destroy: Default::default(),
             uniforms: Default::default(),
             device,
+            cache_path,
+            cache,
         }))
     }
 
@@ -675,7 +686,7 @@ impl Renderer {
     ) -> Result<(usize, vk::Pipeline, vk::PipelineLayout), Error> {
         let (pipeline, pipeline_layout) = compile_raster_pipeline(
             &self.device,
-            vk::PipelineCache::null(),
+            self.cache,
             self.raster_programs
                 .read()
                 .get(desc.program.0 as usize)
@@ -983,5 +994,8 @@ impl Drop for Renderer {
             .for_each(|(pipeline, _)| unsafe {
                 self.device.raw.destroy_pipeline(pipeline, None);
             });
+        if let Some(path) = &self.cache_path {
+            save_pipeline_cache(&self.device, self.cache, path).ok();
+        }
     }
 }
