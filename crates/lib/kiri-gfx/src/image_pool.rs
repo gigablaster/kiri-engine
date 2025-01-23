@@ -15,8 +15,8 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crate::Renderer;
-use kiri_backend::{ash::vk, Image, ImageCreateDesc};
+use crate::{ImageHandle, Renderer};
+use kiri_backend::{ash::vk, ImageCreateDesc};
 use log::debug;
 use parking_lot::Mutex;
 
@@ -42,14 +42,14 @@ struct TempImageKey {
 #[derive(Debug)]
 pub struct RenderTargetPool {
     renderer: Arc<Renderer>,
-    images: Mutex<HashMap<TempImageKey, Vec<Arc<Image>>>>,
+    images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
 #[derive(Debug)]
 pub struct TransientImage<'a> {
     pool: &'a RenderTargetPool,
     key: TempImageKey,
-    pub image: Arc<Image>,
+    pub handle: ImageHandle,
 }
 
 impl RenderTargetPool {
@@ -73,11 +73,11 @@ impl RenderTargetPool {
                 || usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
             "Must be an attachment"
         );
-        let (key, image) = self.get_or_allocate_image(format, dims, usage)?;
+        let (key, handle) = self.get_or_allocate_image(format, dims, usage)?;
         Ok(TransientImage {
             pool: self,
             key,
-            image,
+            handle,
         })
     }
 
@@ -86,7 +86,7 @@ impl RenderTargetPool {
         format: vk::Format,
         dims: [usize; 2],
         usage: vk::ImageUsageFlags,
-    ) -> Result<(TempImageKey, Arc<Image>), Error> {
+    ) -> Result<(TempImageKey, ImageHandle), Error> {
         let mut images = self.images.lock();
         let key = TempImageKey {
             dims,
@@ -101,13 +101,12 @@ impl RenderTargetPool {
                 "Create render taget resolution: {:?} format: {:?} usage: {:?}",
                 dims, format, usage,
             );
-            let image = Arc::new(Image::new(
-                &self.renderer.device,
+            let image = self.renderer.create_image(
                 ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
                 None,
-            )?);
+            )?;
             Ok((key, image))
         }
     }
@@ -116,13 +115,13 @@ impl RenderTargetPool {
         self.images.lock().clear();
     }
 
-    fn recycle(&self, image: Arc<Image>, key: TempImageKey) {
+    fn recycle(&self, image: ImageHandle, key: TempImageKey) {
         self.images.lock().entry(key).or_default().push(image);
     }
 }
 
 impl Drop for TransientImage<'_> {
     fn drop(&mut self) {
-        self.pool.recycle(self.image.clone(), self.key);
+        self.pool.recycle(self.handle, self.key);
     }
 }
