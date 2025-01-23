@@ -126,7 +126,7 @@ impl Staging {
         &mut self,
         device: &ash::Device,
         target: vk::Buffer,
-        offset: u64,
+        offset: usize,
         data: &[T],
     ) -> Result<(), Error> {
         let mut current_offset = 0;
@@ -220,8 +220,8 @@ impl Staging {
     fn try_push_buffer(
         &mut self,
         target: vk::Buffer,
-        offset: u64,
-        bytes: u64,
+        offset: usize,
+        bytes: usize,
         data: *const u8,
     ) -> Result<u64, Error> {
         let can_send = self.allocator.validate(bytes, self.aligment);

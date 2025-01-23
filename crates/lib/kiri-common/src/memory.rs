@@ -15,13 +15,13 @@
 
 use std::{
     cmp::min,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 use crate::Align;
 
 #[derive(Debug, Clone, Copy)]
-struct BlockData(u64, u64);
+struct BlockData(usize, usize);
 
 #[derive(Debug, Clone, Copy)]
 enum Block {
@@ -33,11 +33,11 @@ enum Block {
 /// It's simple free-list allocator
 #[derive(Debug)]
 pub struct DynamicAllocator {
-    granularity: u64,
+    granularity: usize,
     blocks: Vec<Block>,
 }
 
-fn align(value: u64, align: u64) -> u64 {
+fn align(value: usize, align: usize) -> usize {
     if value == 0 || value % align == 0 {
         value
     } else {
@@ -46,7 +46,7 @@ fn align(value: u64, align: u64) -> u64 {
 }
 
 impl DynamicAllocator {
-    pub fn new(size: u64, granularity: u64) -> Self {
+    pub fn new(size: usize, granularity: usize) -> Self {
         let mut blocks = Vec::with_capacity(256);
         blocks.push(Block::Free(BlockData(0, size)));
         Self {
@@ -55,7 +55,7 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn allocate(&mut self, size: u64) -> Option<u64> {
+    pub fn allocate(&mut self, size: usize) -> Option<usize> {
         if let Some(index) = self.find_first_free_block(size) {
             self.split_and_insert_block(index, size)
         } else {
@@ -63,7 +63,7 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn allocate_back(&mut self, size: u64) -> Option<u64> {
+    pub fn allocate_back(&mut self, size: usize) -> Option<usize> {
         if let Some(index) = self.find_last_free_block(size) {
             self.split_and_insert_block_end(index, size)
         } else {
@@ -71,7 +71,7 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn deallocate(&mut self, offset: u64) {
+    pub fn deallocate(&mut self, offset: usize) {
         if let Some(index) = self.find_used_block(offset) {
             if let Block::Used(block) = self.blocks[index] {
                 self.blocks[index] = Block::Free(block);
@@ -83,7 +83,7 @@ impl DynamicAllocator {
         panic!("Attempt to free already freed block or block from different allocator");
     }
 
-    fn find_used_block(&self, offset: u64) -> Option<usize> {
+    fn find_used_block(&self, offset: usize) -> Option<usize> {
         self.blocks.iter().enumerate().find_map(|(index, block)| {
             if let Block::Used(block) = block {
                 if block.0 == offset {
@@ -94,7 +94,7 @@ impl DynamicAllocator {
         })
     }
 
-    fn find_last_free_block(&self, size: u64) -> Option<usize> {
+    fn find_last_free_block(&self, size: usize) -> Option<usize> {
         self.blocks
             .iter()
             .enumerate()
@@ -112,7 +112,7 @@ impl DynamicAllocator {
             })
     }
 
-    fn find_first_free_block(&self, size: u64) -> Option<usize> {
+    fn find_first_free_block(&self, size: usize) -> Option<usize> {
         self.blocks.iter().enumerate().find_map(|(index, block)| {
             if let Block::Free(block) = block {
                 if block.1 >= size {
@@ -159,7 +159,7 @@ impl DynamicAllocator {
         }
     }
 
-    fn split_and_insert_block(&mut self, index: usize, size: u64) -> Option<u64> {
+    fn split_and_insert_block(&mut self, index: usize, size: usize) -> Option<usize> {
         let size = align(size, self.granularity);
         if let Some(block) = self.blocks.get(index) {
             let block = *block;
@@ -178,7 +178,7 @@ impl DynamicAllocator {
         None
     }
 
-    fn split_and_insert_block_end(&mut self, index: usize, size: u64) -> Option<u64> {
+    fn split_and_insert_block_end(&mut self, index: usize, size: usize) -> Option<usize> {
         let size = align(size, self.granularity);
         if let Some(block) = self.blocks.get(index) {
             let block = *block;
@@ -199,21 +199,21 @@ impl DynamicAllocator {
 }
 
 pub struct RingAllocator {
-    size: u64,
-    aligment: u64,
-    head: AtomicU64,
+    size: usize,
+    aligment: usize,
+    head: AtomicUsize,
 }
 
 impl RingAllocator {
-    pub fn new(size: u64, aligment: u64) -> Self {
+    pub fn new(size: usize, aligment: usize) -> Self {
         Self {
-            head: AtomicU64::new(0),
+            head: AtomicUsize::new(0),
             size,
             aligment,
         }
     }
 
-    pub fn allocate(&self, size: u64) -> u64 {
+    pub fn allocate(&self, size: usize) -> usize {
         assert!(size <= self.size);
         let aligned_size = align(size, self.aligment);
         loop {
@@ -237,19 +237,19 @@ impl RingAllocator {
 
 #[derive(Debug)]
 pub struct BumpAllocator {
-    top: AtomicU64,
-    size: u64,
+    top: AtomicUsize,
+    size: usize,
 }
 
 impl BumpAllocator {
-    pub fn new(size: u64) -> Self {
+    pub fn new(size: usize) -> Self {
         Self {
             size,
-            top: AtomicU64::new(0),
+            top: AtomicUsize::new(0),
         }
     }
 
-    pub fn allocate(&self, size: u64, aligment: u64) -> Option<u64> {
+    pub fn allocate(&self, size: usize, aligment: usize) -> Option<usize> {
         self.top
             .fetch_update(Ordering::Release, Ordering::SeqCst, |x| {
                 let new_top = x.align(aligment) + size;
@@ -267,20 +267,20 @@ impl BumpAllocator {
         self.top.store(0, Ordering::SeqCst);
     }
 
-    pub fn validate(&self, size: u64, aligment: u64) -> u64 {
+    pub fn validate(&self, size: usize, aligment: usize) -> usize {
         let base = self.top.load(Ordering::SeqCst).align(aligment);
         min(size, self.size - base)
     }
 }
 #[derive(Debug)]
 pub struct BlockAllocator {
-    chunk_size: u64,
-    chunk_count: u64,
-    empty: Vec<u64>,
+    chunk_size: usize,
+    chunk_count: usize,
+    empty: Vec<usize>,
 }
 
 impl BlockAllocator {
-    pub fn new(chunk_size: u64, chunk_count: u64) -> Self {
+    pub fn new(chunk_size: usize, chunk_count: usize) -> Self {
         let empty = (0..chunk_count).rev().collect::<Vec<_>>();
 
         Self {
@@ -290,7 +290,7 @@ impl BlockAllocator {
         }
     }
 
-    pub fn allocate(&mut self) -> Option<u64> {
+    pub fn allocate(&mut self) -> Option<usize> {
         if let Some(slot) = self.empty.pop() {
             Some(slot * self.chunk_size)
         } else {
@@ -298,7 +298,7 @@ impl BlockAllocator {
         }
     }
 
-    pub fn dealloc(&mut self, offset: u64) {
+    pub fn dealloc(&mut self, offset: usize) {
         let index = offset / self.chunk_size;
         assert!(index < self.chunk_count && offset % self.chunk_size == 0);
         assert!(!self.empty.contains(&index));

@@ -73,39 +73,42 @@ pub enum FrameState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice {
     pub handle: BufferHandle,
-    pub offset: u64,
-    pub size: u64,
+    pub offset: u32,
+    pub size: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferPointer {
     pub handle: BufferHandle,
-    pub offset: u64,
+    pub offset: u32,
 }
 
 impl Default for BufferSlice {
     fn default() -> Self {
         Self {
             handle: Handle::default(),
-            offset: u64::MAX,
-            size: u64::MAX,
+            offset: u32::MAX,
+            size: u32::MAX,
         }
     }
 }
 
 impl BufferSlice {
-    pub fn new(handle: BufferHandle, offset: u64, size: u64) -> BufferSlice {
+    pub fn new(handle: BufferHandle, offset: usize, size: usize) -> BufferSlice {
         Self {
             handle,
-            offset,
-            size,
+            offset: offset as u32,
+            size: size as u32,
         }
     }
 }
 
 impl BufferPointer {
-    pub fn new(handle: BufferHandle, offset: u64) -> BufferPointer {
-        Self { handle, offset }
+    pub fn new(handle: BufferHandle, offset: usize) -> BufferPointer {
+        Self {
+            handle,
+            offset: offset as u32,
+        }
     }
 }
 
@@ -113,14 +116,17 @@ impl Default for BufferPointer {
     fn default() -> Self {
         Self {
             handle: Handle::default(),
-            offset: u64::MAX,
+            offset: u32::MAX,
         }
     }
 }
 
 impl From<BufferSlice> for BufferPointer {
     fn from(value: BufferSlice) -> Self {
-        Self::new(value.handle, value.offset)
+        Self {
+            handle: value.handle,
+            offset: value.offset,
+        }
     }
 }
 

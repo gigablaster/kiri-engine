@@ -213,7 +213,7 @@ impl Buffer {
         })
     }
 
-    pub fn upload<T: Copy>(&self, offset: u64, data: &[T]) -> Result<(), Error> {
+    pub fn upload<T: Copy>(&self, offset: usize, data: &[T]) -> Result<(), Error> {
         assert!(self.desc.usage.contains(vk::BufferUsageFlags::TRANSFER_DST));
         self.device
             .with_staging(|staging| staging.upload_buffer(&self.device.raw, self.raw, offset, data))
