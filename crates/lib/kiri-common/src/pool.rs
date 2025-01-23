@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,11 +22,16 @@ use std::{
 };
 
 const DEFAULT_SPACE: usize = 4096;
+const GENERATION_BITS: u32 = 14;
+const INDEX_BITS: u32 = 32 - GENERATION_BITS;
+const GENERATION_MASK: u32 = ((1 << GENERATION_BITS) - 1) << INDEX_BITS;
+const MAX_HANDLE_INDEX: u32 = (1 << INDEX_BITS) - 1;
+const MAX_HANDLE_GENERATION: u32 = (1 << GENERATION_BITS) - 1;
+const INDEX_MASK: u32 = MAX_HANDLE_INDEX;
 
 #[derive(Debug)]
 pub struct Handle<T> {
-    index: u32,
-    generation: u32,
+    data: u32,
     _phantom: PhantomData<T>,
 }
 
@@ -37,8 +42,7 @@ unsafe impl<T> Sync for Handle<T> {}
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
-            index: self.index,
-            generation: self.generation,
+            data: self.data,
             _phantom: PhantomData,
         }
     }
@@ -48,7 +52,7 @@ impl<T> Copy for Handle<T> {}
 
 impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.generation == other.generation && self.index == other.index
+        self.data == other.data
     }
 }
 
@@ -56,8 +60,7 @@ impl<T> Eq for Handle<T> {}
 
 impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
-        self.generation.hash(state);
+        self.data.hash(state);
     }
 }
 
@@ -82,24 +85,23 @@ impl<T> Ord for Handle<T> {
 impl<T> Handle<T> {
     pub fn into_another<U>(&self) -> Handle<U> {
         Handle {
-            index: self.index,
-            generation: self.generation,
+            data: self.data,
             _phantom: PhantomData,
         }
     }
 
     pub fn new(index: u32, generation: u32) -> Self {
+        debug_assert!(index < MAX_HANDLE_INDEX);
+        debug_assert!(generation < MAX_HANDLE_GENERATION);
         Self {
-            index,
-            generation,
+            data: index | (generation << INDEX_BITS),
             _phantom: PhantomData,
         }
     }
 
     pub fn invalid() -> Self {
         Self {
-            index: u32::MAX,
-            generation: u32::MAX,
+            data: u32::MAX,
             _phantom: PhantomData,
         }
     }
@@ -109,11 +111,11 @@ impl<T> Handle<T> {
     }
 
     pub fn index(&self) -> u32 {
-        self.index
+        self.data & INDEX_MASK
     }
 
     pub fn generation(&self) -> u32 {
-        self.generation
+        (self.data & GENERATION_MASK) >> INDEX_BITS
     }
 }
 
@@ -123,27 +125,24 @@ impl<T> Default for Handle<T> {
     }
 }
 
+impl<T> From<u32> for Handle<T> {
+    fn from(value: u32) -> Self {
+        Self {
+            data: value,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> From<Handle<T>> for u32 {
+    fn from(value: Handle<T>) -> Self {
+        value.data
+    }
+}
+
 impl<T> Display for Handle<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(idx: {} gen: {})", self.index(), self.generation())
-    }
-}
-
-impl<T> From<Handle<T>> for u64 {
-    fn from(value: Handle<T>) -> Self {
-        ((value.generation as u64) << 32) | (value.index as u64)
-    }
-}
-
-impl<T> From<u64> for Handle<T> {
-    fn from(value: u64) -> Self {
-        let index = (value & 0xffffffff) as u32;
-        let generation = ((value >> 32) & 0xffffffff) as u32;
-        Handle {
-            index,
-            generation,
-            _phantom: PhantomData,
-        }
     }
 }
 
@@ -504,8 +503,8 @@ where
         let cold_handle = self.cold.push(cold);
         #[cfg(debug_assertions)]
         {
-            if hot_handle.generation != cold_handle.generation
-                && cold_handle.index != hot_handle.index
+            if hot_handle.generation() != cold_handle.generation()
+                && cold_handle.index() != hot_handle.index()
             {
                 panic!("Mismatched handles");
             }

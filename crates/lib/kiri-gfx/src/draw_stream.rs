@@ -81,7 +81,7 @@ impl DrawStreamBuilder {
 
     fn write_buffer_pointer(&mut self, value: BufferPointer) {
         self.stream
-            .write_u64::<NativeEndian>(value.handle.into())
+            .write_u32::<NativeEndian>(value.handle.into())
             .unwrap();
         self.stream.write_u64::<NativeEndian>(value.offset).unwrap()
     }
@@ -181,7 +181,7 @@ impl DrawStreamBuilder {
         for i in 0..MAX_DESCRIPTOR_SETS {
             if self.mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
                 self.stream
-                    .write_u64::<NativeEndian>(self.current.descriptors[i].into())
+                    .write_u32::<NativeEndian>(self.current.descriptors[i].into())
                     .unwrap();
             }
         }
@@ -242,7 +242,7 @@ impl Default for DrawState {
 impl DrawStream {
     fn read_buffer_pointer<R: Read>(mut r: R) -> io::Result<BufferPointer> {
         Ok(BufferPointer {
-            handle: r.read_u64::<NativeEndian>()?.into(),
+            handle: r.read_u32::<NativeEndian>()?.into(),
             offset: r.read_u64::<NativeEndian>()?,
         })
     }
@@ -323,7 +323,7 @@ impl DrawStream {
                 .take(MAX_DESCRIPTOR_SETS)
             {
                 if mask & (DESCRIPTOR_SET_MASK << i) == (DESCRIPTOR_SET_MASK << i) {
-                    let descriptor = reader.read_u64::<NativeEndian>().unwrap().into();
+                    let descriptor = reader.read_u32::<NativeEndian>().unwrap().into();
                     *target = descriptor;
                     if i != DYNAMIC_DESCRIPTOR_SLOT_INDEX {
                         let ds = if descriptor.is_valid() {
