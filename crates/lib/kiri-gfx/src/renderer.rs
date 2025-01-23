@@ -22,7 +22,7 @@ use kiri_backend::{
     },
     compile_raster_pipeline, AcquiredSurface, Buffer, BufferCreateDesc, DescriptorSetLayoutDesc,
     DescriptorTotalCount, GpuDescriptor, Image, ImageCreateDesc, ImageDesc, ImageUploadData,
-    ImageViewDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RasterProgram, RenderDevice,
+    ImageViewDesc, InputVertexStreamLayout, Program, RasterPipelineCreateDesc, RenderDevice,
     RenderPassLayout, ShaderDesc, Swapchain, EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};
@@ -35,14 +35,14 @@ pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
 #[derive(Debug, Clone, Copy)]
-pub struct RasterProgramHandle(u32);
+pub struct ProgramHandle(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RasterPipelineHandle(u32);
 
 type BufferPool = HotColdPool<vk::Buffer, Buffer>;
 type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
 type RasterPipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
-type RasterProgramPool = Vec<RasterProgram>;
+type ProgramPool = Vec<Program>;
 type ImagePool = Pool<Image>;
 
 impl From<RasterPipelineHandle> for u32 {
@@ -124,10 +124,9 @@ impl From<BufferSlice> for BufferPointer {
 }
 
 #[derive(Debug)]
-struct RasterPipelineDesc {
-    program: RasterProgramHandle,
+pub struct RasterPipelineDesc {
+    program: ProgramHandle,
     pass_layout: &'static RenderPassLayout<'static>,
-    descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     input_layout: &'static [InputVertexStreamLayout<'static>],
     specialization: Vec<(u32, u32)>,
     desc: RasterPipelineCreateDesc,
@@ -473,7 +472,7 @@ pub struct Renderer {
     pub device: Arc<RenderDevice>,
     buffers: RwLock<BufferPool>,
     images: RwLock<ImagePool>,
-    raster_programs: RwLock<RasterProgramPool>,
+    raster_programs: RwLock<ProgramPool>,
     raster_pipelines: Mutex<(
         Vec<(vk::Pipeline, vk::PipelineLayout)>,
         Vec<RasterPipelineDesc>,
@@ -560,21 +559,16 @@ impl Renderer {
         self.images_to_destroy.lock().push(handle);
     }
 
-    pub fn create_raster_program(
+    pub fn create_program(
         &self,
         layout: &'static [DescriptorSetLayoutDesc<'static>],
-        vertex_shader: ShaderDesc,
-        fragment_shader: ShaderDesc,
-    ) -> Result<RasterProgramHandle, Error> {
-        let program = RasterProgram::new(
-            self.device.clone(),
-            layout,
-            &[vertex_shader, fragment_shader],
-        )?;
+        shaders: &[ShaderDesc],
+    ) -> Result<ProgramHandle, Error> {
+        let program = Program::new(self.device.clone(), layout, shaders)?;
         let mut programs = self.raster_programs.write();
         let index = programs.len() as u32;
         programs.push(program);
-        Ok(RasterProgramHandle(index))
+        Ok(ProgramHandle(index))
     }
 
     pub fn create_raster_pipeline(&self, desc: RasterPipelineDesc) -> RasterPipelineHandle {
@@ -981,7 +975,7 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
-        unsafe { self.device.raw.device_wait_idle() };
+        unsafe { self.device.raw.device_wait_idle() }.ok();
         self.raster_pipelines
             .lock()
             .0

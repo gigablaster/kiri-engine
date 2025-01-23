@@ -151,14 +151,8 @@ impl<'a> DescriptorSetLayoutDesc<'a> {
 
 const MAX_SHADERS: usize = 2;
 
-pub trait Program {
-    fn pipeline_layout(&self) -> vk::PipelineLayout;
-    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout];
-    fn shader_stages(&self) -> vk::ShaderStageFlags;
-}
-
 #[derive(Debug)]
-pub struct RasterProgram {
+pub struct Program {
     pub(super) device: Arc<RenderDevice>,
     pub stages: vk::ShaderStageFlags,
     pub shaders: ArrayVec<(vk::ShaderModule, vk::ShaderStageFlags, CString), MAX_SHADERS>,
@@ -167,21 +161,7 @@ pub struct RasterProgram {
     pub layout: &'static [DescriptorSetLayoutDesc<'static>],
 }
 
-impl Program for RasterProgram {
-    fn pipeline_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
-    }
-
-    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout] {
-        &self.descriptor_layouts
-    }
-
-    fn shader_stages(&self) -> vk::ShaderStageFlags {
-        self.stages
-    }
-}
-
-impl RasterProgram {
+impl Program {
     pub fn new(
         device: Arc<RenderDevice>,
         layout: &'static [DescriptorSetLayoutDesc<'static>],
@@ -212,6 +192,18 @@ impl RasterProgram {
             device,
         })
     }
+
+    fn pipeline_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
+    }
+
+    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout] {
+        &self.descriptor_layouts
+    }
+
+    fn shader_stages(&self) -> vk::ShaderStageFlags {
+        self.stages
+    }
 }
 
 fn create_shader(
@@ -229,7 +221,7 @@ fn create_shader(
     ))
 }
 
-impl Drop for RasterProgram {
+impl Drop for Program {
     fn drop(&mut self) {
         self.shaders.drain(..).for_each(|(shader, _, _)| unsafe {
             self.device.raw.destroy_shader_module(shader, None)

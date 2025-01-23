@@ -18,9 +18,7 @@ use std::io;
 use kiri_backend::ash::vk;
 use thiserror::Error;
 
-use crate::{
-    BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle, RasterProgramHandle,
-};
+use crate::{BufferHandle, DescriptorHandle, ImageHandle, ProgramHandle, RasterPipelineHandle};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -47,7 +45,7 @@ pub enum Error {
     #[error("Invalid raster pipeline handle {0:?}")]
     InvalidRasterPipelineHandle(RasterPipelineHandle),
     #[error("Invalid raster program handle: {0:?}")]
-    InvalidRasterProgramHandle(RasterProgramHandle),
+    InvalidRasterProgramHandle(ProgramHandle),
 }
 
 impl From<vk::Result> for Error {

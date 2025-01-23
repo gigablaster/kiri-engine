@@ -19,14 +19,13 @@ use std::{
     mem,
     path::Path,
     slice,
-    sync::Arc,
 };
 
 use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Program, RasterProgram, RenderDevice};
+use crate::{Error, Program, RenderDevice};
 
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -195,7 +194,7 @@ impl InputVertexStreamLayout<'_> {
 pub fn compile_raster_pipeline(
     device: &RenderDevice,
     cache: vk::PipelineCache,
-    program: &RasterProgram,
+    program: &Program,
     pass_layout: &RenderPassLayout,
     streams: &[InputVertexStreamLayout],
     specialization: &[(u32, u32)],
