@@ -15,9 +15,8 @@
 
 use std::mem;
 
+use kiri_assets::{MeshAssetMaterial, MeshSurfaceAsset, RenderMeshVertex, StaticMeshAsset};
 use kiri_math::BoundingBox;
-
-use crate::{MeshAssetMaterial, MeshSurfaceAsset, RenderMeshVertex, StaticMeshAsset};
 
 #[derive(Debug)]
 pub struct MeshSurfaceBuilder {

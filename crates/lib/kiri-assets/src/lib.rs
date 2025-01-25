@@ -12,14 +12,130 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-mod gltf;
+
+// mod gltf;
 mod image;
-mod mesh_builder;
+mod model;
 mod shader;
 
-pub trait AssetSource: Send + Sync + Hash + Clone + Debug + 'static {
-    fn reference(&self) -> AssetReference;
-    fn changed(&self, last_update: SystemTime) -> bool;
+pub use image::*;
+pub use model::*;
+use normalize_path::NormalizePath;
+pub use shader::*;
+
+use std::{
+    env, fs,
+    io::{self, Cursor, Read, Write},
+    path::{self, Path, PathBuf},
+    time::SystemTime,
+};
+
+use kiri_vfs::SOURCE_ASSETS_PATH;
+use speedy::{Context, Readable, Writable};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Writable, Readable)]
+pub struct CompiledAssetPath(String);
+
+impl AsRef<str> for CompiledAssetPath {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct SourceAssetPath(PathBuf);
+
+impl From<&str> for SourceAssetPath {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<String> for SourceAssetPath {
+    fn from(value: String) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<&Path> for SourceAssetPath {
+    fn from(value: &Path) -> Self {
+        Self(value.to_path_buf())
+    }
+}
+
+impl From<PathBuf> for SourceAssetPath {
+    fn from(value: PathBuf) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<Path> for SourceAssetPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SourceAssetPath {
+    fn as_ref(&self) -> &str {
+        self.0.to_str().unwrap()
+    }
+}
+
+impl SourceAssetPath {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        Self(path.as_ref().to_path_buf())
+    }
+
+    /// Create compiled asset path and replace extension if needed.
+    ///
+    /// File path is normalized and checked against root to prevent any form of accessing
+    /// data outside of proper folder.
+    pub fn compiled<P: AsRef<Path>>(&self) -> io::Result<CompiledAssetPath> {
+        let path = self.full_source_path();
+        let root = Self::source_assets_root();
+        assert!(path.starts_with(&root));
+        let name = path
+            .strip_prefix(root)
+            .map_err(|x| io::Error::other(x))?
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        Ok(CompiledAssetPath(format!("{}.asset", name)))
+    }
+
+    pub fn changed(&self, timestamp: SystemTime) -> bool {
+        let path = self.full_source_path();
+        if let Ok(metadata) = fs::metadata(path) {
+            if let Ok(modified) = metadata.modified() {
+                return modified > timestamp;
+            }
+            if let Ok(created) = metadata.created() {
+                return created > timestamp;
+            }
+        }
+        return false;
+    }
+
+    pub fn full_source_path(&self) -> PathBuf {
+        path::absolute(Self::source_assets_root().join(&self.0))
+            .unwrap()
+            .normalize()
+    }
+
+    pub fn parent(&self) -> PathBuf {
+        self.full_source_path().parent().unwrap().to_path_buf()
+    }
+
+    pub fn source_assets_root() -> PathBuf {
+        env::current_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join(SOURCE_ASSETS_PATH)
+    }
 }
 
 pub trait Asset: Sized + Send + Sync + 'static {
@@ -48,7 +164,7 @@ impl AssetHeader {
         }
     }
 
-    pub fn is_valid<T: Asset>(&self) -> bool {
+    pub fn valid<T: Asset>(&self) -> bool {
         self.magic == MAGICK && self.version == VERSION && self.ty == T::TYPE
     }
 }
@@ -83,132 +199,11 @@ pub fn save_asset<T: Asset, W: Write>(w: W, asset: &T) -> io::Result<()> {
     asset.serialize(w)
 }
 
-pub trait ImportAsset<T: Asset>: AssetSource + Send + Sync {
-    fn import(&self) -> io::Result<T>;
-}
-
-use std::{
-    env,
-    fmt::Debug,
-    fs,
-    hash::Hash,
-    io::{self, BufReader, Cursor, Read, Write},
-    marker::PhantomData,
-    path::{self, Path, PathBuf},
-    time::SystemTime,
-};
-
-pub use gltf::*;
-pub use image::*;
-use kiri_common::spawn_io;
-pub use kiri_vfs::AssetReference;
-use kiri_vfs::{ROOT_COMPILED_ASSETS_PATH, ROOT_SOURCE_ASSETS_PATH};
-use mesh_builder::*;
-pub use shader::*;
-
-use speedy::{Context, Readable, Writable};
-use uuid::Uuid;
-
-pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let file = fs::File::open(path.as_ref())?;
-    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-    let mut reader = io::BufReader::new(file);
-    let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data)?;
-    Ok(data)
-}
-
-pub fn get_relative_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
-    let root = path::absolute(env::current_dir()?.join(ROOT_SOURCE_ASSETS_PATH))?;
-    // Is this path relative to data folder? Check this option.
-    let path = if !path.as_ref().exists() {
-        root.join(path)
-    } else {
-        path.as_ref().into()
-    };
-    let path = path::absolute(path)?;
-
-    Ok(path.strip_prefix(root).unwrap().into())
-}
-
-pub fn get_absolute_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
-    let root = env::current_dir()?
-        .canonicalize()?
-        .join(ROOT_SOURCE_ASSETS_PATH);
-    Ok(root.join(get_relative_asset_path(path.as_ref())?))
-}
-
-pub fn get_compiled_asset_path(reference: AssetReference) -> io::Result<PathBuf> {
-    let root = path::absolute(env::current_dir()?.join(ROOT_COMPILED_ASSETS_PATH))?;
-
-    Ok(root.join(get_relative_asset_path(format!("{}.asset", reference))?))
-}
-
-pub(crate) fn is_asset_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {
-    if let Ok(path) = get_absolute_asset_path(path) {
-        if let Ok(metadata) = fs::metadata(path) {
-            if let Ok(modified) = metadata.modified() {
-                return modified > timestamp;
-            }
-            if let Ok(created) = metadata.created() {
-                return created > timestamp;
-            }
-        }
-    }
-    false
-}
-
-pub fn get_compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
-    let path = get_compiled_asset_path(reference).ok()?;
-    if path.exists() {
-        if let Ok(metadata) = fs::metadata(path) {
-            if let Ok(modified) = metadata.modified() {
-                return Some(modified);
-            }
-            if let Ok(created) = metadata.created() {
-                return Some(created);
-            }
-        }
-    }
-    None
-}
-
-pub async fn load_or_compile_asset<T: AssetSource + ImportAsset<U>, U: Asset>(
-    source: T,
-) -> io::Result<U> {
-    use kiri_vfs::vfs_load;
-    use log::{debug, warn};
-
-    let reference = source.reference();
-    let newer = get_compiled_asset_change_time(reference)
-        .map(|x| source.changed(x))
-        .unwrap_or(false);
-    if !newer {
-        if let Ok(data) = spawn_io(vfs_load(reference)).await {
-            debug!("Loading asset: {:?}", source);
-            return Ok(load_asset(&data)?);
-        }
-    }
-    // There's no compiled asset, so compile it in runtime
-    warn!("Compile asset: {:?}", source);
-    let asset = source.import()?;
-    if let Err(err) = try_save_asset(reference, &asset) {
-        warn!("Failed to save compiled asset to cache: {}", err);
-    }
-    Ok(asset)
-}
-
-fn load_asset<T: Asset>(data: &[u8]) -> io::Result<T> {
+pub fn load_asset<T: Asset>(data: &[u8]) -> io::Result<T> {
     let mut reader = Cursor::new(data);
     let header = AssetHeader::read_from_stream_unbuffered(&mut reader)?;
-    if !header.is_valid::<T>() {
+    if !header.valid::<T>() {
         return Err(io::Error::other("Asset header isn't valid"));
     }
     T::deserialize(&mut reader)
-}
-
-fn try_save_asset<T: Asset>(reference: AssetReference, asset: &T) -> io::Result<()> {
-    use std::fs::File;
-
-    save_asset(File::create(get_compiled_asset_path(reference)?)?, asset)
 }

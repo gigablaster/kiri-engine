@@ -10,26 +10,7 @@ kiri-vfs = { path = "../kiri-vfs" }
 kiri-math = { path = "../kiri-math" }
 speedy = { version = "0.8.7", features = ["speedy-derive"] }
 bytes = "1.7.1"
-image = { version = "0.25.2", default-features = false, features = [
-    "jpeg",
-    "png",
-    "pnm",
-    "tga",
-    "tiff",
-    "webp",
-    "bmp",
-    "hdr",
-] }
-
-intel_tex_2 = { version = "0.3.0" }
 normalize-path = "0.2.1"
-numquant = "0.2.0"
-mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
-    "glam",
-], default-features = false }
-meshopt = { version = "0.4.1" }
-gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 thiserror = "2.0.9"
-shader-prepper = { version = "0.3.0-pre.3" }
 uuid = { version = "1.10.0", features = ["v4"] }
 log = "0.4.20"

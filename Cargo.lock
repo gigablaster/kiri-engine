@@ -1052,23 +1052,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiri-asset-pipeline"
+version = "0.1.0"
+dependencies = [
+ "gltf",
+ "image",
+ "intel_tex_2",
+ "kiri-assets",
+ "kiri-backend",
+ "kiri-math",
+ "kiri-vfs",
+ "meshopt",
+ "mikktspace",
+ "numquant",
+ "shader-prepper",
+]
+
+[[package]]
 name = "kiri-assets"
 version = "0.2.0"
 dependencies = [
  "bytes",
- "gltf",
- "image",
- "intel_tex_2",
  "kiri-backend",
  "kiri-common",
  "kiri-math",
  "kiri-vfs",
  "log",
- "meshopt",
- "mikktspace",
  "normalize-path",
- "numquant",
- "shader-prepper",
  "speedy",
  "thiserror 2.0.9",
  "uuid",
@@ -1158,6 +1168,7 @@ dependencies = [
  "bytes",
  "kiri-common",
  "memmap2",
+ "normalize-path",
  "once_cell",
  "parking_lot",
  "siphasher",

@@ -17,7 +17,7 @@ use kiri_assets::{
     AssetSource, ImageAsset, ImageData, ImageSource, ImportAsset, ModelSource, ShaderAsset,
     ShaderAssetSource,
 };
-use kiri_vfs::ROOT_SOURCE_ASSETS_PATH;
+use kiri_vfs::SOURCE_ASSETS_PATH;
 use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
@@ -158,7 +158,7 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
         } else {
             let path = path
                 .path()
-                .strip_prefix(ROOT_SOURCE_ASSETS_PATH)
+                .strip_prefix(SOURCE_ASSETS_PATH)
                 .unwrap()
                 .to_owned();
             let path_str = path.to_str().unwrap().replace('\\', "/");
@@ -198,7 +198,7 @@ fn main() {
     AsyncComputeTaskPool::get_or_init(TaskPool::new);
 
     let processor = ContentProcessor::new();
-    collect(&processor, Path::new(ROOT_SOURCE_ASSETS_PATH)).unwrap();
+    collect(&processor, Path::new(SOURCE_ASSETS_PATH)).unwrap();
     processor.process();
 
     let need_reimport = Arc::new(AtomicBool::new(false));
@@ -212,12 +212,12 @@ fn main() {
         .unwrap();
         loop {
             watcher
-                .watch(Path::new(ROOT_SOURCE_ASSETS_PATH), RecursiveMode::Recursive)
+                .watch(Path::new(SOURCE_ASSETS_PATH), RecursiveMode::Recursive)
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
             if need_reimport.load(Ordering::Acquire) {
                 let processor = ContentProcessor::new();
-                collect(&processor, Path::new(ROOT_SOURCE_ASSETS_PATH)).unwrap();
+                collect(&processor, Path::new(SOURCE_ASSETS_PATH)).unwrap();
                 processor.process();
                 need_reimport.store(false, Ordering::Release);
             }

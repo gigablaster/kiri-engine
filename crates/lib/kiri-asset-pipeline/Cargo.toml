@@ -1,0 +1,28 @@
+[package]
+name = "kiri-asset-pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kiri-vfs = { path = "../kiri-vfs" }
+kiri-assets = { path = "../kiri-assets" }
+kiri-backend = { path = "../kiri-backend" }
+kiri-math = { path = "../kiri-math" }
+image = { version = "0.25.2", default-features = false, features = [
+    "jpeg",
+    "png",
+    "pnm",
+    "tga",
+    "tiff",
+    "webp",
+    "bmp",
+    "hdr",
+] }
+intel_tex_2 = { version = "0.3.0" }
+numquant = "0.2.0"
+mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features = [
+    "glam",
+], default-features = false }
+meshopt = { version = "0.4.1" }
+gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
+shader-prepper = { version = "0.3.0-pre.3" }
