@@ -381,3 +381,18 @@ impl ResourceCache {
         Ok(Arc::new(builder.build(&manager.renderer)?))
     }
 }
+
+impl Drop for ResourceCache {
+    fn drop(&mut self) {
+        self.materials.pool.lock().drain(..).for_each(|material| {
+            if let Resource::Loaded(material) = material {
+                material.free(&self.renderer);
+            }
+        });
+        self.textures.pool.lock().drain(..).for_each(|image| {
+            if let Resource::Loaded(image) = image {
+                self.renderer.destroy_image(image);
+            }
+        });
+    }
+}
