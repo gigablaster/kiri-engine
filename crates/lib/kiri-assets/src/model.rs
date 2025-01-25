@@ -15,7 +15,8 @@
 
 use std::collections::HashMap;
 
-use speedy::{Readable, Writable};
+use kiri_backend::ash::vk;
+use speedy::{Context, Readable, Writable};
 
 use crate::{Asset, CompiledAssetPath};
 
@@ -60,10 +61,47 @@ impl MeshMaterialBlend {
     }
 }
 
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+pub struct EmbeddedImage {
+    pub dims: [u32; 2],
+    pub format: vk::Format,
+    pub pixels: Vec<u8>,
+}
+
+impl EmbeddedImage {
+    pub fn color(color: [u8; 4], format: vk::Format) -> Self {
+        Self {
+            dims: [1, 1],
+            format,
+            pixels: color.to_vec(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Readable, Writable)]
 pub enum ImageReference {
     External(CompiledAssetPath),
-    Color([u8; 4]),
+    Embedded(EmbeddedImage),
+}
+
+impl<'a, C: Context> Readable<'a, C> for EmbeddedImage {
+    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
+        let format = vk::Format::from_raw(reader.read_i32()?);
+        Ok(Self {
+            format,
+            dims: reader.read_value()?,
+            pixels: reader.read_value()?,
+        })
+    }
+}
+
+impl<C: Context> Writable<C> for EmbeddedImage {
+    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        writer.write_i32(self.format.as_raw())?;
+        writer.write_value(&self.dims)?;
+        writer.write_value(&self.pixels)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Readable, Writable, PartialEq)]

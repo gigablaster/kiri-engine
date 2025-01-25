@@ -16,11 +16,11 @@
 use std::{collections::HashMap, mem, sync::Arc};
 
 use crate::{BufferHandle, BufferPointer, BufferSlice, DescriptorHandle, Error, Renderer};
+use kiri_assets::NodeIndex;
 use kiri_backend::{
-    ash::vk::{self, DescriptorSet},
+    ash::vk::{self},
     BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc,
 };
-use kiri_common::NodeIndex;
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
 #[derive(Debug, Clone, Copy)]

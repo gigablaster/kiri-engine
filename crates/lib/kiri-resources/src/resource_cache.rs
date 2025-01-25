@@ -13,19 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::io;
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use kiri_assets::load_or_compile_asset;
-use kiri_assets::{ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource};
+use kiri_assets::{load_asset, Asset, CompiledAssetPath, ImageReference};
+use kiri_assets::{ImageAsset, MeshAssetMaterial, ModelAsset};
 use kiri_backend::ash::vk;
 use kiri_backend::{ImageCreateDesc, ImageUploadData};
-use kiri_common::{block_on, spawn, yield_now, Task};
+use kiri_common::{block_on, spawn, spawn_io, yield_now, Task};
 use kiri_gfx::{
     DescriptorSetCreateDesc, GpuPbrMeshMaterialData, ImageHandle, RenderMeshBuilder,
     RenderMeshMaterial, RenderMeshMaterialOrder, RenderModel, RenderModelBuilder, Renderer,
     MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
+use kiri_vfs::vfs_load;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
@@ -173,29 +175,28 @@ impl<K: Hash + Eq, T: Debug + Send + Sync + Clone, H: ResourceHandle> ResourceTy
 }
 
 pub trait ResourceLoader {
-    fn get_or_load_texture(&self, source: &ImageSource) -> TextureHandle;
-    fn get_or_load_model(&self, name: &str) -> ModelHandle;
+    fn get_or_load_texture(&self, source: &ImageReference) -> TextureHandle;
+    fn get_or_load_model(&self, name: &CompiledAssetPath) -> ModelHandle;
 }
 
 #[derive(Debug)]
 pub struct ResourceCache {
     pub renderer: Arc<Renderer>,
-    textures: ResourceType<ImageSource, ImageHandle, TextureHandle>,
+    textures: ResourceType<ImageReference, ImageHandle, TextureHandle>,
     materials: ResourceType<MeshAssetMaterial, RenderMeshMaterial, MaterialHandle>,
-    models: ResourceType<String, Arc<RenderModel>, ModelHandle>,
+    models: ResourceType<CompiledAssetPath, Arc<RenderModel>, ModelHandle>,
 }
 
 impl ResourceLoader for Arc<ResourceCache> {
-    fn get_or_load_texture(&self, source: &ImageSource) -> TextureHandle {
-        let source = source.clone();
-        self.textures.get_or_load(source.clone(), || {
-            spawn(ResourceCache::load_texture(self.clone(), source))
+    fn get_or_load_texture(&self, reference: &ImageReference) -> TextureHandle {
+        self.textures.get_or_load(reference.clone(), || {
+            spawn(ResourceCache::load_texture(self.clone(), reference.clone()))
         })
     }
 
-    fn get_or_load_model(&self, name: &str) -> ModelHandle {
-        self.models.get_or_load(name.to_owned(), || {
-            spawn(ResourceCache::load_model(self.clone(), name.to_owned()))
+    fn get_or_load_model(&self, path: &CompiledAssetPath) -> ModelHandle {
+        self.models.get_or_load(path.clone(), || {
+            spawn(ResourceCache::load_model(self.clone(), path.clone()))
         })
     }
 }
@@ -254,27 +255,36 @@ impl ResourceCache {
         }
     }
 
+    async fn load_asset<T: Asset>(path: CompiledAssetPath) -> io::Result<T> {
+        let data = spawn_io(vfs_load(path)).await?;
+        load_asset::<T>(&data)
+    }
+
     async fn load_texture(
         manager: Arc<ResourceCache>,
-        source: ImageSource,
+        reference: ImageReference,
     ) -> Result<ImageHandle, Error> {
-        match &source.data {
-            kiri_assets::ImageData::Path(_) => {
-                let asset: ImageAsset = load_or_compile_asset(source.clone()).await?;
+        match &reference {
+            ImageReference::External(path) => {
+                let asset = Self::load_asset::<ImageAsset>(path.clone()).await?;
                 let mips = asset
                     .mips
                     .iter()
                     .map(|x| ImageUploadData::new(x))
                     .collect::<Vec<_>>();
-                debug!("Create texture {:?}", source);
+                debug!("Create texture {:?}", reference);
                 let dims = [asset.dims[0] as usize, asset.dims[1] as usize];
                 Ok(manager
                     .renderer
                     .create_image(ImageCreateDesc::texture(asset.format, dims), Some(&mips))?)
             }
-            kiri_assets::ImageData::Color(color) => Ok(manager.renderer.create_image(
-                ImageCreateDesc::new(source.uncompressed_format(), [1, 1]),
-                Some(&[ImageUploadData::new(color)]),
+
+            ImageReference::Embedded(image) => Ok(manager.renderer.create_image(
+                ImageCreateDesc::new(
+                    image.format,
+                    [image.dims[0] as usize, image.dims[1] as usize],
+                ),
+                Some(&[ImageUploadData::new(&image.pixels)]),
             )?),
         }
     }
@@ -330,10 +340,11 @@ impl ResourceCache {
 
     async fn load_model(
         manager: Arc<ResourceCache>,
-        name: String,
+        path: CompiledAssetPath,
     ) -> Result<Arc<RenderModel>, Error> {
-        let asset: ModelAsset = load_or_compile_asset(ModelSource::new(&name)).await?;
-        let mut builder = RenderModelBuilder::new(&asset.vertices, &asset.indices).name(&name);
+        let asset = Self::load_asset::<ModelAsset>(path.clone()).await?;
+        let mut builder =
+            RenderModelBuilder::new(&asset.vertices, &asset.indices).name(path.as_ref());
         let materials = asset
             .materials
             .into_iter()
@@ -377,7 +388,7 @@ impl ResourceCache {
             .node_to_mesh
             .into_iter()
             .for_each(|(node, mesh)| builder.attach_mesh(node, mesh));
-        debug!("Create model {}", name);
+        debug!("Create model {}", path.as_ref());
         Ok(Arc::new(builder.build(&manager.renderer)?))
     }
 }

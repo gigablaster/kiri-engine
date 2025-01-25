@@ -45,14 +45,12 @@ pub trait Archive: ArchiveLoad {
 
 static ARCHIVES: Lazy<RwLock<Vec<Arc<dyn Archive>>>> = Lazy::new(|| {
     let mut archives = Vec::<Arc<dyn Archive>>::default();
-    // Data pack
+    // Default data pack
     if let Ok(pack) = PackedArchive::open(COMPILED_ASSETS_PATH) {
         archives.push(Arc::new(pack));
     }
     // Compiled assets outside of data pack
     archives.push(Arc::new(FileSystemArchive::new(COMPILED_ASSETS_PATH)));
-    // Source assets
-    archives.push(Arc::new(FileSystemArchive::new(SOURCE_ASSETS_PATH)));
     RwLock::new(archives)
 });
 

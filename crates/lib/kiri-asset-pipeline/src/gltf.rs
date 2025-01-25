@@ -15,7 +15,8 @@
 
 use std::{collections::HashMap, io, time::SystemTime};
 
-use kiri_assets::{ModelAsset, SourceAssetPath};
+use kiri_assets::{EmbeddedImage, ModelAsset, SourceAssetPath};
+use kiri_backend::ash::vk;
 
 use crate::{AssetPipelineContext, AssetSource};
 use crate::{ImageAssetType, ImportAsset};
@@ -92,13 +93,16 @@ fn process_blend(material: &gltf::Material) -> MeshMaterialBlend {
     }
 }
 
-fn color(color: [f32; 4]) -> [u8; 4] {
-    [
-        (color[0].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[1].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[2].clamp(0.0, 1.0) * 255.0) as u8,
-        (color[3].clamp(0.0, 1.0) * 255.0) as u8,
-    ]
+fn color(color: [f32; 4], format: vk::Format) -> EmbeddedImage {
+    EmbeddedImage::color(
+        [
+            (color[0].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[1].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[2].clamp(0.0, 1.0) * 255.0) as u8,
+            (color[3].clamp(0.0, 1.0) * 255.0) as u8,
+        ],
+        format,
+    )
 }
 
 fn process_material<T: AssetPipelineContext>(
@@ -108,7 +112,10 @@ fn process_material<T: AssetPipelineContext>(
     let base_color = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
         process_texture(context, &texture.texture(), ImageAssetType::Rgba, true)
     } else {
-        ImageReference::Color(color(material.pbr_metallic_roughness().base_color_factor()))
+        ImageReference::Embedded(color(
+            material.pbr_metallic_roughness().base_color_factor(),
+            vk::Format::A8B8G8R8_SRGB_PACK32,
+        ))
     };
     let metallic_roughness = if let Some(texture) = material
         .pbr_metallic_roughness()
@@ -116,33 +123,40 @@ fn process_material<T: AssetPipelineContext>(
     {
         process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
     } else {
-        ImageReference::Color(color([
-            0.0,
-            material.pbr_metallic_roughness().roughness_factor(),
-            material.pbr_metallic_roughness().metallic_factor(),
-            1.0,
-        ]))
+        ImageReference::Embedded(color(
+            [
+                0.0,
+                material.pbr_metallic_roughness().roughness_factor(),
+                material.pbr_metallic_roughness().metallic_factor(),
+                1.0,
+            ],
+            vk::Format::A8B8G8R8_UNORM_PACK32,
+        ))
     };
     let normals = if let Some(texture) = material.normal_texture() {
         process_texture(context, &texture.texture(), ImageAssetType::Rg, false)
     } else {
-        ImageReference::Color([127, 127, 255, 255])
+        ImageReference::Embedded(EmbeddedImage::color(
+            [127, 127, 255, 255],
+            vk::Format::A8B8G8R8_UNORM_PACK32,
+        ))
     };
     let occlusion = if let Some(texture) = material.occlusion_texture() {
         process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
     } else {
-        ImageReference::Color([0, 0, 0, 0])
+        ImageReference::Embedded(EmbeddedImage::color(
+            [0, 0, 0, 0],
+            vk::Format::A8B8G8R8_UNORM_PACK32,
+        ))
     };
     let emissive_color = material.emissive_factor();
     let emissive = if let Some(texture) = material.emissive_texture() {
         process_texture(context, &texture.texture(), ImageAssetType::Rgba, false)
     } else {
-        ImageReference::Color(color([
-            emissive_color[0],
-            emissive_color[1],
-            emissive_color[2],
-            1.0,
-        ]))
+        ImageReference::Embedded(color(
+            [emissive_color[0], emissive_color[1], emissive_color[2], 1.0],
+            vk::Format::A8B8G8R8_UNORM_PACK32,
+        ))
     };
     MeshAssetMaterial {
         base_color,
