@@ -37,6 +37,6 @@ pub enum Error {
     ResourceLoadingFailed,
     #[error("Material not found")]
     MaterialNotFound,
-    #[error("Invalud model handle {0}")]
+    #[error("Invalud model handle {0:?}")]
     InvalidModelHandle(ModelHandle),
 }

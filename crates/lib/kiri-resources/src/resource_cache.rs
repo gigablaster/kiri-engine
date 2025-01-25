@@ -20,7 +20,6 @@ use kiri_assets::{ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelS
 use kiri_backend::ash::vk;
 use kiri_backend::{ImageCreateDesc, ImageUploadData};
 use kiri_common::{block_on, spawn, yield_now, Task};
-use kiri_common::{Handle, Pool};
 use kiri_gfx::{
     DescriptorSetCreateDesc, GpuPbrMeshMaterialData, ImageHandle, RenderMeshBuilder,
     RenderMeshMaterial, RenderMeshMaterialOrder, RenderModel, RenderModelBuilder, Renderer,
@@ -32,11 +31,47 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::Error;
 
-pub type ModelHandle = Handle<Resource<Arc<RenderModel>>>;
-pub type TextureHandle = Handle<Resource<ImageHandle>>;
-pub type MaterialHandle = Handle<Resource<RenderMeshMaterial>>;
+#[derive(Debug, Clone, Copy)]
+pub struct ModelHandle(u32);
+#[derive(Debug, Clone, Copy)]
+pub struct TextureHandle(u32);
+#[derive(Debug, Clone, Copy)]
+pub struct MaterialHandle(u32);
 
-const MAX_RESOURCES: usize = 0xffff;
+pub trait ResourceHandle: Copy {
+    fn from_index(index: usize) -> Self;
+    fn to_index(self) -> usize;
+}
+
+impl ResourceHandle for ModelHandle {
+    fn from_index(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    fn to_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl ResourceHandle for TextureHandle {
+    fn from_index(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    fn to_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl ResourceHandle for MaterialHandle {
+    fn from_index(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    fn to_index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Debug)]
 pub enum Resource<T: Debug + Send + Sync + Clone> {
@@ -55,31 +90,29 @@ impl<T: Debug + Send + Sync + Clone> Clone for Resource<T> {
     }
 }
 
-pub type LoadingTask<T> = (Handle<Resource<T>>, Task<Result<T, Error>>);
+pub type LoadingTask<T, H> = (H, Task<Result<T, Error>>);
 
 #[derive(Debug)]
-pub struct ResourceType<K: Hash + Eq, T: Debug + Send + Sync + Clone> {
-    pool: Mutex<Pool<Resource<T>>>,
-    names: RwLock<HashMap<K, Handle<Resource<T>>>>,
-    loading: Mutex<Vec<LoadingTask<T>>>,
+pub struct ResourceType<K: Hash + Eq, T: Debug + Send + Sync + Clone, H: ResourceHandle> {
+    pool: Mutex<Vec<Resource<T>>>,
+    names: RwLock<HashMap<K, H>>,
+    loading: Mutex<Vec<LoadingTask<T, H>>>,
 }
 
-impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> Default for ResourceType<K, T> {
+impl<K: Hash + Eq, T: Debug + Send + Sync + Clone, H: ResourceHandle> Default
+    for ResourceType<K, T, H>
+{
     fn default() -> Self {
         Self {
-            pool: Mutex::new(Pool::new(MAX_RESOURCES)),
+            pool: Default::default(),
             names: Default::default(),
             loading: Default::default(),
         }
     }
 }
 
-impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
-    fn get_or_load<LOAD: FnOnce() -> Task<Result<T, Error>>>(
-        &self,
-        key: K,
-        load: LOAD,
-    ) -> Handle<Resource<T>> {
+impl<K: Hash + Eq, T: Debug + Send + Sync + Clone, H: ResourceHandle> ResourceType<K, T, H> {
+    fn get_or_load<LOAD: FnOnce() -> Task<Result<T, Error>>>(&self, key: K, load: LOAD) -> H {
         let names = self.names.upgradable_read();
         if let Some(handle) = names.get(&key) {
             *handle
@@ -89,7 +122,10 @@ impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
                 *handle
             } else {
                 let task = load();
-                let handle = self.pool.lock().push(Resource::Loading);
+                let mut pool = self.pool.lock();
+                let handle = H::from_index(pool.len());
+                pool.push(Resource::Loading);
+
                 names.insert(key, handle);
                 self.loading.lock().push((handle, task));
                 handle
@@ -97,11 +133,11 @@ impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
         }
     }
 
-    fn resolve(&self, handle: Handle<Resource<T>>) -> Option<Resource<T>> {
-        self.pool.lock().get(handle).cloned()
+    fn resolve(&self, handle: H) -> Option<Resource<T>> {
+        self.pool.lock().get(handle.to_index()).cloned()
     }
 
-    async fn wait(&self, handle: Handle<Resource<T>>) -> Result<T, Error> {
+    async fn wait(&self, handle: H) -> Result<T, Error> {
         loop {
             if let Some(resource) = self.resolve(handle) {
                 match resource {
@@ -122,11 +158,11 @@ impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
                 let (handle, task) = loading.remove(i);
                 match block_on(task) {
                     Ok(resource) => {
-                        pool.replace(handle, Resource::Loaded(resource));
+                        pool[handle.to_index()] = Resource::Loaded(resource);
                     }
                     Err(err) => {
                         error!("Failed to load asset: {}", err);
-                        pool.replace(handle, Resource::Failed);
+                        pool[handle.to_index()] = Resource::Failed;
                     }
                 }
             } else {
@@ -137,27 +173,27 @@ impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
 }
 
 pub trait ResourceLoader {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<ImageHandle>>;
-    fn get_or_load_model(&self, name: &str) -> Handle<Resource<Arc<RenderModel>>>;
+    fn get_or_load_texture(&self, source: &ImageSource) -> TextureHandle;
+    fn get_or_load_model(&self, name: &str) -> ModelHandle;
 }
 
 #[derive(Debug)]
 pub struct ResourceCache {
     pub renderer: Arc<Renderer>,
-    textures: ResourceType<ImageSource, ImageHandle>,
-    materials: ResourceType<MeshAssetMaterial, RenderMeshMaterial>,
-    models: ResourceType<String, Arc<RenderModel>>,
+    textures: ResourceType<ImageSource, ImageHandle, TextureHandle>,
+    materials: ResourceType<MeshAssetMaterial, RenderMeshMaterial, MaterialHandle>,
+    models: ResourceType<String, Arc<RenderModel>, ModelHandle>,
 }
 
 impl ResourceLoader for Arc<ResourceCache> {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<ImageHandle>> {
+    fn get_or_load_texture(&self, source: &ImageSource) -> TextureHandle {
         let source = source.clone();
         self.textures.get_or_load(source.clone(), || {
             spawn(ResourceCache::load_texture(self.clone(), source))
         })
     }
 
-    fn get_or_load_model(&self, name: &str) -> Handle<Resource<Arc<RenderModel>>> {
+    fn get_or_load_model(&self, name: &str) -> ModelHandle {
         self.models.get_or_load(name.to_owned(), || {
             spawn(ResourceCache::load_model(self.clone(), name.to_owned()))
         })
@@ -165,14 +201,14 @@ impl ResourceLoader for Arc<ResourceCache> {
 }
 
 pub struct ResourceResolveContext<'a> {
-    models: &'a Pool<Resource<Arc<RenderModel>>>,
+    models: &'a Vec<Resource<Arc<RenderModel>>>,
 }
 
 impl ResourceResolveContext<'_> {
     pub fn resolve_model(&self, handle: ModelHandle) -> Result<Option<Arc<RenderModel>>, Error> {
         let resource = self
             .models
-            .get(handle)
+            .get(handle.to_index())
             .ok_or(Error::InvalidModelHandle(handle))?;
         match resource {
             Resource::Loading => Ok(None),
