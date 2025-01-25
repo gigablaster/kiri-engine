@@ -15,41 +15,37 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use kiri_assets::ImportAsset;
-use kiri_assets::{
-    Asset, AssetSource, ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource,
-};
-use kiri_common::{block_on, spawn, spawn_io, yield_now, Task};
+use kiri_assets::load_or_compile_asset;
+use kiri_assets::{ImageAsset, ImageSource, MeshAssetMaterial, ModelAsset, ModelSource};
+use kiri_backend::ash::vk;
+use kiri_backend::{ImageCreateDesc, ImageUploadData};
+use kiri_common::{block_on, spawn, yield_now, Task};
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{
-    effects::{
-        BasicEffectFactory, EffectInstanceDesc, MeshEffectFactory, DEPTH_RENDER_PASS_LAYOUT,
-        EFFECT_PASS_DEPTH, EFFECT_PASS_OPAQUE, EFFECT_PASS_OPAQUE_MASKED, EFFECT_PASS_TRANSPARENT,
-        MAIN_RENDER_PASS_LAYOUT,
-    },
-    ImageUploadData, PipelineCache, RasterPipelineHandle, RenderMeshBuilder, RenderMeshMaterial,
-    RenderModel, RenderModelBuilder, RenderTexture, Renderer, TextureBuilder,
+    DescriptorSetCreateDesc, GpuPbrMeshMaterialData, ImageHandle, RenderMeshBuilder,
+    RenderMeshMaterial, RenderMeshMaterialOrder, RenderModel, RenderModelBuilder, Renderer,
+    MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
 };
-use kiri_math::{Affine3A, BoundingBox, Quat, Vec3, Vec4};
+use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::Error;
 
-pub type ModelHandle = Handle<Resource<RenderModel>>;
-pub type TextureHandle = Handle<Resource<RenderTexture>>;
+pub type ModelHandle = Handle<Resource<Arc<RenderModel>>>;
+pub type TextureHandle = Handle<Resource<ImageHandle>>;
 pub type MaterialHandle = Handle<Resource<RenderMeshMaterial>>;
 
 const MAX_RESOURCES: usize = 0xffff;
 
 #[derive(Debug)]
-pub enum Resource<T: Debug + Send + Sync> {
+pub enum Resource<T: Debug + Send + Sync + Clone> {
     Loading,
     Failed,
-    Loaded(Arc<T>),
+    Loaded(T),
 }
 
-impl<T: Debug + Send + Sync> Clone for Resource<T> {
+impl<T: Debug + Send + Sync + Clone> Clone for Resource<T> {
     fn clone(&self) -> Self {
         match self {
             Self::Loading => Self::Loading,
@@ -62,13 +58,13 @@ impl<T: Debug + Send + Sync> Clone for Resource<T> {
 pub type LoadingTask<T> = (Handle<Resource<T>>, Task<Result<T, Error>>);
 
 #[derive(Debug)]
-pub struct ResourceType<K: Hash + Eq, T: Debug + Send + Sync> {
+pub struct ResourceType<K: Hash + Eq, T: Debug + Send + Sync + Clone> {
     pool: Mutex<Pool<Resource<T>>>,
     names: RwLock<HashMap<K, Handle<Resource<T>>>>,
     loading: Mutex<Vec<LoadingTask<T>>>,
 }
 
-impl<K: Hash + Eq, T: Debug + Send + Sync> Default for ResourceType<K, T> {
+impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> Default for ResourceType<K, T> {
     fn default() -> Self {
         Self {
             pool: Mutex::new(Pool::new(MAX_RESOURCES)),
@@ -78,7 +74,7 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> Default for ResourceType<K, T> {
     }
 }
 
-impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
+impl<K: Hash + Eq, T: Debug + Send + Sync + Clone> ResourceType<K, T> {
     fn get_or_load<LOAD: FnOnce() -> Task<Result<T, Error>>>(
         &self,
         key: K,
@@ -105,7 +101,7 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
         self.pool.lock().get(handle).cloned()
     }
 
-    async fn wait(&self, handle: Handle<Resource<T>>) -> Result<Arc<T>, Error> {
+    async fn wait(&self, handle: Handle<Resource<T>>) -> Result<T, Error> {
         loop {
             if let Some(resource) = self.resolve(handle) {
                 match resource {
@@ -117,24 +113,6 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
         }
     }
 
-    fn purge(&self) {
-        let mut pool = self.pool.lock();
-        let mut to_delete = Vec::default();
-        for (handle, resource) in pool.enumerate() {
-            if let Resource::Loaded(resource) = resource {
-                if Arc::strong_count(resource) == 1 {
-                    to_delete.push(handle);
-                }
-            }
-        }
-        for handle in to_delete {
-            pool.remove(handle);
-        }
-        self.names
-            .write()
-            .retain(|_, handle| pool.is_handle_valid(*handle));
-    }
-
     fn tick(&self) {
         let mut pool = self.pool.lock();
         let mut loading = self.loading.lock();
@@ -144,7 +122,7 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
                 let (handle, task) = loading.remove(i);
                 match block_on(task) {
                     Ok(resource) => {
-                        pool.replace(handle, Resource::Loaded(Arc::new(resource)));
+                        pool.replace(handle, Resource::Loaded(resource));
                     }
                     Err(err) => {
                         error!("Failed to load asset: {}", err);
@@ -159,37 +137,35 @@ impl<K: Hash + Eq, T: Debug + Send + Sync> ResourceType<K, T> {
 }
 
 pub trait ResourceLoader {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<RenderTexture>>;
-    fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>>;
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<ImageHandle>>;
+    fn get_or_load_model(&self, name: &str) -> Handle<Resource<Arc<RenderModel>>>;
 }
 
 #[derive(Debug)]
-pub struct ResourceManager {
+pub struct ResourceCache {
     pub renderer: Arc<Renderer>,
-    pub pipeline_cache: Arc<PipelineCache>,
-    textures: ResourceType<ImageSource, RenderTexture>,
+    textures: ResourceType<ImageSource, ImageHandle>,
     materials: ResourceType<MeshAssetMaterial, RenderMeshMaterial>,
-    models: ResourceType<String, RenderModel>,
-    effect_factory: RwLock<Vec<Box<dyn MeshEffectFactory>>>,
+    models: ResourceType<String, Arc<RenderModel>>,
 }
 
-impl ResourceLoader for Arc<ResourceManager> {
-    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<RenderTexture>> {
+impl ResourceLoader for Arc<ResourceCache> {
+    fn get_or_load_texture(&self, source: &ImageSource) -> Handle<Resource<ImageHandle>> {
         let source = source.clone();
         self.textures.get_or_load(source.clone(), || {
-            spawn(ResourceManager::load_texture(self.clone(), source))
+            spawn(ResourceCache::load_texture(self.clone(), source))
         })
     }
 
-    fn get_or_load_model(&self, name: &str) -> Handle<Resource<RenderModel>> {
+    fn get_or_load_model(&self, name: &str) -> Handle<Resource<Arc<RenderModel>>> {
         self.models.get_or_load(name.to_owned(), || {
-            spawn(ResourceManager::load_model(self.clone(), name.to_owned()))
+            spawn(ResourceCache::load_model(self.clone(), name.to_owned()))
         })
     }
 }
 
 pub struct ResourceResolveContext<'a> {
-    models: &'a Pool<Resource<RenderModel>>,
+    models: &'a Pool<Resource<Arc<RenderModel>>>,
 }
 
 impl ResourceResolveContext<'_> {
@@ -206,14 +182,11 @@ impl ResourceResolveContext<'_> {
     }
 }
 
-impl ResourceManager {
+impl ResourceCache {
     pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
-        debug!("Create resource manager");
-        let pipeline_cache = PipelineCache::new(renderer);
+        debug!("Create resource cache");
         Ok(Arc::new(Self {
-            effect_factory: RwLock::new(vec![Box::new(BasicEffectFactory::new(&pipeline_cache))]),
             renderer: renderer.clone(),
-            pipeline_cache,
             textures: Default::default(),
             materials: Default::default(),
             models: Default::default(),
@@ -226,17 +199,11 @@ impl ResourceManager {
         self.models.tick();
     }
 
-    pub fn purge(&self) {
-        self.models.purge();
-        self.materials.purge();
-        self.textures.purge();
-    }
-
-    pub fn get_model(&self, handle: ModelHandle) -> Option<Resource<RenderModel>> {
+    pub fn get_model(&self, handle: ModelHandle) -> Option<Resource<Arc<RenderModel>>> {
         self.models.resolve(handle)
     }
 
-    pub fn get_texture(&self, handle: TextureHandle) -> Option<Resource<RenderTexture>> {
+    pub fn get_texture(&self, handle: TextureHandle) -> Option<Resource<ImageHandle>> {
         self.textures.resolve(handle)
     }
 
@@ -251,42 +218,28 @@ impl ResourceManager {
         }
     }
 
-    pub fn register_mesh_effect(&self, effect: Box<dyn MeshEffectFactory>) {
-        self.effect_factory.write().push(effect);
-    }
-
-    async fn load_or_compile_asset<T: AssetSource + ImportAsset<U> + std::fmt::Debug, U: Asset>(
-        source: T,
-    ) -> Result<U, Error> {
-        use kiri_assets::load_or_compile_asset;
-
-        Ok(load_or_compile_asset(&source)?)
-    }
-
     async fn load_texture(
-        manager: Arc<ResourceManager>,
+        manager: Arc<ResourceCache>,
         source: ImageSource,
-    ) -> Result<RenderTexture, Error> {
+    ) -> Result<ImageHandle, Error> {
         match &source.data {
-            kiri_assets::ImageData::Path(path) => {
-                let asset: ImageAsset =
-                    spawn_io(Self::load_or_compile_asset(source.clone())).await?;
+            kiri_assets::ImageData::Path(_) => {
+                let asset: ImageAsset = load_or_compile_asset(source.clone()).await?;
                 let mips = asset
                     .mips
                     .iter()
                     .map(|x| ImageUploadData::new(x))
                     .collect::<Vec<_>>();
                 debug!("Create texture {:?}", source);
-                Ok(TextureBuilder::new(asset.format, asset.dims)
-                    .name(path)
-                    .data(&mips)
-                    .build(&manager.renderer)?)
+                let dims = [asset.dims[0] as usize, asset.dims[1] as usize];
+                Ok(manager
+                    .renderer
+                    .create_image(ImageCreateDesc::texture(asset.format, dims), Some(&mips))?)
             }
-            kiri_assets::ImageData::Color(color) => {
-                Ok(TextureBuilder::new(source.uncompressed_format(), [1, 1])
-                    .data(&[ImageUploadData::new(color)])
-                    .build(&manager.renderer)?)
-            }
+            kiri_assets::ImageData::Color(color) => Ok(manager.renderer.create_image(
+                ImageCreateDesc::new(source.uncompressed_format(), [1, 1]),
+                Some(&[ImageUploadData::new(color)]),
+            )?),
         }
     }
 
@@ -296,78 +249,54 @@ impl ResourceManager {
     }
 
     async fn load_material(
-        manager: Arc<ResourceManager>,
+        manager: Arc<ResourceCache>,
         source: MeshAssetMaterial,
     ) -> Result<RenderMeshMaterial, Error> {
-        let loading_textures = source
-            .images
+        let images = futures::future::try_join_all(
+            [
+                manager.get_or_load_texture(&source.base_color),
+                manager.get_or_load_texture(&source.metallic_roughness),
+                manager.get_or_load_texture(&source.normals),
+                manager.get_or_load_texture(&source.occlusion),
+                manager.get_or_load_texture(&source.emissive),
+            ]
             .into_iter()
-            .map(|(slot, source)| (slot, manager.get_or_load_texture(&source)))
-            .collect::<HashMap<_, _>>();
-        let mut textures = HashMap::new();
-        for (name, handle) in loading_textures {
-            textures.insert(name, manager.textures.wait(handle).await?);
-        }
-        let desc = EffectInstanceDesc {
-            textures,
-            scalars: source.scalars,
-            vectors: source
-                .vectors
-                .into_iter()
-                .map(|(name, value)| (name, Vec4::from_array(value)))
-                .collect(),
+            .map(|handle| manager.textures.wait(handle)),
+        )
+        .await?;
+        let uniform = manager.renderer.allocate_uniform(GpuPbrMeshMaterialData {
+            emissive_power: source.emissive_power,
+            alpha_cutoff: source.alpha_cutoff(),
+        })?;
+        let descriptor =
+            manager
+                .renderer
+                .with_descriptors()
+                .create_descriptor(DescriptorSetCreateDesc {
+                    layout: MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
+                    stages: vk::ShaderStageFlags::ALL_GRAPHICS,
+                    images: &images,
+                    unifoms: &[uniform],
+                    ..Default::default()
+                })?;
+        let order = match source.blend {
+            kiri_assets::MeshMaterialBlend::Opaque => RenderMeshMaterialOrder::Opaque,
+            kiri_assets::MeshMaterialBlend::AlphaBlend => RenderMeshMaterialOrder::Transparent,
+            kiri_assets::MeshMaterialBlend::AlphaTest(_) => RenderMeshMaterialOrder::Masked,
         };
-        let mut material = None;
-        for factory in manager.effect_factory.read().iter() {
-            if let Some(effect) = factory.get_or_create(
-                &source.name,
-                &DEPTH_RENDER_PASS_LAYOUT,
-                &MAIN_RENDER_PASS_LAYOUT,
-            )? {
-                let instance = effect.create_instance(&desc)?;
-                let main = match source.blend {
-                    kiri_assets::MeshMaterialBlend::Opaque => instance
-                        .pipeline(EFFECT_PASS_OPAQUE)
-                        .ok_or(Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE.to_owned()))?,
-                    kiri_assets::MeshMaterialBlend::AlphaBlend => RasterPipelineHandle::invalid(),
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => {
-                        instance.pipeline(EFFECT_PASS_OPAQUE_MASKED).ok_or(
-                            Error::EffectPipelineNotFound(EFFECT_PASS_OPAQUE_MASKED.to_owned()),
-                        )?
-                    }
-                };
-                let transparent = match source.blend {
-                    kiri_assets::MeshMaterialBlend::Opaque => RasterPipelineHandle::invalid(),
-                    kiri_assets::MeshMaterialBlend::AlphaBlend => {
-                        instance.pipeline(EFFECT_PASS_TRANSPARENT).ok_or(
-                            Error::EffectPipelineNotFound(EFFECT_PASS_TRANSPARENT.to_owned()),
-                        )?
-                    }
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => RasterPipelineHandle::invalid(),
-                };
-                let depth = match source.blend {
-                    kiri_assets::MeshMaterialBlend::Opaque => {
-                        instance.pipeline(EFFECT_PASS_DEPTH).unwrap_or_default()
-                    }
-                    kiri_assets::MeshMaterialBlend::AlphaBlend => RasterPipelineHandle::invalid(),
-                    kiri_assets::MeshMaterialBlend::AlphaTest(_) => RasterPipelineHandle::invalid(),
-                };
-                material = Some(RenderMeshMaterial {
-                    instance,
-                    main,
-                    transparent,
-                    depth,
-                    effect,
-                });
-                break;
-            }
-        }
-        material.ok_or(Error::MaterialNotFound)
+        Ok(RenderMeshMaterial {
+            ty: kiri_gfx::RenderMeshMaterialType::PBR,
+            order,
+            descriptor,
+            uniform,
+        })
     }
 
-    async fn load_model(manager: Arc<ResourceManager>, name: String) -> Result<RenderModel, Error> {
-        let asset: ModelAsset =
-            spawn_io(Self::load_or_compile_asset(ModelSource::new(&name))).await?;
+    async fn load_model(
+        manager: Arc<ResourceCache>,
+        name: String,
+    ) -> Result<Arc<RenderModel>, Error> {
+        let asset: ModelAsset = load_or_compile_asset(ModelSource::new(&name)).await?;
         let mut builder = RenderModelBuilder::new(&asset.vertices, &asset.indices).name(&name);
         let materials = asset
             .materials
@@ -380,18 +309,19 @@ impl ResourceManager {
             .collect::<Vec<_>>();
         let mut loaded_materials = Vec::default();
         for material in materials {
-            loaded_materials.push(Arc::new(manager.materials.wait(material).await?));
+            loaded_materials.push(manager.materials.wait(material).await?);
         }
         for mesh in asset.meshes {
-            let mut mesh_builder = RenderMeshBuilder::new(mesh.first_vertex, mesh.first_index)
-                .bounds(BoundingBox::from_arrays(mesh.bounds.0, mesh.bounds.1))
-                .position_scale(mesh.position_scale)
-                .uv_scale(mesh.uv_scale);
+            let mut mesh_builder =
+                RenderMeshBuilder::new(mesh.first_vertex as _, mesh.first_index as _)
+                    .bounds(BoundingBox::from_arrays(mesh.bounds.0, mesh.bounds.1))
+                    .position_scale(mesh.position_scale)
+                    .uv_scale(mesh.uv_scale);
             for surface in mesh.surfaces {
                 mesh_builder.surface(
                     surface.first_index,
                     surface.index_count,
-                    &loaded_materials[surface.material as usize],
+                    loaded_materials[surface.material as usize],
                 );
             }
             builder.add_mesh(mesh_builder);
@@ -412,6 +342,6 @@ impl ResourceManager {
             .into_iter()
             .for_each(|(node, mesh)| builder.attach_mesh(node, mesh));
         debug!("Create model {}", name);
-        Ok(builder.build(&manager.renderer)?)
+        Ok(Arc::new(builder.build(&manager.renderer)?))
     }
 }

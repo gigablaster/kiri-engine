@@ -280,7 +280,7 @@ impl<'a> RenderContext<'a> {
 
     pub fn create_temp_descriptor(
         &mut self,
-        builder: DescriptorSetBuilder,
+        builder: DescriptorSetCreateDesc,
     ) -> Result<DescriptorHandle, Error> {
         let handle = self.update_descriptors.create_descriptor(builder)?;
         self.temp_descriptors.push(handle);
@@ -334,7 +334,7 @@ struct DescriptorSetData {
 }
 
 #[derive(Debug, Default)]
-pub struct DescriptorSetBuilder<'a> {
+pub struct DescriptorSetCreateDesc<'a> {
     pub layout: DescriptorSetLayoutDesc<'static>,
     pub stages: vk::ShaderStageFlags,
     pub images: &'a [ImageHandle],
@@ -345,7 +345,7 @@ pub struct DescriptorSetBuilder<'a> {
     pub name: Option<&'a str>,
 }
 
-impl<'a> DescriptorSetBuilder<'a> {
+impl<'a> DescriptorSetCreateDesc<'a> {
     fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
         let images = self
             .layout
@@ -450,7 +450,7 @@ pub struct DescriptorUpdateContext<'a> {
 impl DescriptorUpdateContext<'_> {
     pub fn create_descriptor(
         &mut self,
-        builder: DescriptorSetBuilder,
+        builder: DescriptorSetCreateDesc,
     ) -> Result<DescriptorHandle, Error> {
         let data = builder.build(self.device)?;
         let handle = self.descriptors.push(vk::DescriptorSet::null(), data);
@@ -570,6 +570,14 @@ impl Renderer {
         data: Option<&[ImageUploadData]>,
     ) -> Result<ImageHandle, Error> {
         Ok(self.register_image(Image::new(&self.device, desc, data)?))
+    }
+
+    pub fn update_image(&self, handle: ImageHandle, image: Image) -> Result<Image, Error> {
+        self.invalidate_descriptors_with_image(handle);
+        self.images
+            .write()
+            .replace(handle, image)
+            .ok_or(Error::InvalidImageHandle(handle))
     }
 
     pub fn destroy_image(&self, handle: ImageHandle) {
@@ -987,6 +995,16 @@ impl Renderer {
         self.device.present(target, &frame)?;
         self.device.end_frame(frame);
         Ok(FrameState::Rendered)
+    }
+
+    fn invalidate_descriptors_with_image(&self, image: ImageHandle) {
+        let mut dirty = self.dirty_descriptors.lock();
+        let descriptors = self.descriptors.read();
+        descriptors.enumerate().for_each(|(handle, _, data)| {
+            if data.images.iter().any(|x| x.data.image == image) {
+                dirty.push(handle);
+            }
+        });
     }
 }
 

@@ -29,7 +29,6 @@ const MAX_HANDLE_INDEX: u32 = (1 << INDEX_BITS) - 1;
 const MAX_HANDLE_GENERATION: u32 = (1 << GENERATION_BITS) - 1;
 const INDEX_MASK: u32 = MAX_HANDLE_INDEX;
 
-#[derive(Debug)]
 pub struct Handle<T> {
     data: u32,
     _phantom: PhantomData<T>,
@@ -37,6 +36,15 @@ pub struct Handle<T> {
 
 unsafe impl<T> Send for Handle<T> {}
 unsafe impl<T> Sync for Handle<T> {}
+
+impl<T> Debug for Handle<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Handle")
+            .field("generation", &self.generation())
+            .field("index", &self.index())
+            .finish()
+    }
+}
 
 #[allow(clippy::non_canonical_clone_impl)]
 impl<T> Clone for Handle<T> {

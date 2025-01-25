@@ -1112,7 +1112,6 @@ dependencies = [
  "byte-slice-cast",
  "byteorder",
  "bytes",
- "futures",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",
@@ -1137,6 +1136,7 @@ version = "0.2.0"
 dependencies = [
  "arrayvec",
  "bytes",
+ "futures",
  "kiri-assets",
  "kiri-backend",
  "kiri-common",

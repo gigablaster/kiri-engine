@@ -27,8 +27,6 @@ pub enum Error {
     RendererError(#[from] kiri_gfx::Error),
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
-    #[error("Asset import error: {0}")]
-    AssetImportError(#[from] kiri_assets::Error),
     #[error("Out of mesh memory")]
     OutOfMeshMemory,
     #[error("Too many uniforms")]
@@ -41,8 +39,4 @@ pub enum Error {
     MaterialNotFound,
     #[error("Invalud model handle {0}")]
     InvalidModelHandle(ModelHandle),
-    #[error("Invalid texture handle {0}")]
-    InvalidTextureHandle(TextureHandle),
-    #[error("Pipeline {0} not found in effect")]
-    EffectPipelineNotFound(String),
 }

@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, Error, Renderer};
+use crate::{BufferHandle, BufferPointer, BufferSlice, DescriptorHandle, Error, Renderer};
 use kiri_backend::{
     ash::vk::{self, DescriptorSet},
     BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc,
@@ -39,7 +39,8 @@ pub enum RenderMeshMaterialOrder {
 pub struct RenderMeshMaterial {
     pub ty: RenderMeshMaterialType,
     pub order: RenderMeshMaterialOrder,
-    pub descriptor: DescriptorSet,
+    pub descriptor: DescriptorHandle,
+    pub uniform: BufferSlice,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +48,15 @@ pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
     pub material: RenderMeshMaterial,
+}
+
+impl RenderMeshMaterial {
+    pub fn free(self, renderer: &Renderer) {
+        renderer.free_uniform(self.uniform);
+        renderer
+            .with_descriptors()
+            .destroy_descriptor(self.descriptor);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -313,3 +323,10 @@ pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = Descri
     ],
     compute_groups_size: None,
 };
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct GpuPbrMeshMaterialData {
+    pub emissive_power: f32,
+    pub alpha_cutoff: f32,
+}
