@@ -33,7 +33,7 @@ pub enum ShaderType {
     Fragment,
 }
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub struct ShaderAssetSource {
     pub path: String,
     pub ty: ShaderType,
