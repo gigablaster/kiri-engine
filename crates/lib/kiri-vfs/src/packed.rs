@@ -18,6 +18,7 @@ use bytes::Bytes;
 use core::slice;
 use kiri_common::Align;
 use memmap2::{Mmap, MmapOptions};
+use normalize_path::NormalizePath;
 use speedy::{Readable, Writable};
 use std::{
     collections::HashMap,
@@ -27,7 +28,7 @@ use std::{
     path::Path,
 };
 
-use crate::{Archive, ArchiveLoad, AssetReference};
+use crate::{Archive, ArchiveLoad};
 
 #[derive(Debug, Readable, Writable)]
 struct AssetHeader {
@@ -38,7 +39,7 @@ struct AssetHeader {
 
 #[derive(Debug, Default, Readable, Writable)]
 struct Directory {
-    pub assets: HashMap<AssetReference, AssetHeader>,
+    pub assets: HashMap<String, AssetHeader>,
 }
 
 impl Directory {
@@ -98,7 +99,7 @@ impl PackageBuilder {
         })
     }
 
-    pub fn pack(&mut self, reference: AssetReference, data: &[u8]) -> io::Result<()> {
+    pub fn pack(&mut self, reference: String, data: &[u8]) -> io::Result<()> {
         let offset = self.align_file()?;
         if data.len() <= (DATA_ALIGMENT as usize) {
             self.file.write_all(data)?;
@@ -167,10 +168,10 @@ impl PackedArchive {
 
 #[async_trait]
 impl ArchiveLoad for PackedArchive {
-    async fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
-        let header = self.directory.assets.get(&reference).ok_or(io::Error::new(
+    async fn load(&self, name: &str) -> io::Result<Bytes> {
+        let header = self.directory.assets.get(name).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Asset {} not found", reference),
+            format!("Asset {} not found", name),
         ))?;
         let data = if let Some(packed) = header.packed {
             let data = &self.mmap[header.offset as usize..(header.offset + packed) as usize];
@@ -183,8 +184,9 @@ impl ArchiveLoad for PackedArchive {
         Ok(data)
     }
 }
+
 impl Archive for PackedArchive {
-    fn exist(&self, reference: AssetReference) -> bool {
-        self.directory.assets.contains_key(&reference)
+    fn exist(&self, path: &str) -> bool {
+        self.directory.assets.contains_key(path)
     }
 }
