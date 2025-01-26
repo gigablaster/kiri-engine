@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
+use std::time::SystemTime;
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -12,12 +13,11 @@ use std::{
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
-use kiri_assets::{
-    get_compiled_asset_change_time, get_compiled_asset_path, save_asset, Asset, AssetReference,
-    AssetSource, ImageAsset, ImageData, ImageSource, ImportAsset, ModelSource, ShaderAsset,
-    ShaderAssetSource,
+use kiri_asset_pipeline::{
+    AssetPipelineContext, AssetSource, GlslShaderSource, ImageSource, ImportAsset, ModelSource,
 };
-use kiri_vfs::SOURCE_ASSETS_PATH;
+use kiri_assets::{save_asset, Asset, CompiledAssetPath};
+use kiri_vfs::{COMPILED_ASSETS_PATH, SOURCE_ASSETS_PATH};
 use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
@@ -25,29 +25,52 @@ use parking_lot::Mutex;
 struct ContentProcessor {
     images: Mutex<HashSet<ImageSource>>,
     scenes: Mutex<HashSet<ModelSource>>,
-    shaders: Mutex<HashSet<ShaderAssetSource>>,
+    shaders: Mutex<HashSet<GlslShaderSource>>,
 }
 
 unsafe impl Send for ContentProcessor {}
 unsafe impl Sync for ContentProcessor {}
 
-fn asset_need_rebuild(asset: &impl AssetSource) -> bool {
-    let reference = asset.reference();
-    if let Some(last_update) = get_compiled_asset_change_time(reference) {
-        asset.changed(last_update)
+fn compiled_asset_change_time(path: &CompiledAssetPath) -> Option<SystemTime> {
+    let path = Path::new(COMPILED_ASSETS_PATH).join(path);
+    if let Ok(metadata) = path.metadata() {
+        if let Ok(changed) = metadata.modified() {
+            Some(changed)
+        } else if let Ok(created) = metadata.created() {
+            Some(created)
+        } else {
+            None
+        }
     } else {
-        true
+        None
     }
 }
 
-fn save(reference: AssetReference, data: &[u8]) -> io::Result<()> {
-    let path = get_compiled_asset_path(reference)?;
+fn asset_need_rebuild(asset: &impl AssetSource) -> bool {
+    if let Ok(compiled) = asset.source().compiled() {
+        if let Some(timestamp) = compiled_asset_change_time(&compiled) {
+            return asset.changed(timestamp);
+        }
+    }
+    true
+}
+
+fn save(path: &CompiledAssetPath, data: &[u8]) -> io::Result<()> {
+    let path = Path::new(COMPILED_ASSETS_PATH).join(path);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let mut file = File::create(path)?;
     file.write_all(data)?;
     Ok(())
+}
+
+impl AssetPipelineContext for ContentProcessor {
+    fn import_image(&self, image: ImageSource) -> CompiledAssetPath {
+        let compiled = image.source.compiled().unwrap();
+        self.images.lock().insert(image);
+        compiled
+    }
 }
 
 impl ContentProcessor {
@@ -63,44 +86,28 @@ impl ContentProcessor {
         self.scenes.lock().insert(source);
     }
 
-    fn import_shader(&self, source: ShaderAssetSource) {
+    fn import_shader(&self, source: GlslShaderSource) {
         self.shaders.lock().insert(source);
     }
 
     async fn build_scene(&self, scene: ModelSource) {
         info!("Building scene {:?}", scene);
-        if let Err(err) = self.build_scene_impl(scene.clone()) {
-            error!("Failed to build scene {:?}: {}", scene, err);
+        if let Err(err) = self.build_asset(scene.clone()) {
+            error!("Failed to build scene {:?}: {}", scene.source(), err);
         }
-    }
-
-    fn build_scene_impl(&self, scene: ModelSource) -> Result<(), io::Error> {
-        let asset = scene.import()?;
-        let mut images = self.images.lock();
-        asset
-            .collect_dependencies()
-            .iter()
-            .cloned()
-            .for_each(|source| {
-                // Don't export self-contained images
-                if let ImageData::Path(_) = source.data {
-                    images.insert(source.clone());
-                }
-            });
-        Ok(self.write_asset(scene.reference(), asset)?)
     }
 
     async fn build_image(&self, image: ImageSource) {
         info!("Building image {:?}", image);
-        if let Err(err) = self.build_asset::<ImageAsset, ImageSource>(image.clone()) {
-            error!("Failed to build image {:?}: {}", image, err);
+        if let Err(err) = self.build_asset(image.clone()) {
+            error!("Failed to build image {:?}: {}", image.source(), err);
         }
     }
 
-    async fn build_shader(&self, shader: ShaderAssetSource) {
+    async fn build_shader(&self, shader: GlslShaderSource) {
         info!("Compile shader {:?}", shader);
-        if let Err(err) = self.build_asset::<ShaderAsset, ShaderAssetSource>(shader.clone()) {
-            error!("Failed to compiled shader {:?}:\n{}", shader, err);
+        if let Err(err) = self.build_asset(shader.clone()) {
+            error!("Failed to compiled shader {:?}:\n{}", shader.source(), err);
         }
     }
 
@@ -134,14 +141,14 @@ impl ContentProcessor {
         &self,
         source: U,
     ) -> Result<(), io::Error> {
-        self.write_asset(source.reference(), source.import()?)?;
+        self.write_asset(source.source().compiled()?, source.import(self)?)?;
         Ok(())
     }
 
-    fn write_asset<T: Asset>(&self, reference: AssetReference, asset: T) -> io::Result<()> {
+    fn write_asset<T: Asset>(&self, path: CompiledAssetPath, asset: T) -> io::Result<()> {
         let mut cursor = Cursor::new(Vec::new());
         save_asset(&mut cursor, &asset)?;
-        save(reference, &cursor.into_inner())?;
+        save(&path, &cursor.into_inner())?;
         Ok(())
     }
 
@@ -161,13 +168,13 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
                 .strip_prefix(SOURCE_ASSETS_PATH)
                 .unwrap()
                 .to_owned();
-            let path_str = path.to_str().unwrap().replace('\\', "/");
+            let path_str = path.to_str().unwrap();
             if path_str.ends_with(".gltf") {
-                processor.import_scene(ModelSource::new(&path_str));
+                processor.import_scene(ModelSource::new(path));
             } else if path_str.ends_with(".vert") {
-                processor.import_shader(ShaderAssetSource::vertex(path_str));
+                processor.import_shader(GlslShaderSource::vertex(path));
             } else if path_str.ends_with(".frag") {
-                processor.import_shader(ShaderAssetSource::fragment(path_str));
+                processor.import_shader(GlslShaderSource::fragment(path));
             }
         }
     }
@@ -178,7 +185,7 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = clap::Command::new("builder")
-        .version("0.1.0")
+        .version("0.2.0")
         .author("gigablaster <gigakek@protonmail.com>")
         .about("Asset builder for kiri engine")
         .arg(

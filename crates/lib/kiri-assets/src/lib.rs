@@ -43,6 +43,24 @@ impl AsRef<str> for CompiledAssetPath {
     }
 }
 
+impl From<CompiledAssetPath> for PathBuf {
+    fn from(value: CompiledAssetPath) -> PathBuf {
+        Self::from(value.0)
+    }
+}
+
+impl AsRef<Path> for CompiledAssetPath {
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
+impl From<&str> for CompiledAssetPath {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct SourceAssetPath(PathBuf);
 
@@ -91,19 +109,19 @@ impl SourceAssetPath {
     ///
     /// File path is normalized and checked against root to prevent any form of accessing
     /// data outside of proper folder.
-    pub fn compiled<P: AsRef<Path>>(&self) -> io::Result<CompiledAssetPath> {
+    pub fn compiled(&self) -> io::Result<CompiledAssetPath> {
         let path = self.full_source_path();
         let root = Self::source_assets_root();
         assert!(path.starts_with(&root));
         let name = path
+            .with_extension("asset")
             .strip_prefix(root)
             .map_err(|x| io::Error::other(x))?
-            .file_stem()
-            .unwrap()
             .to_str()
             .unwrap()
+            .replace('\\', "/")
             .to_ascii_lowercase();
-        Ok(CompiledAssetPath(format!("{}.asset", name)))
+        Ok(CompiledAssetPath(name))
     }
 
     pub fn changed(&self, timestamp: SystemTime) -> bool {
@@ -120,9 +138,7 @@ impl SourceAssetPath {
     }
 
     pub fn full_source_path(&self) -> PathBuf {
-        path::absolute(Self::source_assets_root().join(&self.0))
-            .unwrap()
-            .normalize()
+        Self::source_assets_root().join(&self.0).normalize()
     }
 
     pub fn parent(&self) -> PathBuf {
@@ -130,11 +146,7 @@ impl SourceAssetPath {
     }
 
     pub fn source_assets_root() -> PathBuf {
-        env::current_dir()
-            .unwrap()
-            .canonicalize()
-            .unwrap()
-            .join(SOURCE_ASSETS_PATH)
+        PathBuf::from(SOURCE_ASSETS_PATH)
     }
 }
 
@@ -206,4 +218,25 @@ pub fn load_asset<T: Asset>(data: &[u8]) -> io::Result<T> {
         return Err(io::Error::other("Asset header isn't valid"));
     }
     T::deserialize(&mut reader)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{CompiledAssetPath, SourceAssetPath};
+
+    #[test]
+    fn source_asset_in_root() {
+        assert_eq!(
+            CompiledAssetPath::from("aaa.asset"),
+            SourceAssetPath::new("aaa.png").compiled().unwrap()
+        );
+    }
+
+    #[test]
+    fn source_asset_in_folder() {
+        assert_eq!(
+            CompiledAssetPath::from("foo/bar.asset"),
+            SourceAssetPath::new("foo/bar.jpg").compiled().unwrap()
+        )
+    }
 }

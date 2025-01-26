@@ -24,10 +24,26 @@ use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 
 use crate::{read_to_end, AssetPipelineContext, AssetSource, ImportAsset};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct GlslShaderSource {
     source: SourceAssetPath,
     ty: ShaderType,
+}
+
+impl GlslShaderSource {
+    pub fn fragment<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            source: path.as_ref().into(),
+            ty: ShaderType::Fragment,
+        }
+    }
+
+    pub fn vertex<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            source: path.as_ref().into(),
+            ty: ShaderType::Vertex,
+        }
+    }
 }
 
 impl AssetSource for GlslShaderSource {
@@ -95,7 +111,7 @@ impl IncludeProvider for ShaderIncludeProvider {
 }
 
 impl ImportAsset<ShaderAsset> for GlslShaderSource {
-    fn import(self, _context: &impl AssetPipelineContext) -> io::Result<ShaderAsset> {
+    fn import<I: AssetPipelineContext>(self, _context: &I) -> io::Result<ShaderAsset> {
         let target = match self.ty {
             ShaderType::Vertex => "-fshader-stage=vertex",
             ShaderType::Fragment => "-fshader-stage=fragment",

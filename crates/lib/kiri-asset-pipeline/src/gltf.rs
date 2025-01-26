@@ -13,8 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::path::Path;
 use std::{collections::HashMap, io, time::SystemTime};
 
+use gltf::buffer::Source;
 use kiri_assets::{EmbeddedImage, ModelAsset, SourceAssetPath};
 use kiri_backend::ash::vk;
 
@@ -34,6 +36,12 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelSource(SourceAssetPath);
+
+impl ModelSource {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        Self(SourceAssetPath::from(path.as_ref()))
+    }
+}
 
 impl AssetSource for ModelSource {
     fn changed(&self, timestamp: SystemTime) -> bool {
@@ -304,10 +312,15 @@ fn import_scenes<'a, T: AssetPipelineContext>(
 }
 
 impl ImportAsset<ModelAsset> for ModelSource {
-    fn import(self, context: &impl AssetPipelineContext) -> io::Result<ModelAsset> {
+    fn import<I: AssetPipelineContext>(self, context: &I) -> io::Result<ModelAsset> {
         let (document, buffers, _) = gltf::import(self.0.full_source_path())
             .map_err(|err| io::Error::other(err.to_string()))?;
-        let base_path = self.0.parent();
+        let base_path = self
+            .0
+            .parent()
+            .strip_prefix(SourceAssetPath::source_assets_root())
+            .unwrap()
+            .to_path_buf();
         import_scenes(
             &mut GltfProcessingContext {
                 pipeline: context,

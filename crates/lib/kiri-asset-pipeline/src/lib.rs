@@ -31,13 +31,13 @@ use std::{
 
 use kiri_assets::{Asset, CompiledAssetPath, SourceAssetPath};
 
-pub trait AssetSource {
+pub trait AssetSource: Clone {
     fn source(&self) -> &SourceAssetPath;
     fn changed(&self, timestamp: SystemTime) -> bool;
 }
 
 pub trait ImportAsset<T: Asset> {
-    fn import(self, context: &impl AssetPipelineContext) -> io::Result<T>;
+    fn import<I: AssetPipelineContext>(self, context: &I) -> io::Result<T>;
 }
 
 pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {

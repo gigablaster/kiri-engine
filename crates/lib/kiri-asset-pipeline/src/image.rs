@@ -15,7 +15,7 @@
 
 use std::{io, path::Path};
 
-use crate::{read_to_end, AssetPipelineContext, ImportAsset};
+use crate::{read_to_end, AssetPipelineContext, AssetSource, ImportAsset};
 use image::{imageops::FilterType, ImageBuffer};
 use intel_tex_2::{bc5, bc7};
 use kiri_assets::{ImageAsset, SourceAssetPath};
@@ -69,9 +69,19 @@ impl ImageSource {
     }
 }
 
+impl AssetSource for ImageSource {
+    fn source(&self) -> &SourceAssetPath {
+        &self.source
+    }
+
+    fn changed(&self, timestamp: std::time::SystemTime) -> bool {
+        self.source.changed(timestamp)
+    }
+}
+
 impl ImportAsset<ImageAsset> for ImageSource {
-    fn import(self, _context: &impl AssetPipelineContext) -> io::Result<ImageAsset> {
-        let data = read_to_end(&self.source)?;
+    fn import<I: AssetPipelineContext>(self, _context: &I) -> io::Result<ImageAsset> {
+        let data = read_to_end(&self.source.full_source_path())?;
         let mut image =
             image::load_from_memory(&data).map_err(|x| io::Error::other(x.to_string()))?;
         let dims = [image.width(), image.height()];

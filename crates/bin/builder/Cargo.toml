@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 kiri-assets = { path = "../../lib/kiri-assets" }
 kiri-vfs = { path = "../../lib/kiri-vfs" }
-bevy_tasks = { version = "0.14.1", features = ["multi_threaded"] }
+kiri-asset-pipeline = { path = "../../lib/kiri-asset-pipeline" }
+bevy_tasks = { version = "0.15.1", features = ["multi_threaded"] }
 log = "0.4.20"
 env_logger = "0.11.5"
 clap = "4.5.15"
