@@ -132,11 +132,11 @@ impl From<BufferSlice> for BufferPointer {
 
 #[derive(Debug)]
 pub struct RasterPipelineDesc {
-    program: ProgramHandle,
-    pass_layout: &'static RenderPassLayout<'static>,
-    input_layout: &'static [InputVertexStreamLayout<'static>],
-    specialization: Vec<(u32, u32)>,
-    desc: RasterPipelineCreateDesc,
+    pub program: ProgramHandle,
+    pub pass_layout: &'static RenderPassLayout<'static>,
+    pub input_layout: &'static [InputVertexStreamLayout<'static>],
+    pub specialization: Vec<(u32, u32)>,
+    pub desc: RasterPipelineCreateDesc,
 }
 
 pub struct RenderContext<'a> {

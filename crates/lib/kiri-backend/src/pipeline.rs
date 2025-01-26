@@ -162,15 +162,15 @@ impl RasterPipelineCreateDesc {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexAttrubute {
-    pub location: u32,
+    pub location: usize,
     pub format: vk::Format,
-    pub offset: u32,
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexStreamLayout<'a> {
     pub streams: &'a [InputVertexAttrubute],
-    pub stride: u32,
+    pub stride: usize,
 }
 
 impl InputVertexStreamLayout<'_> {
@@ -179,14 +179,14 @@ impl InputVertexStreamLayout<'_> {
             .streams
             .iter()
             .map(|attr| vk::VertexInputAttributeDescription {
-                location: attr.location,
+                location: attr.location as u32,
                 binding,
                 format: attr.format,
-                offset: attr.offset,
+                offset: attr.offset as u32,
             })
             .collect();
 
-        (self.stride, attributes)
+        (self.stride as u32, attributes)
     }
 }
 

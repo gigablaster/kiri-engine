@@ -13,9 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
-use kiri_backend::ash::vk;
+use kiri_backend::{ash::vk, InputVertexAttrubute, InputVertexStreamLayout};
 use speedy::{Context, Readable, Writable};
 
 use crate::{Asset, CompiledAssetPath};
@@ -220,3 +220,29 @@ impl Asset for ModelAsset {
         Ok(self.write_to_stream(w)?)
     }
 }
+
+pub static STATIC_MESH_VERTEX_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
+    streams: &[
+        InputVertexAttrubute {
+            location: 0,
+            format: vk::Format::R16G16B16_SNORM,
+            offset: 0,
+        },
+        InputVertexAttrubute {
+            location: 1,
+            format: vk::Format::A2R10G10B10_SNORM_PACK32,
+            offset: 8,
+        },
+        InputVertexAttrubute {
+            location: 2,
+            format: vk::Format::A2R10G10B10_SNORM_PACK32,
+            offset: 12,
+        },
+        InputVertexAttrubute {
+            location: 3,
+            format: vk::Format::R16G16_SNORM,
+            offset: 16,
+        },
+    ],
+    stride: mem::size_of::<RenderMeshVertex>(),
+}];

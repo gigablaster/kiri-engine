@@ -214,30 +214,27 @@ const POSTPROCESS_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStrea
     stride: 16,
 }];
 
-static POSTPROCESS_DESCRIPTOR_LAYOUT: LazyLock<DescriptorSetLayoutDesc> =
-    LazyLock::new(|| DescriptorSetLayoutDesc {
-        layout: vec![
-            (
-                0,
-                DescriptorSetDesc {
-                    name: "main".to_owned(),
-                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    count: 1,
-                },
-            ),
-            (
-                1,
-                DescriptorSetDesc {
-                    name: "params".to_owned(),
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    count: 1,
-                },
-            ),
-        ],
-        update_after_bind: false,
-        push_constant_size: None,
-        compute_groups_size: None,
-    });
+static POSTPROCESS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[
+        (
+            0,
+            DescriptorSetDesc {
+                name: "main",
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                count: 1,
+            },
+        ),
+        (
+            1,
+            DescriptorSetDesc {
+                name: "params",
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                count: 1,
+            },
+        ),
+    ],
+    compute_groups_size: None,
+};
 
 struct CullData {
     ops: Vec<RenderOpData>,

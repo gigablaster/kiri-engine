@@ -24,6 +24,7 @@ use std::path::PathBuf;
 pub use chunky_list::*;
 use directories::ProjectDirs;
 pub use executors::*;
+pub use futures;
 pub use memory::*;
 pub use pool::*;
 pub use smol::block_on;

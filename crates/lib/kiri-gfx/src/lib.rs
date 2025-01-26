@@ -19,7 +19,6 @@ mod error;
 mod image_pool;
 mod mesh;
 pub mod passes;
-// mod pipeline_cache;
 mod renderer;
 
 pub use draw_stream::*;
@@ -27,5 +26,4 @@ use dynamic::*;
 pub use error::*;
 pub use image_pool::*;
 pub use mesh::*;
-// pub use pipeline_cache::*;
 pub use renderer::*;

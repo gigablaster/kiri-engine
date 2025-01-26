@@ -13,25 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io;
 use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
 
-use kiri_assets::{load_asset, Asset, CompiledAssetPath, ImageReference};
+use kiri_assets::{CompiledAssetPath, ImageReference};
 use kiri_assets::{ImageAsset, MeshAssetMaterial, ModelAsset};
 use kiri_backend::ash::vk;
 use kiri_backend::{ImageCreateDesc, ImageUploadData};
-use kiri_common::{block_on, spawn, spawn_io, yield_now, Task};
+use kiri_common::futures::future;
+use kiri_common::{block_on, spawn, yield_now, Task};
 use kiri_gfx::{
     DescriptorSetCreateDesc, GpuPbrMeshMaterialData, ImageHandle, RenderMeshBuilder,
     RenderMeshMaterial, RenderMeshMaterialOrder, RenderModel, RenderModelBuilder, Renderer,
     MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
-use kiri_vfs::vfs_load;
 use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::Error;
+use crate::{load_asset_from_vfs, Error};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ModelHandle(u32);
@@ -255,18 +254,13 @@ impl ResourceCache {
         }
     }
 
-    async fn load_asset<T: Asset>(path: CompiledAssetPath) -> io::Result<T> {
-        let data = spawn_io(vfs_load(path)).await?;
-        load_asset::<T>(&data)
-    }
-
     async fn load_texture(
         manager: Arc<ResourceCache>,
         reference: ImageReference,
     ) -> Result<ImageHandle, Error> {
         match &reference {
             ImageReference::External(path) => {
-                let asset = Self::load_asset::<ImageAsset>(path.clone()).await?;
+                let asset = load_asset_from_vfs::<ImageAsset>(path.clone()).await?;
                 let mips = asset
                     .mips
                     .iter()
@@ -298,7 +292,7 @@ impl ResourceCache {
         manager: Arc<ResourceCache>,
         source: MeshAssetMaterial,
     ) -> Result<RenderMeshMaterial, Error> {
-        let images = futures::future::try_join_all(
+        let images = future::try_join_all(
             [
                 manager.get_or_load_texture(&source.base_color),
                 manager.get_or_load_texture(&source.metallic_roughness),
@@ -342,7 +336,7 @@ impl ResourceCache {
         manager: Arc<ResourceCache>,
         path: CompiledAssetPath,
     ) -> Result<Arc<RenderModel>, Error> {
-        let asset = Self::load_asset::<ModelAsset>(path.clone()).await?;
+        let asset = load_asset_from_vfs::<ModelAsset>(&path).await?;
         let mut builder =
             RenderModelBuilder::new(&asset.vertices, &asset.indices).name(path.as_ref());
         let materials = asset
