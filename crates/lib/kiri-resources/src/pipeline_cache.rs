@@ -13,46 +13,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc, u32};
+use std::{collections::HashMap, sync::Arc};
 
-use kiri_assets::{CompiledAssetPath, ShaderAsset, SourceAssetPath};
-use kiri_backend::{
-    DescriptorSetLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RenderPassLayout,
-    ShaderDesc,
-};
-use kiri_common::{block_on, futures::future};
-use kiri_gfx::{ProgramHandle, RasterPipelineDesc, RasterPipelineHandle, Renderer};
+use kiri_assets::{CompiledAssetPath, EffectAsset, SourceAssetPath};
+use kiri_backend::{DescriptorSetLayoutDesc, InputVertexStreamLayout, RenderPassLayout};
+use kiri_common::block_on;
+use kiri_gfx::{RasterPipelineDesc, RasterPipelineHandle, RenderEffect, Renderer};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::{load_asset_from_vfs, Error};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RasterPipelineCacheEntry {
-    pub vertex_shader: String,
-    pub fragment_shader: String,
+    pub effect: String,
+    pub technique: String,
     pub pass_layout: &'static RenderPassLayout<'static>,
     pub descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     pub input_layout: &'static [InputVertexStreamLayout<'static>],
-    pub specialization: Vec<(u32, u32)>,
-    pub desc: RasterPipelineCreateDesc,
 }
 
 impl RasterPipelineCacheEntry {
     pub fn new(
-        vertex_shader: &str,
-        fragment_shader: &str,
+        effect: &str,
+        technique: &str,
         input_layout: &'static [InputVertexStreamLayout<'static>],
         render_pass: &'static RenderPassLayout<'static>,
         descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
     ) -> Self {
         Self {
-            vertex_shader: vertex_shader.into(),
-            fragment_shader: fragment_shader.into(),
+            effect: effect.into(),
+            technique: technique.into(),
             pass_layout: render_pass,
             descriptors_layout,
             input_layout,
-            specialization: Default::default(),
-            desc: Default::default(),
         }
     }
 }
@@ -61,7 +54,7 @@ impl RasterPipelineCacheEntry {
 pub struct PipelineCache {
     renderer: Arc<Renderer>,
     raster_pipelines: RwLock<HashMap<RasterPipelineCacheEntry, RasterPipelineHandle>>,
-    raster_programs: RwLock<HashMap<(CompiledAssetPath, CompiledAssetPath), ProgramHandle>>,
+    render_effects: RwLock<HashMap<CompiledAssetPath, Arc<RenderEffect>>>,
 }
 
 unsafe impl Send for PipelineCache {}
@@ -71,62 +64,45 @@ impl PipelineCache {
     pub fn new(renderer: Arc<Renderer>) -> Self {
         Self {
             raster_pipelines: Default::default(),
-            raster_programs: Default::default(),
+            render_effects: Default::default(),
             renderer,
         }
     }
 
-    pub fn get_or_create_raster_program(
+    fn get_or_create_render_effect(
         &self,
-        layout: &'static [DescriptorSetLayoutDesc<'static>],
-        vertex_shader: &str,
-        fragment_shader: &str,
-    ) -> Result<ProgramHandle, Error> {
-        let key = (
-            SourceAssetPath::new(vertex_shader).compiled()?,
-            SourceAssetPath::new(fragment_shader).compiled()?,
-        );
-        let programs = self.raster_programs.upgradable_read();
-        if let Some(program) = programs.get(&key) {
-            Ok(*program)
+        descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
+        effect: &str,
+    ) -> Result<Arc<RenderEffect>, Error> {
+        let key = SourceAssetPath::new(effect).compiled()?;
+        let effects = self.render_effects.upgradable_read();
+        if let Some(effect) = effects.get(&key) {
+            Ok(effect.clone())
         } else {
-            let mut programs = RwLockUpgradableReadGuard::upgrade(programs);
-            if let Some(program) = programs.get(&key) {
-                Ok(*program)
+            let mut effects = RwLockUpgradableReadGuard::upgrade(effects);
+            if let Some(effect) = effects.get(&key) {
+                Ok(effect.clone())
             } else {
-                let (vertex_shader, fragment_shader) = block_on(future::try_join(
-                    load_asset_from_vfs::<ShaderAsset>(&key.0),
-                    load_asset_from_vfs::<ShaderAsset>(&key.1),
-                ))?;
-                let program = self.renderer.create_program(
-                    layout,
-                    &[
-                        ShaderDesc::vertex(&vertex_shader.bytecode),
-                        ShaderDesc::fragment(&fragment_shader.bytecode),
-                    ],
-                )?;
-                programs.insert(key, program);
-                Ok(program)
+                let asset = block_on(load_asset_from_vfs::<EffectAsset>(&key))?;
+                let effect = Arc::new(RenderEffect::new(&self.renderer, descriptor_layout, asset)?);
+                effects.insert(key, effect.clone());
+                Ok(effect)
             }
         }
     }
 
     pub fn get_or_create_raster_pipeline(
         &self,
-        vertex_shader: &str,
-        fragment_shader: &str,
+        effect: &str,
+        technique: &str,
         pass_layout: &'static RenderPassLayout<'static>,
         descriptors_layout: &'static [DescriptorSetLayoutDesc<'static>],
         input_layout: &'static [InputVertexStreamLayout<'static>],
-        desc: RasterPipelineCreateDesc,
-        specialization: Option<&[(u32, u32)]>,
     ) -> Result<RasterPipelineHandle, Error> {
-        let program =
-            self.get_or_create_raster_program(descriptors_layout, vertex_shader, fragment_shader)?;
         let pipelines = self.raster_pipelines.upgradable_read();
         let key = RasterPipelineCacheEntry::new(
-            vertex_shader,
-            fragment_shader,
+            effect,
+            technique,
             input_layout,
             pass_layout,
             descriptors_layout,
@@ -138,12 +114,17 @@ impl PipelineCache {
             if let Some(handle) = pipelines.get(&key) {
                 Ok(*handle)
             } else {
+                let render_effect = self.get_or_create_render_effect(descriptors_layout, effect)?;
+                let techinque = render_effect
+                    .techinque(technique)
+                    .ok_or(Error::RenderTechinqueNotFound(technique.into()))?;
+
                 let pipeline = self.renderer.create_raster_pipeline(RasterPipelineDesc {
-                    program,
+                    program: render_effect.program,
                     pass_layout,
                     input_layout,
-                    specialization: specialization.unwrap_or_default().to_vec(),
-                    desc,
+                    specialization: techinque.spec.to_vec(),
+                    desc: techinque.desc,
                 });
                 pipelines.insert(key, pipeline);
                 Ok(pipeline)

@@ -44,6 +44,8 @@ pub enum Error {
     MaterialNotFound,
     #[error("Invalud model handle {0:?}")]
     InvalidModelHandle(ModelHandle),
+    #[error("Render techinque {0} not found")]
+    RenderTechinqueNotFound(String),
 }
 
 pub(crate) async fn load_asset_from_vfs<T: Asset>(path: impl AsRef<str>) -> io::Result<T> {

@@ -15,6 +15,7 @@
 
 mod draw_stream;
 mod dynamic;
+mod effect;
 mod error;
 mod image_pool;
 mod mesh;
@@ -23,6 +24,7 @@ mod renderer;
 
 pub use draw_stream::*;
 use dynamic::*;
+pub use effect::*;
 pub use error::*;
 pub use image_pool::*;
 pub use mesh::*;
