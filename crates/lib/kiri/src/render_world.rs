@@ -13,33 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    mem,
-    sync::{Arc, LazyLock},
-};
+use std::{mem, sync::Arc};
 
 use crossbeam::queue::SegQueue;
 use kiri_backend::{
-    ash::vk, DescriptorSetDesc, DescriptorSetLayoutDesc, InputVertexAttrubute,
-    InputVertexStreamLayout, RenderPassLayout, DYNAMIC_BINDING_SLOT, MATERIAL_BINDING_SLOT,
-    PASS_BINDING_SLOT,
+    ash::vk::{self, CompareOp, CullModeFlags},
+    DescriptorDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
+    RasterPipelineCreateDesc, RenderPassLayout, EMPTY_DESCRIPTOR_SET,
 };
 use kiri_gfx::{
-    effects::{INSTANCE_DESCRIPTOR_LAYOUT, RENDER_PASS_DESCRIPTOR_LAYOUT},
-    passes::{
-        FinalCompositionPassDispatcher, ImageDependency, RasterizerPassBuilder, RenderTarget,
-    },
-    BufferPointer, DescriptorHandle, DescriptorSetBuilder, DrawStream, DrawStreamBuilder,
-    PipelineHandle, RasterPipelineDesc, RenderContext, RenderModel, RenderTargetPool,
-    TransientImage,
+    passes::{ImageDependency, RasterizerPassBuilder, RenderTarget},
+    BufferPointer, DescriptorHandle, DrawStream, DrawStreamBuilder, RasterPipelineDesc,
+    RasterPipelineHandle, RenderContext, RenderModel, RenderTargetPool, TransientImage,
 };
 use kiri_math::{
     vec3, vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A,
 };
-use kiri_resources::{ModelHandle, ResourceManager};
+use kiri_resources::{ModelHandle, PipelineCache, ResourceCache};
 use log::warn;
 use parking_lot::Mutex;
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+
+use crate::Error;
 const DRAWS_PER_STREAM: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,10 +86,10 @@ enum Operation {
 
 #[derive(Debug)]
 pub struct RenderWorld {
-    resources: Arc<ResourceManager>,
+    resource_cache: Arc<ResourceCache>,
     inner: Mutex<RenderWorldInner>,
     operations: SegQueue<Operation>,
-    tonemapping: PipelineHandle,
+    tonemapping: RasterPipelineHandle,
 }
 
 pub struct WorldSpawnContext<'a> {
@@ -130,7 +125,7 @@ const DEFAULT_RENDER_OP_CAPACITY: usize = 100000;
 
 #[derive(Debug, Clone, Copy)]
 struct RenderOp {
-    pipeline: PipelineHandle,
+    pipeline: RasterPipelineHandle,
     ds: DescriptorHandle,
     op_index: usize,
 }
@@ -186,17 +181,17 @@ struct TonemappingGpuData {
     pub expouse: f32,
 }
 
-const POSTPROCESS_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
-    depth: None,
-};
-
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct PostprocessVertex {
     position: [f32; 2],
     uv: [f32; 2],
 }
+
+const POSTPROCESS_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::A2R10G10B10_UNORM_PACK32],
+    depth: None,
+};
 
 const POSTPROCESS_INPUT_LAYOUT: [InputVertexStreamLayout; 1] = [InputVertexStreamLayout {
     streams: &[
@@ -218,7 +213,7 @@ static POSTPROCESS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLay
     layout: &[
         (
             0,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "main",
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 count: 1,
@@ -226,7 +221,7 @@ static POSTPROCESS_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLay
         ),
         (
             1,
-            DescriptorSetDesc {
+            DescriptorDesc {
                 name: "params",
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 count: 1,
@@ -251,21 +246,35 @@ struct GpuInstanceData {
     pub uv_scale: f32,
 }
 
+static POSTPROCESS_DESCRIPTOR_SET_LAYOUT: [DescriptorSetLayoutDesc; 4] = [
+    POSTPROCESS_DESCRIPTOR_LAYOUT,
+    EMPTY_DESCRIPTOR_SET,
+    EMPTY_DESCRIPTOR_SET,
+    EMPTY_DESCRIPTOR_SET,
+];
+
 impl RenderWorld {
-    pub fn new(resource_manager: &Arc<ResourceManager>) -> Result<Self, kiri_gfx::Error> {
-        let tonemapping = resource_manager
-            .pipeline_cache
-            .get_or_create_raster_pipeline(RasterPipelineDesc::new(
-                "shaders/fullscreen.vert",
-                "shaders/tonemapping.frag",
-                &POSTPROCESS_PASS_LAYOUT,
-                &POSTPROCESS_INPUT_LAYOUT,
-            ))?;
+    pub fn new(
+        resource_cache: Arc<ResourceCache>,
+        pipeline_cache: Arc<PipelineCache>,
+    ) -> Result<Self, Error> {
+        let tonemapping = pipeline_cache.get_or_create_raster_pipeline(
+            "shaders/fullscreen.vert",
+            "shaders/tonemapping.frag",
+            &POSTPROCESS_PASS_LAYOUT,
+            &POSTPROCESS_DESCRIPTOR_SET_LAYOUT,
+            &POSTPROCESS_INPUT_LAYOUT,
+            RasterPipelineCreateDesc::default()
+                .cull(CullModeFlags::NONE)
+                .depth_test(CompareOp::NEVER)
+                .depth_write(false),
+            None,
+        )?;
         Ok(Self {
-            resources: resource_manager.clone(),
             inner: Default::default(),
             operations: Default::default(),
             tonemapping,
+            resource_cache,
         })
     }
 
@@ -308,7 +317,7 @@ impl RenderWorld {
     }
 
     fn process_loading(&self, world: &mut RenderWorldInner) {
-        self.resources.resolve(|context| {
+        self.resource_cache.resolve(|context| {
             for object in world.objects.iter_mut() {
                 if let WorldObject::PendingModel(handle) = object {
                     match context.resolve_model(*handle) {
@@ -318,7 +327,7 @@ impl RenderWorld {
                             }
                         }
                         Err(err) => {
-                            warn!("Failed to load model for node {}: {}", handle, err);
+                            warn!("Failed to load model for node {:?}: {}", handle, err);
                             *object = WorldObject::Empty;
                         }
                     }

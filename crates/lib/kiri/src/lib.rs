@@ -19,4 +19,9 @@ use thiserror::Error;
 pub use render_world::*;
 
 #[derive(Debug, Error)]
-pub enum Error {}
+pub enum Error {
+    #[error("Renderer error: {0}")]
+    GfxError(#[from] kiri_gfx::Error),
+    #[error("Resource error: {0}")]
+    ResourceError(#[from] kiri_resources::Error),
+}
