@@ -388,7 +388,7 @@ impl ResourceCache {
             .node_to_mesh
             .into_iter()
             .for_each(|(node, mesh)| builder.attach_mesh(node, mesh));
-        debug!("Create model {}", path.as_ref());
+        debug!("Create model {:?}", path);
         Ok(Arc::new(builder.build(&manager.renderer)?))
     }
 }
