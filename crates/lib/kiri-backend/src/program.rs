@@ -192,18 +192,6 @@ impl Program {
             device,
         })
     }
-
-    fn pipeline_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
-    }
-
-    fn descritpor_set_layouts(&self) -> &[vk::DescriptorSetLayout] {
-        &self.descriptor_layouts
-    }
-
-    fn shader_stages(&self) -> vk::ShaderStageFlags {
-        self.stages
-    }
 }
 
 fn create_shader(

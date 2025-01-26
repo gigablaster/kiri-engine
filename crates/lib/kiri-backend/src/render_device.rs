@@ -35,7 +35,6 @@ use super::{
 };
 
 const MAX_SUBMITS: usize = 32;
-pub(super) const MAX_RESOURCES: u32 = 64536;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -68,6 +67,7 @@ impl Debug for RenderDevice {
 
 #[derive(Debug)]
 pub(super) struct Queue {
+    #[allow(dead_code)]
     pub family_index: u32,
     raw: Mutex<vk::Queue>,
 }
@@ -117,15 +117,6 @@ impl<E: From<Error>> DescriptorAllocatorContext<'_, E> {
         count: usize,
     ) -> Result<Vec<GpuDescriptor>, E> {
         Ok(self.allocate_impl(layout, layout_descriptor_count, count, false)?)
-    }
-
-    pub fn allocate_bindless(
-        &mut self,
-        layout: vk::DescriptorSetLayout,
-        layout_descriptor_count: &DescriptorTotalCount,
-        count: usize,
-    ) -> Result<Vec<GpuDescriptor>, Error> {
-        Ok(self.allocate_impl(layout, layout_descriptor_count, count, true)?)
     }
 
     fn allocate_impl(
@@ -393,21 +384,6 @@ impl RenderDevice {
         .allocate(layout, layout_descriptor_count, count)
     }
 
-    pub fn allocate_bindless_descriptor_sets(
-        &self,
-        layout: vk::DescriptorSetLayout,
-        layout_descriptor_count: &DescriptorTotalCount,
-        count: usize,
-    ) -> Result<Vec<GpuDescriptor>, Error> {
-        let mut allocator = self.descriptor_allocator.lock();
-        DescriptorAllocatorContext::<Error> {
-            device: &self.raw,
-            allocator: &mut allocator,
-            phantom_data: PhantomData,
-        }
-        .allocate_bindless(layout, layout_descriptor_count, count)
-    }
-
     pub(super) fn with_staging<CB: FnOnce(&mut Staging) -> Result<(), Error>>(
         &self,
         cb: CB,
@@ -540,7 +516,7 @@ impl RenderDevice {
                     || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
                 {
                     binding = binding.immutable_samplers(samplers.add(vec![
-                    self.sampler(Self::get_sampler_desc(&data.name)).unwrap();
+                    self.sampler(Self::get_sampler_desc(data.name)).unwrap();
                     data.count as _
                 ]));
                 }

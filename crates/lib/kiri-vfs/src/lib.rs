@@ -62,8 +62,8 @@ pub async fn vfs_load<P: AsRef<str>>(path: P) -> io::Result<Bytes> {
     let archive = ARCHIVES
         .read()
         .iter()
+        .find(|&x| x.exist(path.as_ref()))
         .cloned()
-        .find(|x| x.exist(path.as_ref()))
         .ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             path.as_ref().to_owned(),

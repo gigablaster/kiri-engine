@@ -210,7 +210,7 @@ impl Swapchain {
         })
     }
 
-    pub fn acquire_next_image<'a>(&'a self) -> Result<AcquiredSurface<'a>, Error> {
+    pub fn acquire_next_image(&self) -> Result<AcquiredSurface, Error> {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];

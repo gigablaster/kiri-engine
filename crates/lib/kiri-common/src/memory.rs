@@ -15,7 +15,7 @@
 
 use std::{
     cmp::min,
-    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use crate::Align;

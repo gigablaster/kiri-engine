@@ -60,7 +60,7 @@ impl AssetSource for GlslShaderSource {
             return result;
         }
 
-        return false;
+        false
     }
 }
 
@@ -73,8 +73,7 @@ impl GlslShaderSource {
         )
         .map_err(|err| io::Error::other(format!("Shader processing failed: {}", err)))?
         .iter()
-        .map(|chunk| SourceAssetPath::new(&chunk.file).changed(timestamp))
-        .any(|x| x))
+        .any(|x| SourceAssetPath::new(&x.file).changed(timestamp)))
     }
 }
 
@@ -105,7 +104,7 @@ impl IncludeProvider for ShaderIncludeProvider {
         &mut self,
         path: &shader_prepper::ResolvedIncludePath,
     ) -> Result<String, shader_prepper::BoxedIncludeProviderError> {
-        let data = read_to_end(&SourceAssetPath::new(&path.0))?;
+        let data = read_to_end(SourceAssetPath::new(&path.0))?;
         Ok(String::from_utf8_lossy(&data).into_owned())
     }
 }

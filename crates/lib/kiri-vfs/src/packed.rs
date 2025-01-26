@@ -18,7 +18,6 @@ use bytes::Bytes;
 use core::slice;
 use kiri_common::Align;
 use memmap2::{Mmap, MmapOptions};
-use normalize_path::NormalizePath;
 use speedy::{Readable, Writable};
 use std::{
     collections::HashMap,

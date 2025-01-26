@@ -1115,7 +1115,6 @@ dependencies = [
  "arrayvec",
  "directories",
  "smol",
- "speedy",
 ]
 
 [[package]]

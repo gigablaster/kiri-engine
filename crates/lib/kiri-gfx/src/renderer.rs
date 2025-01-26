@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, path::PathBuf, ptr::NonNull, slice, sync::Arc, u32};
+use std::{mem, path::PathBuf, ptr::NonNull, slice, sync::Arc};
 
 use kiri_backend::{
     ash::{
@@ -345,7 +345,7 @@ pub struct DescriptorSetCreateDesc<'a> {
     pub name: Option<&'a str>,
 }
 
-impl<'a> DescriptorSetCreateDesc<'a> {
+impl DescriptorSetCreateDesc<'_> {
     fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
         let images = self
             .layout
@@ -473,6 +473,10 @@ struct UniformPage {
     allocator: BlockAllocator,
 }
 
+type RastePipelineData = (
+    Vec<(vk::Pipeline, vk::PipelineLayout)>,
+    Vec<RasterPipelineDesc>,
+);
 /// Low-level renderer
 #[derive(Debug)]
 pub struct Renderer {
@@ -480,10 +484,7 @@ pub struct Renderer {
     buffers: RwLock<BufferPool>,
     images: RwLock<ImagePool>,
     raster_programs: RwLock<ProgramPool>,
-    raster_pipelines: Mutex<(
-        Vec<(vk::Pipeline, vk::PipelineLayout)>,
-        Vec<RasterPipelineDesc>,
-    )>,
+    raster_pipelines: Mutex<RastePipelineData>,
     dynamic_memory: Mutex<DynamicGpuMemoryPool>,
     descriptors: RwLock<DescriptorPool>,
     dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
@@ -511,7 +512,7 @@ impl Renderer {
         Ok(Arc::new(Self {
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCE_COUNT)),
             images: RwLock::new(ImagePool::new(MAX_RESOURCE_COUNT)),
-            dynamic_memory: Mutex::new(DynamicGpuMemoryPool::new(device.clone())),
+            dynamic_memory: Default::default(),
             raster_pipelines: Default::default(),
             raster_programs: Default::default(),
             descriptors: RwLock::new(HotColdPool::new(MAX_DESCRIPTORS)),
@@ -613,9 +614,9 @@ impl Renderer {
         let to_destroy = self.descriptors_to_destroy.lock();
         DescriptorUpdateContext {
             device: &self.device,
-            descriptors: descriptors,
-            dirty: dirty,
-            to_destroy: to_destroy,
+            descriptors,
+            dirty,
+            to_destroy,
         }
     }
 

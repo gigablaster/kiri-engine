@@ -7,4 +7,3 @@ edition = "2021"
 arrayvec = "0.7.4"
 directories = "5.0.1"
 smol = "2.0.2"
-speedy = { version = "0.8.7", features = ["speedy-derive"] }

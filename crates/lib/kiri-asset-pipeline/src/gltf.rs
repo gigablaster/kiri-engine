@@ -16,7 +16,6 @@
 use std::path::Path;
 use std::{collections::HashMap, io, time::SystemTime};
 
-use gltf::buffer::Source;
 use kiri_assets::{EmbeddedImage, ModelAsset, SourceAssetPath};
 use kiri_backend::ash::vk;
 

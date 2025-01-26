@@ -29,7 +29,6 @@ pub use pool::*;
 pub use smol::block_on;
 pub use smol::future::yield_now;
 pub use smol::Task;
-use speedy::{Readable, Writable};
 pub use time::*;
 
 pub trait Align<T> {

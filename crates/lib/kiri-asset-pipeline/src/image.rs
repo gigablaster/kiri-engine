@@ -81,7 +81,7 @@ impl AssetSource for ImageSource {
 
 impl ImportAsset<ImageAsset> for ImageSource {
     fn import<I: AssetPipelineContext>(self, _context: &I) -> io::Result<ImageAsset> {
-        let data = read_to_end(&self.source.full_source_path())?;
+        let data = read_to_end(self.source.full_source_path())?;
         let mut image =
             image::load_from_memory(&data).map_err(|x| io::Error::other(x.to_string()))?;
         let dims = [image.width(), image.height()];

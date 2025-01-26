@@ -24,9 +24,9 @@ use normalize_path::NormalizePath;
 pub use shader::*;
 
 use std::{
-    env, fs,
+    fs,
     io::{self, Cursor, Read, Write},
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     time::SystemTime,
 };
 
@@ -116,7 +116,7 @@ impl SourceAssetPath {
         let name = path
             .with_extension("asset")
             .strip_prefix(root)
-            .map_err(|x| io::Error::other(x))?
+            .map_err(io::Error::other)?
             .to_str()
             .unwrap()
             .replace('\\', "/")
@@ -134,7 +134,7 @@ impl SourceAssetPath {
                 return created > timestamp;
             }
         }
-        return false;
+        false
     }
 
     pub fn full_source_path(&self) -> PathBuf {
