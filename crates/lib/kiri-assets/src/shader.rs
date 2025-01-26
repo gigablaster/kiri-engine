@@ -24,6 +24,7 @@ use crate::Asset;
 pub enum ShaderType {
     Vertex,
     Fragment,
+    Compute,
 }
 
 #[derive(Debug, Readable, Writable)]
@@ -37,6 +38,7 @@ impl From<ShaderType> for vk::ShaderStageFlags {
         match value {
             ShaderType::Vertex => Self::VERTEX,
             ShaderType::Fragment => Self::FRAGMENT,
+            ShaderType::Compute => Self::COMPUTE,
         }
     }
 }

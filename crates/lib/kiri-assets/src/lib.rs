@@ -14,10 +14,12 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 // mod gltf;
+mod effect;
 mod image;
 mod model;
 mod shader;
 
+pub use effect::*;
 pub use image::*;
 pub use model::*;
 use normalize_path::NormalizePath;

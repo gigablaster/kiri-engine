@@ -1,0 +1,32 @@
+{
+    "vertex": "shaders/basic.vert",
+    "fragment": "shaders/basic.frag",
+    "techniques": {
+        "opaque": {
+            "desc": {}
+        },
+        "mask": {
+            "desc": {},
+            "spec": {
+                "0": 1
+            }
+        },
+        "transparent": {
+            "desc": {
+                "blend": {
+                    "color": {
+                        "src": "SrcAlpha",
+                        "dst": "OneMinusSrcAlpha",
+                        "op": "Add"
+                    },
+                    "alpha": {
+                        "src": "SrcAlpha",
+                        "dst": "OneMinusSrcAlpha",
+                        "op": "Add"
+                    }
+                },
+                "depth_write": false
+            }
+        }
+    }
+}

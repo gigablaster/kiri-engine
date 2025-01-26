@@ -17,68 +17,13 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::SystemTime,
 };
 
-use kiri_assets::{ShaderAsset, ShaderType, SourceAssetPath};
+use kiri_assets::{ShaderType, SourceAssetPath};
 use shader_prepper::{IncludeProvider, ResolvedIncludePath};
 
-use crate::{read_to_end, AssetPipelineContext, AssetSource, ImportAsset};
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct GlslShaderSource {
-    source: SourceAssetPath,
-    ty: ShaderType,
-}
-
-impl GlslShaderSource {
-    pub fn fragment<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            source: path.as_ref().into(),
-            ty: ShaderType::Fragment,
-        }
-    }
-
-    pub fn vertex<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            source: path.as_ref().into(),
-            ty: ShaderType::Vertex,
-        }
-    }
-}
-
-impl AssetSource for GlslShaderSource {
-    fn source(&self) -> &SourceAssetPath {
-        &self.source
-    }
-
-    fn changed(&self, timestamp: std::time::SystemTime) -> bool {
-        if self.source.changed(timestamp) {
-            return true;
-        }
-
-        if let Ok(result) = Self::are_includes_changed(self.source.as_ref(), timestamp) {
-            return result;
-        }
-
-        false
-    }
-}
-
-impl GlslShaderSource {
-    fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> io::Result<bool> {
-        Ok(shader_prepper::process_file(
-            path,
-            &mut ShaderIncludeProvider::default(),
-            PathBuf::new(),
-        )
-        .map_err(|err| io::Error::other(format!("Shader processing failed: {}", err)))?
-        .iter()
-        .any(|x| SourceAssetPath::new(&x.file).changed(timestamp)))
-    }
-}
-
-#[derive(Debug, Default)]
-struct ShaderIncludeProvider {}
+use crate::read_to_end;
 
 impl IncludeProvider for ShaderIncludeProvider {
     type IncludeContext = PathBuf;
@@ -109,36 +54,58 @@ impl IncludeProvider for ShaderIncludeProvider {
     }
 }
 
-impl ImportAsset<ShaderAsset> for GlslShaderSource {
-    fn import<I: AssetPipelineContext>(self, _context: &I) -> io::Result<ShaderAsset> {
-        let target = match self.ty {
-            ShaderType::Vertex => "-fshader-stage=vertex",
-            ShaderType::Fragment => "-fshader-stage=fragment",
-        };
-        let child = Command::new("glslc")
-            .arg(target)
-            .arg("--target-env=vulkan1.1")
-            .arg("-I")
-            .arg(self.source.parent())
-            .arg("-o")
-            .arg("-")
-            .arg(self.source.full_source_path())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|x| io::Error::other(format!("Failed to spawn shader compiler: {}", x)))?;
+pub fn is_glsl_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {
+    let source = SourceAssetPath::new(path);
+    if source.changed(timestamp) {
+        return true;
+    }
 
-        let result = child
-            .wait_with_output()
-            .map_err(|x| io::Error::other(format!("Shader compilation failed: {}", x)))?;
-        if result.status.success() {
-            Ok(ShaderAsset {
-                ty: self.ty,
-                bytecode: result.stdout,
-            })
-        } else {
-            Err(io::Error::other(
-                String::from_utf8_lossy(&result.stderr).to_string(),
-            ))
-        }
+    if let Ok(result) = are_includes_changed(source.as_ref(), timestamp) {
+        return result;
+    }
+
+    false
+}
+
+#[derive(Debug, Default)]
+struct ShaderIncludeProvider {}
+
+fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> io::Result<bool> {
+    Ok(
+        shader_prepper::process_file(path, &mut ShaderIncludeProvider::default(), PathBuf::new())
+            .map_err(|err| io::Error::other(format!("Shader processing failed: {}", err)))?
+            .iter()
+            .any(|x| SourceAssetPath::new(&x.file).changed(timestamp)),
+    )
+}
+
+pub fn compile_glsl<P: AsRef<Path>>(path: P, ty: ShaderType) -> io::Result<Vec<u8>> {
+    let target = match ty {
+        ShaderType::Vertex => "-fshader-stage=vertex",
+        ShaderType::Fragment => "-fshader-stage=fragment",
+        ShaderType::Compute => "-fshader-stage=compute",
+    };
+    let path = SourceAssetPath::new(path);
+    let child = Command::new("glslc")
+        .arg(target)
+        .arg("--target-env=vulkan1.1")
+        .arg("-I")
+        .arg(path.parent())
+        .arg("-o")
+        .arg("-")
+        .arg(path.full_source_path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|x| io::Error::other(format!("Failed to spawn shader compiler: {}", x)))?;
+
+    let result = child
+        .wait_with_output()
+        .map_err(|x| io::Error::other(format!("Shader compilation failed: {}", x)))?;
+    if result.status.success() {
+        Ok(result.stdout)
+    } else {
+        Err(io::Error::other(
+            String::from_utf8_lossy(&result.stderr).to_string(),
+        ))
     }
 }

@@ -14,7 +14,7 @@ use std::{
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
 use kiri_asset_pipeline::{
-    AssetPipelineContext, AssetSource, GlslShaderSource, ImageSource, ImportAsset, ModelSource,
+    AssetPipelineContext, AssetSource, ImageSource, ImportAsset, ModelSource, RenderEffectSource,
 };
 use kiri_assets::{save_asset, Asset, CompiledAssetPath};
 use kiri_vfs::{COMPILED_ASSETS_PATH, SOURCE_ASSETS_PATH};
@@ -25,7 +25,7 @@ use parking_lot::Mutex;
 struct ContentProcessor {
     images: Mutex<HashSet<ImageSource>>,
     scenes: Mutex<HashSet<ModelSource>>,
-    shaders: Mutex<HashSet<GlslShaderSource>>,
+    effects: Mutex<HashSet<RenderEffectSource>>,
 }
 
 unsafe impl Send for ContentProcessor {}
@@ -78,7 +78,7 @@ impl ContentProcessor {
         Self {
             images: Default::default(),
             scenes: Default::default(),
-            shaders: Default::default(),
+            effects: Default::default(),
         }
     }
 
@@ -86,8 +86,8 @@ impl ContentProcessor {
         self.scenes.lock().insert(source);
     }
 
-    fn import_shader(&self, source: GlslShaderSource) {
-        self.shaders.lock().insert(source);
+    fn import_effect(&self, source: RenderEffectSource) {
+        self.effects.lock().insert(source);
     }
 
     async fn build_scene(&self, scene: ModelSource) {
@@ -104,10 +104,10 @@ impl ContentProcessor {
         }
     }
 
-    async fn build_shader(&self, shader: GlslShaderSource) {
-        info!("Compile shader {:?}", shader);
+    async fn build_effect(&self, shader: RenderEffectSource) {
+        info!("Compile effect {:?}", shader);
         if let Err(err) = self.build_asset(shader.clone()) {
-            error!("Failed to compiled shader {:?}:\n{}", shader.source(), err);
+            error!("Failed to compiled effect {:?}:\n{}", shader.source(), err);
         }
     }
 
@@ -129,9 +129,9 @@ impl ContentProcessor {
         });
 
         AsyncComputeTaskPool::get().scope(|s| {
-            for shader in self.shaders.lock().iter() {
+            for shader in self.effects.lock().iter() {
                 if self.asset_need_rebuild(shader) {
-                    s.spawn(self.build_shader(shader.clone()));
+                    s.spawn(self.build_effect(shader.clone()));
                 }
             }
         });
@@ -171,10 +171,8 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
             let path_str = path.to_str().unwrap();
             if path_str.ends_with(".gltf") {
                 processor.import_scene(ModelSource::new(path));
-            } else if path_str.ends_with(".vert") {
-                processor.import_shader(GlslShaderSource::vertex(path));
-            } else if path_str.ends_with(".frag") {
-                processor.import_shader(GlslShaderSource::fragment(path));
+            } else if path_str.ends_with(".effect") {
+                processor.import_effect(RenderEffectSource::new(path));
             }
         }
     }

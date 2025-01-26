@@ -102,12 +102,12 @@ impl RasterPipelineCreateDesc {
     pub fn alpha_blend(mut self) -> Self {
         self.blend = Some((
             PipelineBlendDesc::new(
-                vk::BlendFactor::SRC1_ALPHA,
+                vk::BlendFactor::SRC_ALPHA,
                 vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
                 vk::BlendOp::ADD,
             ),
             PipelineBlendDesc::new(
-                vk::BlendFactor::SRC1_ALPHA,
+                vk::BlendFactor::SRC_ALPHA,
                 vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
                 vk::BlendOp::ADD,
             ),

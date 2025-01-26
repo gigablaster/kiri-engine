@@ -13,12 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod effect;
 mod glsl;
 mod gltf;
 mod image;
 mod mesh_builder;
 
-pub use glsl::*;
+pub use effect::*;
 pub use gltf::*;
 pub use image::*;
 

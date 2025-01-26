@@ -26,3 +26,5 @@ mikktspace = { git = "https://github.com/gigablaster/mikktspace.git", features =
 meshopt = { version = "0.4.1" }
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength"] }
 shader-prepper = { version = "0.3.0-pre.3" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

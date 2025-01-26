@@ -483,19 +483,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-deque",
- "crossbeam-epoch",
- "crossbeam-queue",
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -519,15 +506,6 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-queue"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1077,27 +1055,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiri"
-version = "0.2.0"
-dependencies = [
- "arrayvec",
- "crossbeam",
- "kiri-assets",
- "kiri-backend",
- "kiri-common",
- "kiri-gfx",
- "kiri-math",
- "kiri-resources",
- "kiri-vfs",
- "log",
- "parking_lot",
- "puffin",
- "radsort",
- "rayon",
- "thiserror 2.0.9",
-]
-
-[[package]]
 name = "kiri-asset-pipeline"
 version = "0.1.0"
 dependencies = [
@@ -1111,6 +1068,8 @@ dependencies = [
  "meshopt",
  "mikktspace",
  "numquant",
+ "serde",
+ "serde_json",
  "shader-prepper",
 ]
 
@@ -1125,6 +1084,7 @@ dependencies = [
  "kiri-vfs",
  "log",
  "normalize-path",
+ "serde",
  "speedy",
  "thiserror 2.0.9",
  "uuid",
@@ -1587,12 +1547,6 @@ checksum = "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7"
 dependencies = [
  "proc-macro2",
 ]
-
-[[package]]
-name = "radsort"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "019b4b213425016d7d84a153c4c73afb0946fbb4840e4eece7ba8848b9d6da22"
 
 [[package]]
 name = "raw-window-handle"
