@@ -148,7 +148,6 @@ impl RenderDevice {
         instance: &Arc<Instance>,
         surface: &Surface,
         preferences: &[PhysicalDeviceType],
-        max_update_after_bind_descriptors_in_all_pools: Option<usize>,
     ) -> Result<Arc<Self>, Error> {
         let physical_devices = instance.enumerate_physical_devices()?;
         let pdevice = physical_devices
@@ -274,9 +273,7 @@ impl RenderDevice {
             layouts: Default::default(),
             memory_allocator: Mutex::new(allocator),
             physical_device: pdevice,
-            descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(
-                max_update_after_bind_descriptors_in_all_pools.unwrap_or(0) as _,
-            )),
+            descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(0)),
         }))
     }
 

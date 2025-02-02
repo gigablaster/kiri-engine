@@ -24,7 +24,7 @@ use kiri_common::{block_on, spawn, yield_now, Task};
 use kiri_gfx::{
     DescriptorSetCreateDesc, GpuPbrMeshMaterialData, ImageHandle, RenderMeshBuilder,
     RenderMeshMaterial, RenderMeshMaterialOrder, RenderModel, RenderModelBuilder, Renderer,
-    MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
+    MESH_PBR_MATERIAL_DESCRIPTOR_SET,
 };
 use kiri_math::{Affine3A, BoundingBox, Quat, Vec3};
 use log::{debug, error};
@@ -219,10 +219,10 @@ impl ResourceResolveContext<'_> {
 }
 
 impl ResourceCache {
-    pub fn new(renderer: &Arc<Renderer>) -> Result<Arc<Self>, Error> {
+    pub fn new(renderer: Arc<Renderer>) -> Result<Arc<Self>, Error> {
         debug!("Create resource cache");
         Ok(Arc::new(Self {
-            renderer: renderer.clone(),
+            renderer,
             textures: Default::default(),
             materials: Default::default(),
             models: Default::default(),
@@ -268,16 +268,18 @@ impl ResourceCache {
                     .collect::<Vec<_>>();
                 debug!("Create texture {:?}", reference);
                 let dims = [asset.dims[0] as usize, asset.dims[1] as usize];
-                Ok(manager
-                    .renderer
-                    .create_image(ImageCreateDesc::texture(asset.format, dims), Some(&mips))?)
+                Ok(manager.renderer.create_image(
+                    ImageCreateDesc::texture(asset.format, dims).mip_levels(asset.mips.len()),
+                    Some(&mips),
+                )?)
             }
 
             ImageReference::Embedded(image) => Ok(manager.renderer.create_image(
-                ImageCreateDesc::new(
+                ImageCreateDesc::texture(
                     image.format,
                     [image.dims[0] as usize, image.dims[1] as usize],
-                ),
+                )
+                .mip_levels(1),
                 Some(&[ImageUploadData::new(&image.pixels)]),
             )?),
         }
@@ -313,7 +315,7 @@ impl ResourceCache {
                 .renderer
                 .with_descriptors()
                 .create_descriptor(DescriptorSetCreateDesc {
-                    layout: MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT,
+                    layout: MESH_PBR_MATERIAL_DESCRIPTOR_SET,
                     stages: vk::ShaderStageFlags::ALL_GRAPHICS,
                     images: &images,
                     unifoms: &[uniform],

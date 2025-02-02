@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@ use crate::{GameClient, GameError, GameTickState};
 use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
 use kiri_common::{GameAppConfig, TimeFilter};
 use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
+use kiri_resources::PipelineCache;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
@@ -46,6 +47,7 @@ struct RenderSystem<E: Error> {
     surface: Surface,
     renderer: Arc<Renderer>,
     pool: RenderTargetPool,
+    pipeline_cache: Arc<PipelineCache>,
     _phantom: PhantomData<E>,
 }
 
@@ -67,12 +69,14 @@ impl<E: Error> RenderSystem<E> {
             &surface,
             &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
         )?;
-        let renderer = Renderer::new(&device, config)?;
+        let renderer = Renderer::new(device.clone(), config)?;
         let pool = RenderTargetPool::new(&renderer);
+        let pipeline_cache = PipelineCache::new(renderer.clone());
         Ok(Self {
             window,
             surface,
             renderer,
+            pipeline_cache,
             pool,
             _phantom: PhantomData,
         })
@@ -105,7 +109,13 @@ where
         }
         let render_system = RenderSystem::new(event_loop, G::config()).unwrap();
 
-        self.game = Some(G::create(&render_system.renderer).unwrap());
+        self.game = Some(
+            G::create(
+                render_system.renderer.clone(),
+                render_system.pipeline_cache.clone(),
+            )
+            .unwrap(),
+        );
         self.render_system = Some(render_system);
         self.time = TimeFilter::default();
         event_loop.set_control_flow(ControlFlow::Poll);

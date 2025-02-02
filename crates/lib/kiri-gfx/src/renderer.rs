@@ -27,6 +27,7 @@ use kiri_backend::{
     EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};
+use log::debug;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rayon::iter::{ParallelDrainRange, ParallelIterator};
 
@@ -142,9 +143,8 @@ pub struct RasterPipelineDesc {
 pub struct RenderContext<'a> {
     renderer: &'a Renderer,
     dynamic: &'a DynamicGpuMemory,
-    passes: Option<Vec<Box<dyn PassDispatcher>>>,
-    update_descriptors: DescriptorUpdateContext<'a>,
-    temp_descriptors: Vec<DescriptorHandle>,
+    passes: Mutex<Vec<Box<dyn PassDispatcher>>>,
+    temp_descriptors: Mutex<Vec<DescriptorHandle>>,
     pub backbuffer: &'a Image,
 }
 
@@ -247,14 +247,12 @@ impl<'a> RenderContext<'a> {
     pub(crate) fn new(
         renderer: &'a Renderer,
         dynamic: &'a DynamicGpuMemory,
-        update_descriptors: DescriptorUpdateContext<'a>,
         backbuffer: &'a Image,
     ) -> Self {
         Self {
             renderer,
             dynamic,
             passes: Default::default(),
-            update_descriptors,
             backbuffer,
             temp_descriptors: Default::default(),
         }
@@ -274,29 +272,24 @@ impl<'a> RenderContext<'a> {
         self.dynamic.get_buffer_handle()
     }
 
-    pub fn submit(&mut self, pass: Box<dyn PassDispatcher>) {
-        self.passes.get_or_insert_default().push(pass);
+    pub fn submit(&self, pass: Box<dyn PassDispatcher>) {
+        self.passes.lock().push(pass);
     }
 
     pub fn create_temp_descriptor(
-        &mut self,
+        &self,
         builder: DescriptorSetCreateDesc,
     ) -> Result<DescriptorHandle, Error> {
-        let handle = self.update_descriptors.create_descriptor(builder)?;
-        self.temp_descriptors.push(handle);
+        let handle = self
+            .renderer
+            .with_descriptors()
+            .create_descriptor(builder)?;
+        self.temp_descriptors.lock().push(handle);
         Ok(handle)
     }
 
-    fn consume(mut self) -> Vec<Box<dyn PassDispatcher>> {
-        self.passes.take().unwrap_or_default()
-    }
-}
-
-impl Drop for RenderContext<'_> {
-    fn drop(&mut self) {
-        self.temp_descriptors
-            .drain(..)
-            .for_each(|handle| self.update_descriptors.destroy_descriptor(handle));
+    fn consume(self) -> (Vec<DescriptorHandle>, Vec<Box<dyn PassDispatcher>>) {
+        (self.temp_descriptors.into_inner(), self.passes.into_inner())
     }
 }
 
@@ -400,7 +393,7 @@ impl DescriptorSetCreateDesc<'_> {
         let dynamic_storages = self
             .layout
             .by_types(&[vk::DescriptorType::STORAGE_BUFFER_DYNAMIC])
-            .zip(self.dynamic_uniforms)
+            .zip(self.dynamic_storage_buffers)
             .map(|((slot, _), (buffer, size))| Binding {
                 slot: slot as u32,
                 element: 0,
@@ -428,7 +421,7 @@ const MAX_DESCRIPTORS: usize = 16384;
 
 #[derive(Debug)]
 struct DescriptorResolver<'a> {
-    descriptors: RwLockReadGuard<'a, DescriptorPool>,
+    descriptors: &'a DescriptorPool,
 }
 
 impl DescriptorResolver<'_> {
@@ -876,7 +869,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render<RenderCB: FnOnce(&mut RenderContext) -> Result<(), Error>>(
+    pub fn render<RenderCB: FnOnce(&RenderContext) -> Result<(), Error>>(
         &self,
         swapchain: &Swapchain,
         render: RenderCB,
@@ -889,14 +882,16 @@ impl Renderer {
         };
         let (frame, staging_semaphore) = self.device.begin_frame()?;
         let mut dynamic_memory = self.dynamic_memory.lock();
+        let mut descriptors_to_drop = Vec::new();
         dynamic_memory.recycle();
         let dynamic = dynamic_memory.take(self)?;
         drop(dynamic_memory);
 
         // Generate render streams
-        let mut context = RenderContext::new(self, &dynamic, self.with_descriptors(), target.image);
+        let mut context = RenderContext::new(self, &dynamic, target.image);
         render(&mut context)?;
-        let passes = context.consume();
+        let (mut temp_descriptors, passes) = context.consume();
+        descriptors_to_drop.append(&mut temp_descriptors);
         let mut descriptors = self.descriptors.write();
         let mut buffers = self.buffers.write();
         let mut images = self.images.write();
@@ -909,7 +904,7 @@ impl Renderer {
         let raster_pipelines = self.raster_pipelines.lock();
         let mut buffers_to_destroy = self.buffers_to_destroy.lock();
         let mut images_to_destroy = self.images_to_destroy.lock();
-        let mut descriptors_to_destroy = self.descriptors_to_destroy.lock();
+        descriptors_to_drop.append(&mut self.descriptors_to_destroy.lock());
 
         // Actual rendering
         let command_buffer =
@@ -938,7 +933,7 @@ impl Renderer {
             &images,
             &raster_pipelines.0,
             DescriptorResolver {
-                descriptors: self.descriptors.read(),
+                descriptors: &descriptors,
             },
             *empty_descriptor_set.raw(),
         );
@@ -951,15 +946,12 @@ impl Renderer {
             self.device.raw.end_command_buffer(command_buffer)?;
         }
         drop(resolver);
-        let mut descriptors_to_drop = Vec::new();
+        let mut descriptors_to_drop = descriptors_to_drop
+            .drain(..)
+            .filter_map(|handle| descriptors.remove(handle))
+            .filter_map(|(_, data)| data.descriptor)
+            .collect::<Vec<_>>();
         descriptors_to_drop.push(empty_descriptor_set);
-        for handle in descriptors_to_destroy.drain(..) {
-            if let Some((_, mut data)) = descriptors.remove(handle) {
-                if let Some(descriptor) = data.descriptor.take() {
-                    descriptors_to_drop.push(descriptor);
-                }
-            }
-        }
         self.device.drop_descriptors(descriptors_to_drop);
         buffers_to_destroy.drain(..).for_each(|handle| {
             buffers.remove(handle);
@@ -973,7 +965,6 @@ impl Renderer {
         drop(images);
         drop(buffers_to_destroy);
         drop(images_to_destroy);
-        drop(descriptors_to_destroy);
         // Submit
         self.device.submit(
             &[command_buffer],
@@ -1019,8 +1010,20 @@ impl Drop for Renderer {
             .for_each(|(pipeline, _)| unsafe {
                 self.device.raw.destroy_pipeline(pipeline, None);
             });
+        let descriptors = self
+            .descriptors
+            .write()
+            .drain()
+            .filter_map(|(_, data)| data.descriptor)
+            .collect::<Vec<_>>();
+        self.device.drop_descriptors(descriptors);
         if let Some(path) = &self.cache_path {
             save_pipeline_cache(&self.device, self.cache, path).ok();
+        }
+        if self.cache != vk::PipelineCache::null() {
+            unsafe {
+                self.device.raw.destroy_pipeline_cache(self.cache, None);
+            }
         }
     }
 }

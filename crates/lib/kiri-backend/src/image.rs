@@ -125,7 +125,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::empty(),
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,

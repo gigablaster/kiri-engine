@@ -1,0 +1,13 @@
+{
+    "vertex": "shaders/fullscreen.vert",
+    "fragment": "shaders/tonemapping.frag",
+    "techniques": {
+        "main": {
+            "desc": {
+                "cull": "None",
+                "depth_test": "Never",
+                "depth_write": false
+            }
+        }
+    }
+}

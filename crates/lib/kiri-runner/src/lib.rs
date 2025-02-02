@@ -19,6 +19,7 @@ use std::{error::Error, sync::Arc};
 
 use kiri_common::{GameAppConfig, GameTime};
 use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
+use kiri_resources::PipelineCache;
 pub use runner::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,7 +39,10 @@ pub enum GameError<E: Error> {
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
-    fn create(renderer: &Arc<Renderer>) -> Result<Self, GameError<E>>;
+    fn create(
+        renderer: Arc<Renderer>,
+        pipeline_cache: Arc<PipelineCache>,
+    ) -> Result<Self, GameError<E>>;
     fn config() -> &'static GameAppConfig<'static>;
     fn update(&mut self, time: GameTime) -> Result<GameTickState, E>;
     fn render(

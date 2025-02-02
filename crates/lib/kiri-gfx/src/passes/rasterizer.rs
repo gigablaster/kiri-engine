@@ -21,6 +21,7 @@ use kiri_backend::{
     },
     ImageViewDesc, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
+use log::debug;
 
 use crate::{DrawStream, Error, ImageHandle, PassDispatcher, RenderResourceResolver};
 

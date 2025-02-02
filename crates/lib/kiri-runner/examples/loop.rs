@@ -3,15 +3,16 @@
 use std::{error::Error, fmt::Display, sync::Arc};
 
 use kiri::{RenderView, RenderWorld};
+use kiri_assets::SourceAssetPath;
 use kiri_common::GameAppConfig;
 use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
 use kiri_math::{vec3, Affine3A, PerspectiveCamera, Quat, Vec3};
-use kiri_resources::{ResourceLoader, ResourceManager};
+use kiri_resources::{PipelineCache, ResourceCache, ResourceLoader};
 use kiri_runner::{run_game, GameClient, GameError, GameTickState};
 
 #[derive(Debug)]
 struct Loop {
-    resources: Arc<ResourceManager>,
+    resources: Arc<ResourceCache>,
     world: RenderWorld,
     time: f32,
 }
@@ -33,9 +34,12 @@ static CONFIG: GameAppConfig = GameAppConfig {
 };
 
 impl GameClient<LoopError> for Loop {
-    fn create(renderer: &Arc<Renderer>) -> Result<Self, GameError<LoopError>> {
-        let resources = ResourceManager::new(renderer)?;
-        let world = RenderWorld::new(&resources)?;
+    fn create(
+        renderer: Arc<Renderer>,
+        pipeline_cache: Arc<PipelineCache>,
+    ) -> Result<Self, GameError<LoopError>> {
+        let resources = ResourceCache::new(renderer)?;
+        let world = RenderWorld::new(resources.clone(), &pipeline_cache)?;
         world.spawn(|context| {
             for x in -10..10 {
                 for y in -10..10 {
@@ -46,64 +50,16 @@ impl GameClient<LoopError> for Loop {
                                 1.25 * y as f32,
                                 1.25 * z as f32,
                             )),
-                            resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf"),
+                            resources.get_or_load_model(
+                                &SourceAssetPath::new("flighthelmet/flighthelmet")
+                                    .compiled()
+                                    .unwrap(),
+                            ),
                         );
                     }
                 }
             }
-            // world.spawn(DirectionalLight {
-            //     direction: Vec3::Z,
-            //     color: vec3(15.0, 10.0, 13.0),
-            // });
-            // world.spawn((
-            //     PerspectiveCamera {
-            //         fov: 1.0,
-            //         znear: 0.1,
-            //         zfar: 100.0,
-            //     },
-            //     Transform(Affine3A::look_at_lh(
-            //         vec3(0.0, 0.5, 2.25),
-            //         Vec3::ZERO,
-            //         Vec3::Y,
-            //     )),
-            // ));
         });
-        // for x in -5..5 {
-        //     for y in -5..5 {
-        //         for z in -5..5 {
-        //             world.spawn((
-        //                 Transform(Affine3A::from_translation(vec3(
-        //                     0.75 * x as f32,
-        //                     0.75 * y as f32,
-        //                     0.75 * z as f32,
-        //                 ))),
-        //                 PendingModel(resources.get_or_load_model("FlightHelmet/FlightHelmet.gltf")),
-        //             ));
-        //         }
-        //     }
-        // }
-        // world.spawn(DirectionalLight {
-        //     direction: Vec3::Z,
-        //     color: vec3(15.0, 10.0, 13.0),
-        // });
-        // world.spawn((
-        //     PerspectiveCamera {
-        //         fov: 1.0,
-        //         znear: 0.1,
-        //         zfar: 100.0,
-        //     },
-        //     Transform(Affine3A::look_at_lh(
-        //         vec3(0.0, 0.5, 2.25),
-        //         Vec3::ZERO,
-        //         Vec3::Y,
-        //     )),
-        // ));
-        // world.insert_resource(HemisphericalLight {
-        //     top: vec3(1.0, 1.0, 1.5),
-        //     middle: vec3(1.0, 0.5, 0.5),
-        //     bottom: vec3(0.5, 1.0, 0.5),
-        // });
-        // world.insert_resource(Postprocess { expouse: 0.2 });
         Ok(Self {
             world,
             resources,

@@ -14,7 +14,7 @@ struct Instance {
     float uv_scale;
 };
 
-layout(set = 3, binding = 0) buffer Instances {
+layout(set = 3, binding = 0) readonly buffer Instances {
     Instance instances[];
 } dynamic;
 

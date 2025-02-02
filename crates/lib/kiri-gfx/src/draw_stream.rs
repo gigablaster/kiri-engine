@@ -25,6 +25,7 @@ use kiri_backend::{
     },
     DYNAMIC_DESCRIPTOR_SLOT_INDEX, MAX_DESCRIPTOR_SETS,
 };
+use log::debug;
 
 const MAX_VERTEX_STREAMS: usize = 2;
 const MAX_DYNAMIC_OFFSETS: usize = 2;

@@ -16,15 +16,18 @@
 use std::{mem, sync::Arc};
 
 use crossbeam::queue::SegQueue;
+use kiri_assets::STATIC_MESH_VERTEX_LAYOUT;
 use kiri_backend::{
-    ash::vk::{self, CompareOp, CullModeFlags},
+    ash::vk::{self},
     DescriptorDesc, DescriptorSetLayoutDesc, InputVertexAttrubute, InputVertexStreamLayout,
-    RasterPipelineCreateDesc, RenderPassLayout, EMPTY_DESCRIPTOR_SET,
+    RenderPassLayout, DYNAMIC_DESCRIPTOR_SLOT_INDEX, EMPTY_DESCRIPTOR_SET,
+    MATERIAL_DESCRIPTOR_SLOT_IDNEX, PASS_DESCRIPTOR_SLOT_INDEX,
 };
 use kiri_gfx::{
-    passes::{ImageDependency, RasterizerPassBuilder, RenderTarget},
-    BufferPointer, DescriptorHandle, DrawStream, DrawStreamBuilder, RasterPipelineDesc,
+    passes::{CopyToBackbufferPass, ImageDependency, RasterizerPassBuilder, RenderTarget},
+    BufferPointer, DescriptorHandle, DescriptorSetCreateDesc, DrawStream, DrawStreamBuilder,
     RasterPipelineHandle, RenderContext, RenderModel, RenderTargetPool, TransientImage,
+    MESH_PBR_MATERIAL_DESCRIPTOR_SET,
 };
 use kiri_math::{
     vec3, vec4, Affine3A, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A,
@@ -32,7 +35,10 @@ use kiri_math::{
 use kiri_resources::{ModelHandle, PipelineCache, ResourceCache};
 use log::warn;
 use parking_lot::Mutex;
-use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+use rayon::{
+    iter::{IndexedParallelIterator, ParallelIterator},
+    slice::ParallelSlice,
+};
 
 use crate::Error;
 const DRAWS_PER_STREAM: usize = 512;
@@ -84,12 +90,101 @@ enum Operation {
     UpdateLightRadius(RenderWorldHandle, f32),
 }
 
+const ZPASS_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[],
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
+const MAIN_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::R16G16B16A16_SFLOAT],
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
+const SCENE_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorDesc {
+            name: "pass",
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            count: 1,
+        },
+    )],
+    compute_groups_size: None,
+};
+
+const INSTANCE_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorDesc {
+            name: "instances",
+            ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            count: 1,
+        },
+    )],
+    compute_groups_size: None,
+};
+
+const RENDER_DESCRIPTOR_SET_LAYOUT: [DescriptorSetLayoutDesc; 4] = [
+    SCENE_DESCRIPTOR_SET,
+    EMPTY_DESCRIPTOR_SET,
+    MESH_PBR_MATERIAL_DESCRIPTOR_SET,
+    INSTANCE_DESCRIPTOR_SET,
+];
+
+#[derive(Debug, Clone, Copy)]
+struct MaterialPipelines {
+    main_pass: (
+        RasterPipelineHandle,
+        RasterPipelineHandle,
+        RasterPipelineHandle,
+    ),
+    depth: RasterPipelineHandle,
+}
+
+impl MaterialPipelines {
+    fn new(cache: &PipelineCache, main: &str, depth: &str) -> Result<Self, Error> {
+        Ok(Self {
+            main_pass: (
+                cache.get_or_create_raster_pipeline(
+                    main,
+                    "opaque",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &RENDER_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                )?,
+                cache.get_or_create_raster_pipeline(
+                    main,
+                    "mask",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &RENDER_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                )?,
+                cache.get_or_create_raster_pipeline(
+                    main,
+                    "transparent",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &RENDER_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                )?,
+            ),
+            depth: cache.get_or_create_raster_pipeline(
+                depth,
+                "main",
+                &ZPASS_RENDER_PASS_LAYOUT,
+                &RENDER_DESCRIPTOR_SET_LAYOUT,
+                &STATIC_MESH_VERTEX_LAYOUT,
+            )?,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct RenderWorld {
     resource_cache: Arc<ResourceCache>,
     inner: Mutex<RenderWorldInner>,
     operations: SegQueue<Operation>,
     tonemapping: RasterPipelineHandle,
+    pbr_material_static: MaterialPipelines,
 }
 
 pub struct WorldSpawnContext<'a> {
@@ -256,23 +351,23 @@ static POSTPROCESS_DESCRIPTOR_SET_LAYOUT: [DescriptorSetLayoutDesc; 4] = [
 impl RenderWorld {
     pub fn new(
         resource_cache: Arc<ResourceCache>,
-        pipeline_cache: Arc<PipelineCache>,
+        pipeline_cache: &PipelineCache,
     ) -> Result<Self, Error> {
         let tonemapping = pipeline_cache.get_or_create_raster_pipeline(
-            "shaders/fullscreen.vert",
-            "shaders/tonemapping.frag",
+            "effects/tonemapping",
+            "main",
             &POSTPROCESS_PASS_LAYOUT,
             &POSTPROCESS_DESCRIPTOR_SET_LAYOUT,
             &POSTPROCESS_INPUT_LAYOUT,
-            RasterPipelineCreateDesc::default()
-                .cull(CullModeFlags::NONE)
-                .depth_test(CompareOp::NEVER)
-                .depth_write(false),
-            None,
         )?;
         Ok(Self {
             inner: Default::default(),
             operations: Default::default(),
+            pbr_material_static: MaterialPipelines::new(
+                &pipeline_cache,
+                "effects/pbr",
+                "effects/depth",
+            )?,
             tonemapping,
             resource_cache,
         })
@@ -369,7 +464,7 @@ impl RenderWorld {
         let mut world = self.inner.lock();
         self.commit(&mut world);
         self.process_loading(&mut world);
-        let culled = world.cull(&camera.camera.frustum());
+        let culled = world.cull(&camera.camera.frustum(), &self.pbr_material_static);
         drop(world);
         let depth = Self::render_zprepass(context, pool, &camera.camera, &culled)?;
         let hdr = Self::render_hdr(
@@ -386,7 +481,7 @@ impl RenderWorld {
     }
 
     fn render_zprepass<'a>(
-        context: &'a RenderContext,
+        context: &RenderContext,
         pool: &'a RenderTargetPool,
         camera: &impl Camera,
         culled: &CullData,
@@ -419,20 +514,19 @@ impl RenderWorld {
             projection,
             view_projection,
         }])?;
-        let pass_ds = context.get_descriptor_set(
-            DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                &RENDER_PASS_DESCRIPTOR_LAYOUT,
-            )
-            .bind_uniform_buffer("per_pass", pass_data)?,
-        )?;
+        let pass_ds = context.create_temp_descriptor(DescriptorSetCreateDesc {
+            layout: SCENE_DESCRIPTOR_SET,
+            stages: vk::ShaderStageFlags::ALL_GRAPHICS,
+            unifoms: &[pass_data],
+            ..Default::default()
+        })?;
         Self::generate_commands(context, &mut pass, &culled.ops, &culled.depth, pass_ds);
         context.submit(pass.build());
         Ok(depth)
     }
 
     fn render_hdr<'a>(
-        context: &'a RenderContext,
+        context: &RenderContext,
         pool: &'a RenderTargetPool,
         depth: TransientImage<'a>,
         camera: &impl Camera,
@@ -480,13 +574,12 @@ impl RenderWorld {
                 bottom: ambient.2.into(),
             },
         }])?;
-        let pass_ds = context.get_descriptor_set(
-            DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                &RENDER_PASS_DESCRIPTOR_LAYOUT,
-            )
-            .bind_uniform_buffer("per_pass", pass_data)?,
-        )?;
+        let pass_ds = context.create_temp_descriptor(DescriptorSetCreateDesc {
+            layout: SCENE_DESCRIPTOR_SET,
+            stages: vk::ShaderStageFlags::ALL_GRAPHICS,
+            unifoms: &[pass_data],
+            ..Default::default()
+        })?;
         let mut pass = RasterizerPassBuilder::new(
             "main",
             &[RenderTarget::new(hdr.handle)
@@ -508,7 +601,7 @@ impl RenderWorld {
 
     fn postprocess<'a>(
         &self,
-        context: &'a RenderContext,
+        context: &RenderContext,
         pool: &'a RenderTargetPool,
         hdr: TransientImage,
         expouse: f32,
@@ -520,7 +613,7 @@ impl RenderWorld {
 
     fn tonemapping<'a>(
         &self,
-        context: &'a RenderContext,
+        context: &RenderContext,
         pool: &'a RenderTargetPool,
         hdr: TransientImage,
         expouse: f32,
@@ -537,17 +630,13 @@ impl RenderWorld {
         )
         .read_image(ImageDependency::color(hdr.handle));
 
-        let ds = context.get_descriptor_set(
-            DescriptorSetBuilder::new(
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                &POSTPROCESS_DESCRIPTOR_LAYOUT,
-            )
-            .bind_image("main", hdr.handle, vk::ImageAspectFlags::COLOR)?
-            .bind_uniform_buffer(
-                "params",
-                context.push_dynamic_data(&[TonemappingGpuData { expouse }])?,
-            )?,
-        )?;
+        let ds = context.create_temp_descriptor(DescriptorSetCreateDesc {
+            layout: POSTPROCESS_DESCRIPTOR_LAYOUT,
+            stages: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            images: &[hdr.handle],
+            unifoms: &[context.push_dynamic_data(&[TonemappingGpuData { expouse }])?],
+            ..Default::default()
+        })?;
 
         pass.draw(Self::fullscreen_quad(context, self.tonemapping, ds)?);
 
@@ -557,7 +646,7 @@ impl RenderWorld {
 
     fn fullscreen_quad(
         context: &RenderContext,
-        pipeline: PipelineHandle,
+        pipeline: RasterPipelineHandle,
         ds: DescriptorHandle,
     ) -> Result<DrawStream, kiri_gfx::Error> {
         let mut stream = DrawStreamBuilder::default();
@@ -589,7 +678,7 @@ impl RenderWorld {
     }
 
     fn copy_to_backbuffer(&self, context: &RenderContext, ldr: TransientImage) {
-        context.submit(Box::new(FinalCompositionPassDispatcher::new(ldr.handle)));
+        context.submit(Box::new(CopyToBackbufferPass::new(ldr.handle)));
     }
 
     fn generate_commands(
@@ -604,18 +693,15 @@ impl RenderWorld {
             .par_chunks(DRAWS_PER_STREAM)
             .map(|chunk| {
                 let instance_ds = context
-                    .get_descriptor_set(
-                        DescriptorSetBuilder::new(
-                            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                            &INSTANCE_DESCRIPTOR_LAYOUT,
-                        )
-                        .bind_dynamic_storage_buffer(
-                            "instance",
+                    .create_temp_descriptor(DescriptorSetCreateDesc {
+                        layout: INSTANCE_DESCRIPTOR_SET,
+                        stages: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        dynamic_storage_buffers: &[(
                             context.get_temprary_buffer(),
-                            (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM) as _,
-                        )
-                        .unwrap(),
-                    )
+                            (mem::size_of::<GpuInstanceData>() * DRAWS_PER_STREAM),
+                        )],
+                        ..Default::default()
+                    })
                     .unwrap();
                 let mut writer = context
                     .write_dynamic_data::<GpuInstanceData>(DRAWS_PER_STREAM)
@@ -633,9 +719,9 @@ impl RenderWorld {
                             })
                             .unwrap();
                         stream.set_pipeline(render_op.pipeline);
-                        stream.set_descriptor(PASS_BINDING_SLOT, Some(pass_ds));
-                        stream.set_descriptor(DYNAMIC_BINDING_SLOT, Some(instance_ds));
-                        stream.set_descriptor(MATERIAL_BINDING_SLOT, Some(render_op.ds));
+                        stream.set_descriptor(PASS_DESCRIPTOR_SLOT_INDEX, Some(pass_ds));
+                        stream.set_descriptor(DYNAMIC_DESCRIPTOR_SLOT_INDEX, Some(instance_ds));
+                        stream.set_descriptor(MATERIAL_DESCRIPTOR_SLOT_IDNEX, Some(render_op.ds));
                         stream.set_dynamic_offset(0, Some(writer.offset as _));
                         stream.set_vertex_buffer(0, op.vertices);
                         stream.set_vertex_offset(op.vertex_offset as _);
@@ -769,7 +855,7 @@ impl RenderWorldInner {
         self.empty.push(handle.index);
     }
 
-    fn cull(&self, frustrum: &[Plane]) -> CullData {
+    fn cull(&self, frustrum: &[Plane], pbr: &MaterialPipelines) -> CullData {
         puffin::profile_function!();
         let mut ops = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
         let mut depth = Vec::with_capacity(DEFAULT_RENDER_OP_CAPACITY);
@@ -809,30 +895,36 @@ impl RenderWorldInner {
                                         vertex_offset: surface.vertex_offset,
                                         uv_scale: mesh.uv_scale,
                                     });
-                                    if surface.material.depth.is_valid() {
-                                        depth.push(RenderOp {
-                                            pipeline: surface.material.depth,
-                                            ds: surface.material.instance.ds,
-                                            op_index: index,
-                                        });
-                                    }
-                                    // TODO: choose main or transparent based on overriden color
-                                    if surface.material.main.is_valid() {
-                                        opaque.push(RenderOp {
-                                            pipeline: surface.material.main,
-                                            ds: surface.material.instance.ds,
-                                            op_index: index,
-                                        });
-                                    }
-                                    if surface.material.transparent.is_valid() {
-                                        transparent.push((
-                                            0.0,
-                                            RenderOp {
-                                                pipeline: surface.material.transparent,
-                                                ds: surface.material.instance.ds,
+                                    match surface.material.order {
+                                        kiri_gfx::RenderMeshMaterialOrder::Opaque => {
+                                            depth.push(RenderOp {
+                                                pipeline: pbr.depth,
+                                                ds: surface.material.descriptor,
                                                 op_index: index,
-                                            },
-                                        ));
+                                            });
+                                            opaque.push(RenderOp {
+                                                pipeline: pbr.main_pass.0,
+                                                ds: surface.material.descriptor,
+                                                op_index: index,
+                                            });
+                                        }
+                                        kiri_gfx::RenderMeshMaterialOrder::Masked => {
+                                            opaque.push(RenderOp {
+                                                pipeline: pbr.main_pass.1,
+                                                ds: surface.material.descriptor,
+                                                op_index: index,
+                                            });
+                                        }
+                                        kiri_gfx::RenderMeshMaterialOrder::Transparent => {
+                                            transparent.push((
+                                                0.0,
+                                                RenderOp {
+                                                    pipeline: pbr.main_pass.2,
+                                                    ds: surface.material.descriptor,
+                                                    op_index: index,
+                                                },
+                                            ));
+                                        }
                                     }
                                 }
                             }
@@ -843,10 +935,12 @@ impl RenderWorldInner {
             }
         }
         radsort::sort_by_key(&mut depth, |x| {
-            ((x.pipeline.index() as u64) << 32) | x.ds.index() as u64
+            let pipeline: u32 = x.pipeline.into();
+            ((pipeline as u64) << 32) | x.ds.index() as u64
         });
         radsort::sort_by_key(&mut opaque, |x| {
-            ((x.pipeline.index() as u64) << 32) | x.ds.index() as u64
+            let pipeline: u32 = x.pipeline.into();
+            ((pipeline as u64) << 32) | x.ds.index() as u64
         });
         radsort::sort_by_key(&mut transparent, |(depth, _)| (depth * 1000.0) as u64);
         radsort::sort_by_key(&mut directional_lights, |(_, light)| {

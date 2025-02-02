@@ -47,6 +47,7 @@ pub struct RenderMeshMaterial {
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
+    pub vertex_offset: u32,
     pub material: RenderMeshMaterial,
 }
 
@@ -107,6 +108,7 @@ impl RenderMeshBuilder {
 
     pub fn surface(&mut self, first_index: u32, index_count: u32, material: RenderMeshMaterial) {
         self.surfaces.push(RenderMeshSurface {
+            vertex_offset: self.first_vertex as u32,
             first_index,
             index_count,
             material,
@@ -270,7 +272,7 @@ impl Drop for RenderModel {
     }
 }
 
-pub static MESH_PBR_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+pub static MESH_PBR_MATERIAL_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
     layout: &[
         (
             0,

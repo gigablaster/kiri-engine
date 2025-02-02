@@ -61,12 +61,12 @@ unsafe impl Send for PipelineCache {}
 unsafe impl Sync for PipelineCache {}
 
 impl PipelineCache {
-    pub fn new(renderer: Arc<Renderer>) -> Self {
-        Self {
+    pub fn new(renderer: Arc<Renderer>) -> Arc<Self> {
+        Arc::new(Self {
             raster_pipelines: Default::default(),
             render_effects: Default::default(),
             renderer,
-        }
+        })
     }
 
     fn get_or_create_render_effect(
