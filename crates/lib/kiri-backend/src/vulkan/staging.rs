@@ -25,9 +25,9 @@ use gpu_alloc::{Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 use kiri_common::BumpAllocator;
 
-use crate::{
-    Error, GpuAllocator, GpuMemoryBlock, ImageDesc, ImageUploadData, PhysicalDevice, Queue,
-};
+use crate::{Error, ImageUploadData};
+
+use super::{GpuAllocator, GpuMemoryBlock, ImageDesc, PhysicalDevice, Queue};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);

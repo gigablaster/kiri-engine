@@ -21,7 +21,9 @@ use std::{
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{Error, GpuAllocator, GpuDescriptorAllocator};
+use crate::Error;
+
+use super::{GpuAllocator, GpuDescriptorAllocator};
 
 use super::DropList;
 

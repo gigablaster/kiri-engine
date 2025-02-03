@@ -24,9 +24,11 @@ use kiri_common::{Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::{
-    image::ImageData, program::Program, staging::Staging, BufferData, DescriptorSetLayoutDesc,
-    Error, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock, Instance,
+use crate::Error;
+
+use super::{
+    BufferData, DescriptorSetLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock,
+    ImageData, Instance, Program, Staging,
 };
 
 use super::{

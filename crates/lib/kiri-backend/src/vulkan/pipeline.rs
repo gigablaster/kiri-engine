@@ -25,7 +25,9 @@ use ash::vk::{self, CompareOp, UUID_SIZE};
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 
-use crate::{Error, Program, RenderDevice};
+use crate::Error;
+
+use super::{Program, RenderDevice};
 
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;

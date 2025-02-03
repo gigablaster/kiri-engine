@@ -17,7 +17,7 @@ use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor_ash::AshDescriptorDevice;
 
-use crate::{GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock};
+use super::{GpuAllocator, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock};
 
 #[derive(Debug, Default)]
 pub struct DropList {

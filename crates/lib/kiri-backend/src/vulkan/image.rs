@@ -13,14 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::collections::HashMap;
 
+use crate::{Error, ImageUploadData};
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{GpuMemoryBlock, ImageHandle, ImageUploadData, RenderDevice};
-
-use super::{DropList, Error};
+use super::{GpuMemoryBlock, ImageHandle, RenderDevice};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {

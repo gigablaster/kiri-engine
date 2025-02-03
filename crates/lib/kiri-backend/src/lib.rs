@@ -13,39 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod buffer;
-mod drop_list;
 mod error;
-mod frame;
-mod image;
-mod instance;
-mod physical_device;
-mod pipeline;
-mod program;
-mod render_device;
-mod staging;
-mod swapchain;
+pub mod vulkan;
 
-pub use ash;
-use ash::vk;
-use buffer::*;
-use drop_list::*;
 pub use error::*;
-pub use frame::*;
-use image::*;
-pub use instance::*;
-pub use physical_device::*;
-pub use pipeline::*;
-use program::*;
-pub use render_device::*;
-pub use swapchain::*;
-
-pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
-pub type GpuMemoryBlock = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
-pub type GpuDescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
-pub type GpuDescriptor = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-pub use gpu_descriptor::DescriptorTotalCount;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ImageUploadData<'a> {

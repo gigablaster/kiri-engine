@@ -23,7 +23,9 @@ use ash::vk::{self};
 use log::info;
 use raw_window_handle::RawWindowHandle;
 
-use crate::{Error, ImageDesc, ImageHandle, Instance, RenderDevice};
+use crate::Error;
+
+use super::{ImageDesc, ImageHandle, Instance, RenderDevice};
 
 use super::physical_device::PhysicalDevice;
 

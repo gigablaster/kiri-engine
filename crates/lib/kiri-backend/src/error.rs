@@ -16,7 +16,7 @@
 use ash::vk;
 use thiserror::Error;
 
-use crate::{BufferHandle, ImageHandle, SamplerDesc};
+use crate::vulkan::{BufferHandle, ImageHandle, SamplerDesc};
 
 #[derive(Debug, Error)]
 pub enum Error {

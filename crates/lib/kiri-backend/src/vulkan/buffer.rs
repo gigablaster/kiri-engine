@@ -18,7 +18,9 @@ use std::ptr::NonNull;
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{BufferHandle, Error, GpuMemoryBlock, RenderDevice};
+use crate::Error;
+
+use super::{BufferHandle, GpuMemoryBlock, RenderDevice};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
