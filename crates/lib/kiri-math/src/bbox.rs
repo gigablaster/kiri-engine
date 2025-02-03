@@ -173,7 +173,9 @@ impl Bounds for BoundingBox {
 
 #[cfg(test)]
 mod test {
-    use glam::{vec3, Affine3A, Vec3};
+    use std::f32::consts::FRAC_PI_2;
+
+    use glam::{vec3, vec3a, Affine3A, Vec3};
 
     use crate::{BoundingSphere, Bounds, Camera, PerspectiveCamera, Plane, Ray};
 
@@ -191,6 +193,21 @@ mod test {
         assert_eq!(vec3(2.0, 2.0, 2.0), bbox.max.into());
         assert_eq!(Vec3::ONE, bbox.center());
         assert_eq!(vec3(2.0, 2.0, 2.0), bbox.extents());
+    }
+
+    #[test]
+    fn bbox_from_point_array() {
+        let points = [
+            [-2.0, -3.0, -4.0],
+            [4.0, 3.0, 2.0],
+            [-1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 2.0, 1.0],
+            [1.0, 2.0, 2.0],
+        ];
+        let bbox = BoundingBox::from_points_array(&points);
+        assert_eq!(vec3a(-2.0, -3.0, -4.0), bbox.min);
+        assert_eq!(vec3a(4.0, 3.0, 2.0), bbox.max);
     }
 
     #[test]
@@ -438,9 +455,16 @@ mod test {
 
     #[test]
     fn bbox_in_frustum() {
-        let frustum =
-            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .frustum();
+        let frustum = PerspectiveCamera::new(
+            vec3(0.0, 0.0, 0.0),
+            Vec3::Z,
+            Vec3::Y,
+            FRAC_PI_2,
+            1.0,
+            1.0,
+            10.0,
+        )
+        .frustum();
         assert!(BoundingBox::from_extent(vec3(0.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
         assert!(
             BoundingBox::from_extent(vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0)).is_visible(&frustum)
@@ -448,14 +472,24 @@ mod test {
         assert!(
             BoundingBox::from_extent(vec3(0.0, 0.0, 10.0), vec3(2.0, 2.0, 2.0))
                 .is_visible(&frustum)
-        )
+        );
+        assert!(
+            BoundingBox::from_extent(vec3(3.5, 0.0, 3.5), vec3(1.0, 1.0, 1.0)).is_visible(&frustum)
+        );
     }
 
     #[test]
     fn bbox_not_in_frustum() {
-        let frustum =
-            PerspectiveCamera::new(vec3(0.0, 0.0, 0.0), Vec3::Z, Vec3::Y, 1.0, 1.0, 1.0, 10.0)
-                .frustum();
+        let frustum = PerspectiveCamera::new(
+            vec3(0.0, 0.0, 0.0),
+            Vec3::Z,
+            Vec3::Y,
+            FRAC_PI_2,
+            1.0,
+            1.0,
+            10.0,
+        )
+        .frustum();
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, -1.0), Vec3::ONE).is_visible(&frustum));
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, 12.0), Vec3::ONE).is_visible(&frustum));
         assert!(!BoundingBox::from_extent(vec3(0.0, 5.0, 5.0), Vec3::ONE).is_visible(&frustum));

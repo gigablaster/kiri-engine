@@ -3,10 +3,16 @@
     "fragment": "shaders/basic.frag",
     "techniques": {
         "opaque": {
-            "desc": {}
+            "desc": {
+                "depth_write": false,
+                "depth_test": "Equal"
+            }
         },
         "mask": {
-            "desc": {},
+            "desc": {
+                "depth_write": true,
+                "depth_test": "LessOrEqual"
+            },
             "spec": {
                 "0": 1
             }
@@ -25,7 +31,8 @@
                         "op": "Add"
                     }
                 },
-                "depth_write": false
+                "depth_write": false,
+                "depth_test": "LessOrEqual"
             }
         }
     }

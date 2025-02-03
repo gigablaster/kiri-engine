@@ -3,7 +3,10 @@
     "fragment": "shaders/depth.frag",
     "techniques": {
         "main": {
-            "desc": {}
+            "desc": {
+                "depth_write": true,
+                "depth_test": "LessOrEqual"
+            }
         }
     }
 }
