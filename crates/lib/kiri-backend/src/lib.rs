@@ -28,15 +28,15 @@ mod swapchain;
 
 pub use ash;
 use ash::vk;
-pub use buffer::*;
+use buffer::*;
 use drop_list::*;
 pub use error::*;
 pub use frame::*;
-pub use image::*;
+use image::*;
 pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
-pub use program::*;
+use program::*;
 pub use render_device::*;
 pub use swapchain::*;
 

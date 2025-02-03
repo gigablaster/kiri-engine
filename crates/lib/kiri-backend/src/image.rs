@@ -18,7 +18,7 @@ use std::{collections::HashMap, hash::Hash, sync::Arc};
 use ash::vk;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{GpuMemoryBlock, ImageUploadData, RenderDevice};
+use crate::{GpuMemoryBlock, ImageHandle, ImageUploadData, RenderDevice};
 
 use super::{DropList, Error};
 
@@ -65,7 +65,7 @@ impl ImageViewDesc {
         Self::new(vk::ImageAspectFlags::DEPTH)
     }
 
-    fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
+    fn build(&self, image: &ImageData) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
             .format(self.format.unwrap_or(image.desc.format))
             .components(vk::ComponentMapping {
@@ -88,7 +88,7 @@ impl ImageViewDesc {
             .image(image.raw)
     }
 
-    fn convert_image_type_to_view_type(image: &Image) -> vk::ImageViewType {
+    fn convert_image_type_to_view_type(image: &ImageData) -> vk::ImageViewType {
         match image.desc.ty {
             vk::ImageType::TYPE_1D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_1D,
             vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D_ARRAY,
@@ -299,68 +299,50 @@ impl<'a> ImageCreateDesc<'a> {
 }
 
 #[derive(Debug)]
-pub struct Image {
-    device: Arc<RenderDevice>,
+pub struct ImageData {
     pub raw: vk::Image,
     pub desc: ImageDesc,
-    memory: Option<GpuMemoryBlock>,
-    views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
+    pub memory: Option<GpuMemoryBlock>,
+    pub views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
-impl Drop for Image {
-    fn drop(&mut self) {
-        if let Some(memory) = self.memory.take() {
-            self.device.with_drop_list(|drop_list| {
-                drop_list.drop_image(self.raw);
-                drop_list.drop_memory(memory);
-                self.clear_views_impl(drop_list);
-            });
-        } else {
-            self.clear_views();
-        }
-    }
-}
-
-/// Wraps vulkan image
-///
-/// Keep all resources, everything will be freed as soon as image is dropped.
-/// Keeps tracking for associated image views.
-impl Image {
+impl RenderDevice {
     /// Wraps external image
     ///
     /// Image won't be destroyed when instance is dropped. But views will be freed.
-    pub fn external(
-        device: &Arc<RenderDevice>,
+    pub(crate) fn crate_external_image(
+        &self,
         image: vk::Image,
         desc: ImageDesc,
         name: Option<&str>,
-    ) -> Self {
+    ) -> ImageHandle {
         if let Some(name) = name {
-            device.set_object_name(image, name);
+            self.set_object_name(image, name);
         }
-        Self {
-            device: device.clone(),
+
+        let image = ImageData {
             raw: image,
             desc,
             views: Default::default(),
             memory: None,
-        }
+        };
+        self.images.write().push(image)
     }
 
     /// Creates new image
     ///
     /// Including memory allocation. All resources will be freed when instance
     /// is dropped.    
-    pub fn new(
-        device: &Arc<RenderDevice>,
+    pub fn create_image(
+        &self,
         desc: ImageCreateDesc,
         data: Option<&[ImageUploadData]>,
-    ) -> Result<Self, Error> {
-        let image = unsafe { device.raw.create_image(&desc.build(), None) }?;
+    ) -> Result<ImageHandle, Error> {
+        let image = unsafe { self.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
-            device.set_object_name(image, name);
+            self.set_object_name(image, name);
         }
-        let mut requirements = unsafe { device.raw.get_image_memory_requirements(image) };
+        let mut requirements = unsafe { self.raw.get_image_memory_requirements(image) };
         // Workaround - gpu_alloc returns wrong offset when size < aligment.
         requirements.size = requirements.size.max(requirements.alignment);
 
@@ -371,10 +353,9 @@ impl Image {
         {
             memory_usage |= gpu_alloc::UsageFlags::TRANSIENT;
         }
-        let memory = device.allocate(requirements, memory_usage, false)?;
+        let memory = self.allocate(requirements, memory_usage, false)?;
         unsafe {
-            device
-                .raw
+            self.raw
                 .bind_image_memory(image, *memory.memory(), memory.offset())
         }?;
         let desc = ImageDesc {
@@ -386,29 +367,44 @@ impl Image {
             array_elements: desc.array_elements,
         };
         if let Some(data) = data {
-            device.with_staging(|staging| staging.upload_image(&device.raw, image, desc, data))?;
+            self.staging
+                .lock()
+                .upload_image(&self.raw, image, desc, data)?;
         }
-        Ok(Self {
-            device: device.clone(),
+        let image = ImageData {
             raw: image,
             desc,
             views: Default::default(),
             memory: Some(memory),
-        })
+        };
+        Ok(self.images.write().push(image))
     }
 
-    fn clear_views_impl(&self, drop_list: &mut DropList) {
-        self.views
-            .write()
-            .drain()
-            .for_each(|(_, view)| drop_list.drop_view(view))
+    pub fn clear_image_views(&self, handle: ImageHandle) {
+        let images = self.images.read();
+        let mut drop_list = self.current_drop_list.lock();
+        if let Some(image) = images.get(handle) {
+            image
+                .views
+                .write()
+                .drain()
+                .for_each(|(_, view)| drop_list.drop_view(view))
+        };
     }
 
     /// Gets or creates image view
     ///
     /// Image views are managed by image itself.
-    pub fn view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, Error> {
-        let views = self.views.upgradable_read();
+    pub fn get_or_create_image_view(
+        &self,
+        handle: ImageHandle,
+        desc: ImageViewDesc,
+    ) -> Result<vk::ImageView, Error> {
+        let images = self.images.read();
+        let image = images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?;
+        let views = image.views.upgradable_read();
         if let Some(view) = views.get(&desc) {
             Ok(*view)
         } else {
@@ -416,23 +412,15 @@ impl Image {
             if let Some(view) = views.get(&desc) {
                 Ok(*view)
             } else {
-                let view = self.create_view(desc)?;
+                let create_info = desc.build(image);
+                let view = unsafe { self.raw.create_image_view(&create_info, None) }?;
                 views.insert(desc, view);
                 Ok(view)
             }
         }
     }
 
-    /// Clear all views created for this image
-    pub fn clear_views(&self) {
-        self.device.with_drop_list(|drop_list| {
-            self.clear_views_impl(drop_list);
-        })
-    }
-
-    fn create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, Error> {
-        let create_info = desc.build(self);
-        let view = unsafe { self.device.raw.create_image_view(&create_info, None) }?;
-        Ok(view)
+    pub fn destroy_image(&self, handle: ImageHandle) {
+        self.images_to_destroy.lock().push(handle);
     }
 }

@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{Buffer, BufferCreateDesc, PhysicalDevice};
+use kiri_backend::{BufferData, BufferCreateDesc, PhysicalDevice};
 use kiri_common::BumpAllocator;
 
 use crate::{BufferHandle, BufferSlice, Error, Renderer};

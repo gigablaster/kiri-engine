@@ -21,9 +21,9 @@ use kiri_backend::{
         vk::{self},
     },
     compile_raster_pipeline, load_or_create_pipeline_cache, save_pipeline_cache, AcquiredSurface,
-    Buffer, BufferCreateDesc, DescriptorSetLayoutDesc, DescriptorTotalCount, GpuDescriptor, Image,
-    ImageCreateDesc, ImageDesc, ImageUploadData, ImageViewDesc, InputVertexStreamLayout, Program,
-    RasterPipelineCreateDesc, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
+    BufferCreateDesc, BufferData, DescriptorSetLayoutDesc, DescriptorTotalCount, GpuDescriptor,
+    ImageCreateDesc, ImageData, ImageDesc, ImageUploadData, ImageViewDesc, InputVertexStreamLayout,
+    Program, RasterPipelineCreateDesc, RenderDevice, RenderPassLayout, ShaderDesc, Swapchain,
     EMPTY_DESCRIPTOR_SET,
 };
 use kiri_common::{BlockAllocator, GameAppConfig, Handle, HotColdPool, Pool, TempList};

@@ -16,7 +16,7 @@
 use ash::vk;
 use thiserror::Error;
 
-use crate::SamplerDesc;
+use crate::{BufferHandle, ImageHandle, SamplerDesc};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -54,6 +54,14 @@ pub enum Error {
     Fragmentation,
     #[error("Out of pool memory")]
     OutOfPoolMemory,
+    #[error("Invalid image handle {0}")]
+    InvalidImageHandle(ImageHandle),
+    #[error("Invalid buffer handle {0}")]
+    InvalidBufferHandle(BufferHandle),
+    #[error("Descriptor binding slot with name {0} not found")]
+    BindingSlotNotFound(String),
+    #[error("Buffer {0} isn't mapped")]
+    BufferIsntMapped(BufferHandle),
 }
 
 impl From<vk::Result> for Error {

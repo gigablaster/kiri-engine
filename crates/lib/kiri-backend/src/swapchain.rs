@@ -23,7 +23,7 @@ use ash::vk::{self};
 use log::info;
 use raw_window_handle::RawWindowHandle;
 
-use crate::{Error, Image, ImageDesc, Instance, RenderDevice};
+use crate::{Error, ImageDesc, ImageHandle, Instance, RenderDevice};
 
 use super::physical_device::PhysicalDevice;
 
@@ -62,18 +62,19 @@ impl Drop for Surface {
 
 pub struct Swapchain {
     device: Arc<RenderDevice>,
-    pub raw: vk::SwapchainKHR,
-    images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
+    pub(crate) raw: vk::SwapchainKHR,
+    images: ArrayVec<ImageHandle, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
     acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
-    pub dims: [u32; 2],
+    dims: [usize; 2],
 }
 
 pub struct SwapchainImage<'a> {
     pub swapchain: &'a Swapchain,
-    pub image: &'a Image,
-    pub image_index: u32,
+    pub image: &'a ImageHandle,
+    pub dims: [usize; 2],
+    pub image_index: usize,
     pub acquire_semaphore: vk::Semaphore,
 }
 
@@ -84,7 +85,7 @@ pub enum AcquiredSurface<'a> {
 
 impl Swapchain {
     pub fn new(
-        device: &Arc<RenderDevice>,
+        device: Arc<RenderDevice>,
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, Error> {
@@ -170,8 +171,7 @@ impl Swapchain {
             .iter()
             .enumerate()
             .map(|(index, image)| {
-                Image::external(
-                    device,
+                device.crate_external_image(
                     *image,
                     ImageDesc {
                         ty: vk::ImageType::TYPE_2D,
@@ -206,7 +206,10 @@ impl Swapchain {
             acquire_semaphores,
             next_semaphore: AtomicUsize::new(0),
             loader,
-            dims: [surface_resolution.width, surface_resolution.height],
+            dims: [
+                surface_resolution.width as usize,
+                surface_resolution.height as usize,
+            ],
         })
     }
 
@@ -243,7 +246,8 @@ impl Swapchain {
         Ok(AcquiredSurface::Image(SwapchainImage {
             swapchain: self,
             image: &self.images[present_index as usize],
-            image_index: present_index,
+            image_index: present_index as usize,
+            dims: self.dims,
             acquire_semaphore,
         }))
     }

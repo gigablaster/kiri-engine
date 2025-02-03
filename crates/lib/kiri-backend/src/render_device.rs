@@ -20,13 +20,13 @@ use ash::vk::{self};
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use kiri_common::TempList;
+use kiri_common::{Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
 use crate::{
-    staging::Staging, DescriptorSetLayoutDesc, Error, GpuDescriptor, GpuDescriptorAllocator,
-    GpuMemoryBlock, Instance,
+    image::ImageData, program::Program, staging::Staging, BufferData, DescriptorSetLayoutDesc,
+    Error, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock, Instance,
 };
 
 use super::{
@@ -35,6 +35,21 @@ use super::{
 };
 
 const MAX_SUBMITS: usize = 32;
+const MAX_RESOURCES: usize = 0xFFFF;
+
+pub type ImageHandle = Handle<ImageData>;
+pub type BufferHandle = Handle<vk::Buffer>;
+pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+#[derive(Debug, Clone, Copy)]
+pub struct ProgramHandle(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterPipelineHandle(u32);
+
+type BufferPool = HotColdPool<vk::Buffer, BufferData>;
+// type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+type RasterPipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
+type ProgramPool = Vec<Program>;
+type ImagePool = Pool<ImageData>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -49,14 +64,18 @@ pub struct RenderDevice {
     pub physical_device: PhysicalDevice,
     pub raw: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
-    current_drop_list: Mutex<DropList>,
+    pub(crate) current_drop_list: Mutex<DropList>,
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Queue>,
     layouts: RwLock<HashMap<DescriptorSetLayoutDesc<'static>, vk::DescriptorSetLayout>>,
     memory_allocator: Mutex<GpuAllocator>,
     descriptor_allocator: Mutex<GpuDescriptorAllocator>,
-    staging: Mutex<Staging>,
+    pub(crate) staging: Mutex<Staging>,
+    pub(crate) buffers: RwLock<BufferPool>,
+    pub(crate) images: RwLock<ImagePool>,
+    pub(crate) buffers_to_destroy: Mutex<Vec<BufferHandle>>,
+    pub(crate) images_to_destroy: Mutex<Vec<ImageHandle>>,
 }
 
 impl Debug for RenderDevice {
@@ -274,6 +293,10 @@ impl RenderDevice {
             memory_allocator: Mutex::new(allocator),
             physical_device: pdevice,
             descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(0)),
+            buffers: RwLock::new(BufferPool::new(MAX_RESOURCES)),
+            images: RwLock::new(ImagePool::new(MAX_RESOURCES)),
+            buffers_to_destroy: Default::default(),
+            images_to_destroy: Default::default(),
         }))
     }
 
@@ -339,17 +362,13 @@ impl RenderDevice {
             .submit(&self.raw, cbs, fence, wait, signal)
     }
 
-    pub(super) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
-        cb(&mut self.current_drop_list.lock());
-    }
-
-    pub fn drop_descriptors(&self, descriptors: impl IntoIterator<Item = GpuDescriptor>) {
-        self.with_drop_list(|drop_list| {
-            for descriptor in descriptors {
-                drop_list.drop_descriptor(descriptor);
-            }
-        });
-    }
+    // pub fn drop_descriptors(&self, descriptors: impl IntoIterator<Item = GpuDescriptor>) {
+    //     self.with_drop_list(|drop_list| {
+    //         for descriptor in descriptors {
+    //             drop_list.drop_descriptor(descriptor);
+    //         }
+    //     });
+    // }
 
     pub fn with_descriptor_allocator<
         CB: FnOnce(&mut DescriptorAllocatorContext<E>) -> Result<(), E>,
@@ -379,13 +398,6 @@ impl RenderDevice {
             phantom_data: PhantomData,
         }
         .allocate(layout, layout_descriptor_count, count)
-    }
-
-    pub(super) fn with_staging<CB: FnOnce(&mut Staging) -> Result<(), Error>>(
-        &self,
-        cb: CB,
-    ) -> Result<(), Error> {
-        cb(&mut self.staging.lock())
     }
 
     pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
@@ -449,7 +461,31 @@ impl RenderDevice {
         let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
         let mut next_frame = self.frames[1].lock();
         let next_frame = Arc::get_mut(&mut next_frame).unwrap();
-        frame.assign_drop_list(mem::take(&mut self.current_drop_list.lock()));
+        let mut buffers = self.buffers.write();
+        let mut drop_list = self.current_drop_list.lock();
+        self.buffers_to_destroy.lock().drain(..).for_each(|handle| {
+            if let Some((buffer, mut data)) = buffers.remove(handle) {
+                if let Some(memory) = data.memory.take() {
+                    drop_list.drop_memory(memory);
+                    drop_list.drop_buffer(buffer);
+                }
+            }
+        });
+        let mut images = self.images.write();
+        self.images_to_destroy.lock().drain(..).for_each(|handle| {
+            if let Some(mut image) = images.remove(handle) {
+                if let Some(memory) = image.memory.take() {
+                    drop_list.drop_image(image.raw);
+                    drop_list.drop_memory(memory);
+                    image
+                        .views
+                        .write()
+                        .drain()
+                        .for_each(|(_, view)| drop_list.drop_view(view));
+                }
+            }
+        });
+        frame.assign_drop_list(mem::take(&mut drop_list));
         mem::swap(frame, next_frame);
     }
 
@@ -457,10 +493,11 @@ impl RenderDevice {
         puffin::profile_function!();
 
         let binding = target.swapchain.raw;
+        let image_index = target.image_index as u32;
         let present_info = vk::PresentInfoKHR::default()
             .wait_semaphores(slice::from_ref(&frame.render_finished))
             .swapchains(slice::from_ref(&binding))
-            .image_indices(slice::from_ref(&target.image_index));
+            .image_indices(slice::from_ref(&image_index));
 
         match unsafe {
             target
@@ -592,6 +629,23 @@ impl Drop for RenderDevice {
         let mut drop_list = self.current_drop_list.lock();
         let mut memory_allocator = self.memory_allocator.lock();
         let mut descriptor_allocator = self.descriptor_allocator.lock();
+        self.buffers.write().drain().for_each(|(buffer, mut data)| {
+            if let Some(memory) = data.memory.take() {
+                drop_list.drop_buffer(buffer);
+                drop_list.drop_memory(memory);
+            }
+        });
+        self.images.write().drain().for_each(|mut image| {
+            if let Some(memory) = image.memory.take() {
+                drop_list.drop_image(image.raw);
+                drop_list.drop_memory(memory);
+                image
+                    .views
+                    .write()
+                    .drain()
+                    .for_each(|(_, view)| drop_list.drop_view(view));
+            }
+        });
         self.staging.lock().free(&self.raw, &mut memory_allocator);
         drop_list.purge(&self.raw, &mut memory_allocator, &mut descriptor_allocator);
         self.frames.iter().for_each(|frame| {

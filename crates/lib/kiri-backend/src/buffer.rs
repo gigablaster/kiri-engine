@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::NonNull, sync::Arc};
+use std::ptr::NonNull;
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{Error, GpuMemoryBlock, RenderDevice};
+use crate::{BufferHandle, Error, GpuMemoryBlock, RenderDevice};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
@@ -26,17 +26,12 @@ pub struct BufferDesc {
     pub usage: vk::BufferUsageFlags,
 }
 
-/// Wraps a vulkan buffer
-///
-/// Tracks it's own resources.
 #[derive(Debug)]
-pub struct Buffer {
-    device: Arc<RenderDevice>,
+pub struct BufferData {
     pub raw: vk::Buffer,
     pub desc: BufferDesc,
     pub mapping: Option<NonNull<u8>>,
-    pub device_address: Option<vk::DeviceAddress>,
-    memory: Option<GpuMemoryBlock>,
+    pub memory: Option<GpuMemoryBlock>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -125,11 +120,6 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
-    pub fn device_address(mut self) -> Self {
-        self.usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR;
-        self
-    }
-
     pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
         self.usage = usage;
         self
@@ -152,29 +142,17 @@ impl<'a> BufferCreateDesc<'a> {
     }
 }
 
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.device.with_drop_list(|drop_list| {
-            if let Some(memory) = self.memory.take() {
-                drop_list.drop_buffer(self.raw);
-                drop_list.drop_memory(memory);
-            }
-        });
-    }
-}
-
-impl Buffer {
-    pub fn new(device: &Arc<RenderDevice>, desc: BufferCreateDesc) -> Result<Self, Error> {
-        let buffer = unsafe { device.raw.create_buffer(&desc.build(), None) }?;
-        let requirements = unsafe { device.raw.get_buffer_memory_requirements(buffer) };
+impl RenderDevice {
+    pub fn create_buffer(&self, desc: BufferCreateDesc) -> Result<BufferHandle, Error> {
+        let buffer = unsafe { self.raw.create_buffer(&desc.build(), None) }?;
+        let requirements = unsafe { self.raw.get_buffer_memory_requirements(buffer) };
         if let Some(name) = desc.name {
-            device.set_object_name(buffer, name);
+            self.set_object_name(buffer, name);
         }
 
-        let mut memory = device.allocate(requirements, desc.memory_usage, desc.dedicated)?;
+        let mut memory = self.allocate(requirements, desc.memory_usage, desc.dedicated)?;
         unsafe {
-            device
-                .raw
+            self.raw
                 .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
         }?;
 
@@ -184,46 +162,49 @@ impl Buffer {
             | desc.memory_usage.contains(gpu_alloc::UsageFlags::UPLOAD)
             | desc.memory_usage.contains(gpu_alloc::UsageFlags::DOWNLOAD)
         {
-            Some(unsafe { memory.map(AshMemoryDevice::wrap(&device.raw), 0, desc.size as _) }?)
+            Some(unsafe { memory.map(AshMemoryDevice::wrap(&self.raw), 0, desc.size as _) }?)
         } else {
             None
         };
-        let device_address = if desc
-            .usage
-            .contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR)
-        {
-            Some(unsafe {
-                device.raw.get_buffer_device_address(
-                    &vk::BufferDeviceAddressInfo::default().buffer(buffer),
-                )
-            })
-        } else {
-            None
-        };
-        Ok(Self {
-            device: device.clone(),
+        let buffer = BufferData {
             raw: buffer,
             desc: BufferDesc {
                 size: desc.size,
                 usage: desc.usage,
             },
             mapping,
-            device_address,
             memory: Some(memory),
-        })
+        };
+        Ok(self.buffers.write().push(buffer.raw, buffer))
     }
 
-    pub fn upload<T: Copy>(&self, offset: usize, data: &[T]) -> Result<(), Error> {
-        assert!(self.desc.usage.contains(vk::BufferUsageFlags::TRANSFER_DST));
-        self.device
-            .with_staging(|staging| staging.upload_buffer(&self.device.raw, self.raw, offset, data))
+    pub fn upload_buffer<T: Copy>(
+        &self,
+        handle: BufferHandle,
+        offset: usize,
+        data: &[T],
+    ) -> Result<(), Error> {
+        let buffer = self
+            .buffers
+            .read()
+            .get(handle)
+            .copied()
+            .ok_or(Error::InvalidBufferHandle(handle))?;
+        self.staging
+            .lock()
+            .upload_buffer(&self.raw, buffer, offset, data)
     }
 
-    pub fn device_address(&self) -> vk::DeviceAddress {
-        unsafe {
-            self.device
-                .raw
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(self.raw))
-        }
+    pub fn get_buffer_mapping(&self, handle: BufferHandle) -> Result<NonNull<u8>, Error> {
+        self.buffers
+            .read()
+            .get_cold(handle)
+            .ok_or(Error::InvalidBufferHandle(handle))?
+            .mapping
+            .ok_or(Error::BufferIsntMapped(handle))
+    }
+
+    pub fn destroy_buffer(&self, handle: BufferHandle) {
+        self.buffers_to_destroy.lock().push(handle);
     }
 }
