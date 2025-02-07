@@ -45,8 +45,10 @@ impl DropList {
         self.memory.push(memory);
     }
 
-    pub fn drop_descriptor(&mut self, descriptor: GpuDescriptor) {
-        self.descriptors.push(descriptor);
+    pub fn drop_descriptors(&mut self, descriptors: impl IntoIterator<Item = GpuDescriptor>) {
+        for descriptor in descriptors {
+            self.descriptors.push(descriptor);
+        }
     }
 
     pub fn purge(

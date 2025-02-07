@@ -25,7 +25,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::Error;
 
-use super::{ImageDesc, ImageHandle, Instance, RenderDevice};
+use super::{image::ImageData, ImageDesc, ImageHandle, Instance, RenderDevice};
 
 use super::physical_device::PhysicalDevice;
 
@@ -65,16 +65,16 @@ impl Drop for Surface {
 pub struct Swapchain {
     device: Arc<RenderDevice>,
     pub(crate) raw: vk::SwapchainKHR,
-    images: ArrayVec<ImageHandle, DESIRED_IMAGES_COUNT>,
+    images: ArrayVec<ImageData, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
     acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
     dims: [usize; 2],
 }
 
-pub struct SwapchainImage<'a> {
+pub(crate) struct SwapchainImage<'a> {
     pub swapchain: &'a Swapchain,
-    pub image: &'a ImageHandle,
+    pub image: &'a ImageData,
     pub dims: [usize; 2],
     pub image_index: usize,
     pub acquire_semaphore: vk::Semaphore,
@@ -171,23 +171,21 @@ impl Swapchain {
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?
             .iter()
-            .enumerate()
-            .map(|(index, image)| {
-                device.crate_external_image(
-                    *image,
-                    ImageDesc {
-                        ty: vk::ImageType::TYPE_2D,
-                        usage: vk::ImageUsageFlags::TRANSFER_DST,
-                        format: format.format,
-                        dims: [
-                            surface_resolution.width as usize,
-                            surface_resolution.height as usize,
-                        ],
-                        mip_levels: 1,
-                        array_elements: 1,
-                    },
-                    Some(&format!("Swapchain {}", index)),
-                )
+            .map(|image| ImageData {
+                raw: *image,
+                desc: ImageDesc {
+                    ty: vk::ImageType::TYPE_2D,
+                    usage: vk::ImageUsageFlags::TRANSFER_DST,
+                    format: format.format,
+                    dims: [
+                        surface_resolution.width as usize,
+                        surface_resolution.height as usize,
+                    ],
+                    mip_levels: 1,
+                    array_elements: 1,
+                },
+                memory: None,
+                views: Default::default(),
             })
             .collect::<ArrayVec<_, DESIRED_IMAGES_COUNT>>();
 
@@ -283,6 +281,9 @@ impl Drop for Swapchain {
     fn drop(&mut self) {
         unsafe {
             self.device.raw.device_wait_idle().unwrap();
+            self.images
+                .drain(..)
+                .for_each(|image| image.free(&mut self.device.current_drop_list.lock()));
             self.loader.destroy_swapchain(self.raw, None);
             for semaphore in &self.acquire_semaphores {
                 self.device.raw.destroy_semaphore(*semaphore, None);

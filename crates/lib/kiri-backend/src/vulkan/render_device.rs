@@ -17,6 +17,7 @@ use std::{collections::HashMap, ffi::CString, marker::PhantomData, mem, slice, s
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use bytes::Bytes;
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -26,9 +27,13 @@ use std::fmt::Debug;
 
 use crate::Error;
 
+use super::buffer::BufferPool;
+use super::descriptors::DescriptorPool;
+use super::image::ImagePool;
+use super::pipeline::{Pipeline, RasterPipelineDesc, RasterPipelinePool};
 use super::{
-    BufferData, DescriptorSetLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock,
-    ImageData, Instance, Program, Staging,
+    BufferData, DescriptorLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock,
+    ImageData, Instance, Staging,
 };
 
 use super::{
@@ -42,16 +47,68 @@ const MAX_RESOURCES: usize = 0xFFFF;
 pub type ImageHandle = Handle<ImageData>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-#[derive(Debug, Clone, Copy)]
-pub struct ProgramHandle(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RasterPipelineHandle(u32);
+pub struct RasterPipelineHandle(pub(crate) u32);
 
-type BufferPool = HotColdPool<vk::Buffer, BufferData>;
-// type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
-type RasterPipelinePool = Vec<(vk::Pipeline, vk::PipelineLayout)>;
-type ProgramPool = Vec<Program>;
-type ImagePool = Pool<ImageData>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferSlice {
+    pub handle: BufferHandle,
+    pub offset: u32,
+    pub size: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferPointer {
+    pub handle: BufferHandle,
+    pub offset: u32,
+}
+
+impl Default for BufferSlice {
+    fn default() -> Self {
+        Self {
+            handle: Handle::default(),
+            offset: u32::MAX,
+            size: u32::MAX,
+        }
+    }
+}
+
+impl BufferSlice {
+    pub fn new(handle: BufferHandle, offset: usize, size: usize) -> BufferSlice {
+        Self {
+            handle,
+            offset: offset as u32,
+            size: size as u32,
+        }
+    }
+}
+
+impl BufferPointer {
+    pub fn new(handle: BufferHandle, offset: usize) -> BufferPointer {
+        Self {
+            handle,
+            offset: offset as u32,
+        }
+    }
+}
+
+impl Default for BufferPointer {
+    fn default() -> Self {
+        Self {
+            handle: Handle::default(),
+            offset: u32::MAX,
+        }
+    }
+}
+
+impl From<BufferSlice> for BufferPointer {
+    fn from(value: BufferSlice) -> Self {
+        Self {
+            handle: value.handle,
+            offset: value.offset,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -70,14 +127,18 @@ pub struct RenderDevice {
     frames: [Mutex<Arc<Frame>>; 2],
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Queue>,
-    layouts: RwLock<HashMap<DescriptorSetLayoutDesc<'static>, vk::DescriptorSetLayout>>,
+    layouts: RwLock<HashMap<DescriptorLayoutDesc<'static>, vk::DescriptorSetLayout>>,
     memory_allocator: Mutex<GpuAllocator>,
-    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
+    pub(crate) descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     pub(crate) staging: Mutex<Staging>,
     pub(crate) buffers: RwLock<BufferPool>,
     pub(crate) images: RwLock<ImagePool>,
+    pub(crate) descriptors: RwLock<DescriptorPool>,
+    pub(crate) dirty_descriptors: Mutex<Vec<DescriptorHandle>>,
+    pub(crate) raster_pipelines: Mutex<RasterPipelinePool>,
     pub(crate) buffers_to_destroy: Mutex<Vec<BufferHandle>>,
     pub(crate) images_to_destroy: Mutex<Vec<ImageHandle>>,
+    pub(crate) descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
 }
 
 impl Debug for RenderDevice {
@@ -297,8 +358,12 @@ impl RenderDevice {
             descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(0)),
             buffers: RwLock::new(BufferPool::new(MAX_RESOURCES)),
             images: RwLock::new(ImagePool::new(MAX_RESOURCES)),
+            descriptors: RwLock::new(DescriptorPool::new(MAX_RESOURCES)),
             buffers_to_destroy: Default::default(),
             images_to_destroy: Default::default(),
+            raster_pipelines: Default::default(),
+            dirty_descriptors: Default::default(),
+            descriptors_to_destroy: Default::default(),
         }))
     }
 
@@ -466,25 +531,14 @@ impl RenderDevice {
         let mut buffers = self.buffers.write();
         let mut drop_list = self.current_drop_list.lock();
         self.buffers_to_destroy.lock().drain(..).for_each(|handle| {
-            if let Some((buffer, mut data)) = buffers.remove(handle) {
-                if let Some(memory) = data.memory.take() {
-                    drop_list.drop_memory(memory);
-                    drop_list.drop_buffer(buffer);
-                }
+            if let Some((_, mut data)) = buffers.remove(handle) {
+                data.free(&mut drop_list);
             }
         });
         let mut images = self.images.write();
         self.images_to_destroy.lock().drain(..).for_each(|handle| {
             if let Some(mut image) = images.remove(handle) {
-                if let Some(memory) = image.memory.take() {
-                    drop_list.drop_image(image.raw);
-                    drop_list.drop_memory(memory);
-                    image
-                        .views
-                        .write()
-                        .drain()
-                        .for_each(|(_, view)| drop_list.drop_view(view));
-                }
+                image.free(&mut drop_list);
             }
         });
         frame.assign_drop_list(mem::take(&mut drop_list));
@@ -513,10 +567,10 @@ impl RenderDevice {
         }
     }
 
-    pub fn get_or_create_layout(
+    pub(crate) fn get_or_create_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        desc: DescriptorSetLayoutDesc<'static>,
+        desc: DescriptorLayoutDesc<'static>,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let layouts = self.layouts.upgradable_read();
         if let Some(layout) = layouts.get(&desc) {
@@ -536,7 +590,7 @@ impl RenderDevice {
     fn create_descriptor_layout(
         &self,
         stage: vk::ShaderStageFlags,
-        layout: DescriptorSetLayoutDesc,
+        layout: DescriptorLayoutDesc,
     ) -> Result<vk::DescriptorSetLayout, Error> {
         let samplers = TempList::new();
         let bindings = layout
@@ -546,7 +600,7 @@ impl RenderDevice {
                 let mut binding = vk::DescriptorSetLayoutBinding::default()
                     .binding(*index as _)
                     .descriptor_count(data.count as _)
-                    .descriptor_type(data.ty)
+                    .descriptor_type(data.ty.into())
                     .stage_flags(stage);
                 if data.ty == vk::DescriptorType::SAMPLER
                     || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
@@ -631,22 +685,11 @@ impl Drop for RenderDevice {
         let mut drop_list = self.current_drop_list.lock();
         let mut memory_allocator = self.memory_allocator.lock();
         let mut descriptor_allocator = self.descriptor_allocator.lock();
-        self.buffers.write().drain().for_each(|(buffer, mut data)| {
-            if let Some(memory) = data.memory.take() {
-                drop_list.drop_buffer(buffer);
-                drop_list.drop_memory(memory);
-            }
+        self.buffers.write().drain().for_each(|(_, mut data)| {
+            data.free(&mut drop_list);
         });
         self.images.write().drain().for_each(|mut image| {
-            if let Some(memory) = image.memory.take() {
-                drop_list.drop_image(image.raw);
-                drop_list.drop_memory(memory);
-                image
-                    .views
-                    .write()
-                    .drain()
-                    .for_each(|(_, view)| drop_list.drop_view(view));
-            }
+            image.free(&mut drop_list);
         });
         self.staging.lock().free(&self.raw, &mut memory_allocator);
         drop_list.purge(&self.raw, &mut memory_allocator, &mut descriptor_allocator);

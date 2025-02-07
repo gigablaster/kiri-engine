@@ -16,15 +16,5 @@
 mod error;
 pub mod vulkan;
 
+use ash::vk;
 pub use error::*;
-
-#[derive(Debug, Clone, Copy)]
-pub struct ImageUploadData<'a> {
-    pub data: &'a [u8],
-}
-
-impl<'a> ImageUploadData<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { data }
-    }
-}

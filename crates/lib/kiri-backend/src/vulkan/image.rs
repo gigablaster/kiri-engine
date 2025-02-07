@@ -15,11 +15,17 @@
 
 use std::collections::HashMap;
 
-use crate::{Error, ImageUploadData};
-use ash::vk;
+use crate::Error;
+use ash::vk::{self, ImageView};
+use kiri_common::Pool;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use super::{GpuMemoryBlock, ImageHandle, RenderDevice};
+use super::{
+    drop_list::DropList, GpuMemoryBlock, ImageCreateDesc, ImageHandle, ImageUploadData,
+    ImageViewDesc, RenderDevice,
+};
+
+pub type ImagePool = Pool<ImageData>;
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
@@ -36,34 +42,8 @@ impl ImageDesc {
         self.dims[0] as f32 / self.dims[1] as f32
     }
 }
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct ImageViewDesc {
-    pub ty: Option<vk::ImageViewType>,
-    pub format: Option<vk::Format>,
-    pub aspect: vk::ImageAspectFlags,
-    pub base_mip_level: usize,
-    pub level_count: Option<usize>,
-}
 
 impl ImageViewDesc {
-    pub fn new(aspect: vk::ImageAspectFlags) -> Self {
-        Self {
-            ty: None,
-            format: None,
-            aspect,
-            base_mip_level: 0,
-            level_count: None,
-        }
-    }
-
-    pub fn color() -> Self {
-        Self::new(vk::ImageAspectFlags::COLOR)
-    }
-
-    pub fn depth() -> Self {
-        Self::new(vk::ImageAspectFlags::DEPTH)
-    }
-
     fn build(&self, image: &ImageData) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
             .format(self.format.unwrap_or(image.desc.format))
@@ -99,168 +79,7 @@ impl ImageViewDesc {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ImageCreateDesc<'a> {
-    pub dims: [usize; 2],
-    pub ty: vk::ImageType,
-    pub usage: vk::ImageUsageFlags,
-    pub format: vk::Format,
-    pub samples: vk::SampleCountFlags,
-    pub mip_levels: usize,
-    pub array_elements: usize,
-    pub dedicated: bool,
-    pub name: Option<&'a str>,
-    pub flags: vk::ImageCreateFlags,
-    pub tiling: vk::ImageTiling,
-    pub initial_layout: Option<vk::ImageLayout>,
-}
-
 impl<'a> ImageCreateDesc<'a> {
-    pub fn new(format: vk::Format, dims: [usize; 2]) -> Self {
-        Self {
-            dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::empty(),
-            flags: vk::ImageCreateFlags::empty(),
-            format,
-            tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
-            mip_levels: 1,
-            array_elements: 1,
-            dedicated: false,
-            name: None,
-            initial_layout: None,
-        }
-    }
-
-    pub fn texture(format: vk::Format, dims: [usize; 2]) -> Self {
-        Self {
-            dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            flags: vk::ImageCreateFlags::empty(),
-            format,
-            tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
-            mip_levels: 1,
-            array_elements: 1,
-            dedicated: false,
-            name: None,
-            initial_layout: None,
-        }
-    }
-
-    pub fn cubemap(format: vk::Format, dims: [usize; 2]) -> Self {
-        Self {
-            dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
-            format,
-            tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
-            mip_levels: 1,
-            array_elements: 6,
-            dedicated: false,
-            name: None,
-            initial_layout: None,
-        }
-    }
-
-    pub fn color_target(format: vk::Format, dims: [usize; 2]) -> Self {
-        Self {
-            dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            flags: vk::ImageCreateFlags::empty(),
-            format,
-            tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
-            mip_levels: 1,
-            array_elements: 1,
-            dedicated: false,
-            name: None,
-            initial_layout: Some(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
-        }
-    }
-
-    pub fn depth_stencil_target(format: vk::Format, dims: [usize; 2]) -> Self {
-        Self {
-            dims,
-            ty: vk::ImageType::TYPE_2D,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            flags: vk::ImageCreateFlags::empty(),
-            format,
-            tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
-            mip_levels: 1,
-            array_elements: 1,
-            dedicated: false,
-            name: None,
-            initial_layout: Some(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
-        }
-    }
-
-    pub fn transfer_desitnation(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::TRANSFER_DST;
-        self
-    }
-
-    pub fn trasfer_source(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::TRANSFER_SRC;
-        self
-    }
-
-    pub fn storage(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::STORAGE;
-        self
-    }
-
-    pub fn ty(mut self, value: vk::ImageType) -> Self {
-        self.ty = value;
-        self
-    }
-
-    pub fn usage(mut self, value: vk::ImageUsageFlags) -> Self {
-        self.usage = value;
-        self
-    }
-
-    pub fn sampled(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::SAMPLED;
-        self
-    }
-
-    pub fn samples(mut self, value: vk::SampleCountFlags) -> Self {
-        self.samples = value;
-        self
-    }
-
-    pub fn mip_levels(mut self, value: usize) -> Self {
-        self.mip_levels = value;
-        self
-    }
-
-    pub fn array_elements(mut self, value: usize) -> Self {
-        self.array_elements = value;
-        self
-    }
-
-    pub fn name(mut self, name: &'a str) -> Self {
-        self.name = Some(name);
-        self
-    }
-
-    pub fn transient(mut self) -> Self {
-        self.usage |= vk::ImageUsageFlags::TRANSIENT_ATTACHMENT;
-        self
-    }
-
-    pub fn initial_layout(mut self, value: vk::ImageLayout) -> Self {
-        self.initial_layout = Some(value);
-        self
-    }
-
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
             .array_layers(self.array_elements as _)
@@ -303,6 +122,44 @@ pub struct ImageData {
     pub desc: ImageDesc,
     pub memory: Option<GpuMemoryBlock>,
     pub views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
+}
+
+impl ImageData {
+    pub fn free(mut self, drop_list: &mut DropList) {
+        if let Some(memory) = self.memory.take() {
+            self.free_views(drop_list);
+            drop_list.drop_image(self.raw);
+            drop_list.drop_memory(memory);
+        }
+    }
+
+    pub fn free_views(&self, drop_list: &mut DropList) {
+        self.views
+            .write()
+            .drain()
+            .for_each(|(_, view)| drop_list.drop_view(view));
+    }
+
+    pub fn get_or_create_view(
+        &self,
+        device: &ash::Device,
+        desc: ImageViewDesc,
+    ) -> Result<vk::ImageView, Error> {
+        let views = self.views.upgradable_read();
+        if let Some(view) = views.get(&desc) {
+            Ok(*view)
+        } else {
+            let mut views = RwLockUpgradableReadGuard::upgrade(views);
+            if let Some(view) = views.get(&desc) {
+                Ok(*view)
+            } else {
+                let create_info = desc.build(self);
+                let view = unsafe { device.create_image_view(&create_info, None) }?;
+                views.insert(desc, view);
+                Ok(view)
+            }
+        }
+    }
 }
 
 impl RenderDevice {
@@ -383,11 +240,7 @@ impl RenderDevice {
         let images = self.images.read();
         let mut drop_list = self.current_drop_list.lock();
         if let Some(image) = images.get(handle) {
-            image
-                .views
-                .write()
-                .drain()
-                .for_each(|(_, view)| drop_list.drop_view(view))
+            image.free_views(&mut drop_list);
         };
     }
 
@@ -399,24 +252,11 @@ impl RenderDevice {
         handle: ImageHandle,
         desc: ImageViewDesc,
     ) -> Result<vk::ImageView, Error> {
-        let images = self.images.read();
-        let image = images
+        self.images
+            .read()
             .get(handle)
-            .ok_or(Error::InvalidImageHandle(handle))?;
-        let views = image.views.upgradable_read();
-        if let Some(view) = views.get(&desc) {
-            Ok(*view)
-        } else {
-            let mut views = RwLockUpgradableReadGuard::upgrade(views);
-            if let Some(view) = views.get(&desc) {
-                Ok(*view)
-            } else {
-                let create_info = desc.build(image);
-                let view = unsafe { self.raw.create_image_view(&create_info, None) }?;
-                views.insert(desc, view);
-                Ok(view)
-            }
-        }
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .get_or_create_view(&self.raw, desc)
     }
 
     pub fn destroy_image(&self, handle: ImageHandle) {
