@@ -17,11 +17,10 @@ use std::{collections::HashMap, ffi::CString, marker::PhantomData, mem, slice, s
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
-use bytes::Bytes;
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use kiri_common::{Handle, HotColdPool, Pool, TempList};
+use kiri_common::{Handle, TempList};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
@@ -166,7 +165,7 @@ impl Debug for GraphicsDevice {
 }
 
 #[derive(Debug)]
-pub(super) struct Queue {
+pub(crate) struct Queue {
     #[allow(dead_code)]
     pub family_index: u32,
     raw: Mutex<vk::Queue>,

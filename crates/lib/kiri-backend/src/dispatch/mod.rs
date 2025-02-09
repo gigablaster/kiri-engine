@@ -25,9 +25,10 @@ use ash::vk;
 
 use crate::{
     vulkan::{
-        BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DescriptorSetCreateDesc, Frame,
-        GraphicsDevice, Image, ImageDesc, ImageHandle, ImagePool, ImageViewDesc, Pipeline,
-        RasterPipelineHandle, RasterPipelinePool, SwapchainImage, MAX_ATTACHMENTS,
+        BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DescriptorSetCreateData,
+        DescriptorSetData, Frame, GraphicsDevice, Image, ImageDesc, ImageHandle, ImagePool,
+        ImageViewDesc, Pipeline, RasterPipelineHandle, RasterPipelinePool, SwapchainImage,
+        MAX_ATTACHMENTS,
     },
     DrawStream, Error,
 };
@@ -229,7 +230,7 @@ impl<'a> RenderResourceResolver<'a> {
             .images
             .get(handle)
             .ok_or(Error::InvalidImageHandle(handle))?
-            .raw)
+            .raw())
     }
 
     pub fn resolve_image_desc(&self, handle: ImageHandle) -> Result<&ImageDesc, Error> {
@@ -341,9 +342,9 @@ impl<'a> FrameDispatcher<'a> {
 
     pub fn temp_descriptors(
         &self,
-        builder: DescriptorSetCreateDesc,
+        data: DescriptorSetCreateData,
     ) -> Result<DescriptorHandle, Error> {
-        let handle = self.device.descriptors().create_descriptor(builder)?;
+        let handle = self.device.descriptors().create_descriptor(data)?;
         self.temp_descriptors.lock().push(handle);
         Ok(handle)
     }

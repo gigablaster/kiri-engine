@@ -24,16 +24,6 @@ use kiri_backend::{
     Error,
 };
 
-pub trait ResolutionScale {
-    fn scale_down(&self, scale: u32) -> [u32; 2];
-}
-
-impl ResolutionScale for [u32; 2] {
-    fn scale_down(&self, scale: u32) -> [u32; 2] {
-        [self[0] / scale, self[1] / scale]
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TempImageKey {
     pub dims: [usize; 2],
@@ -63,8 +53,8 @@ impl RenderTargetPool {
     }
 
     /// Get attachemnt that will return into pool automatically when
-    /// when frame is rendererd
-    pub fn get_image(
+    /// when frame is rendererd.
+    pub fn image(
         &self,
         format: vk::Format,
         dims: [usize; 2],
@@ -107,12 +97,14 @@ impl RenderTargetPool {
                 ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
-                None,
             )?;
             Ok((key, image))
         }
     }
 
+    /// Clears pool
+    ///
+    /// Should be called when backbuffer resolution changed.
     pub fn purge(&self) {
         self.images.lock().clear();
     }

@@ -35,7 +35,7 @@ struct CommandBufferPool {
 
 /// Contains per-frame data
 #[derive(Debug)]
-pub struct Frame {
+pub(crate) struct Frame {
     drop_list: DropList,
     per_thread_pools: Mutex<HashMap<ThreadId, CommandBufferPool>>,
     /// Submit this fence when submit rendering

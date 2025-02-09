@@ -136,10 +136,10 @@ pub struct BufferDesc {
 
 #[derive(Debug)]
 pub struct Buffer {
-    pub raw: vk::Buffer,
+    raw: vk::Buffer,
     pub desc: BufferDesc,
-    pub mapping: Option<NonNull<u8>>,
-    pub memory: Option<GpuMemoryBlock>,
+    mapping: Option<NonNull<u8>>,
+    memory: Option<GpuMemoryBlock>,
 }
 
 unsafe impl Send for Buffer {}

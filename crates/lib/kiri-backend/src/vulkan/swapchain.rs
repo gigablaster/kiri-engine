@@ -25,7 +25,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::Error;
 
-use super::{image::Image, GraphicsDevice, ImageDesc, ImageHandle, Instance};
+use super::{image::Image, GraphicsDevice, ImageDesc, Instance};
 
 use super::physical_device::PhysicalDevice;
 
@@ -69,18 +69,16 @@ pub struct Swapchain {
     loader: ash::khr::swapchain::Device,
     acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
-    dims: [usize; 2],
 }
 
 pub(crate) struct SwapchainImage<'a> {
     pub swapchain: &'a Swapchain,
     pub image: &'a Image,
-    pub dims: [usize; 2],
     pub image_index: usize,
     pub acquire_semaphore: vk::Semaphore,
 }
 
-pub enum AcquiredSurface<'a> {
+pub(crate) enum AcquiredSurface<'a> {
     NeedRecreate,
     Image(SwapchainImage<'a>),
 }
@@ -171,21 +169,21 @@ impl Swapchain {
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?
             .iter()
-            .map(|image| Image {
-                raw: *image,
-                desc: ImageDesc {
-                    ty: vk::ImageType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::TRANSFER_DST,
-                    format: format.format,
-                    dims: [
-                        surface_resolution.width as usize,
-                        surface_resolution.height as usize,
-                    ],
-                    mip_levels: 1,
-                    array_elements: 1,
-                },
-                memory: None,
-                views: Default::default(),
+            .map(|image| {
+                Image::external(
+                    *image,
+                    ImageDesc {
+                        ty: vk::ImageType::TYPE_2D,
+                        usage: vk::ImageUsageFlags::TRANSFER_DST,
+                        format: format.format,
+                        dims: [
+                            surface_resolution.width as usize,
+                            surface_resolution.height as usize,
+                        ],
+                        mip_levels: 1,
+                        array_elements: 1,
+                    },
+                )
             })
             .collect::<ArrayVec<_, DESIRED_IMAGES_COUNT>>();
 
@@ -206,14 +204,10 @@ impl Swapchain {
             acquire_semaphores,
             next_semaphore: AtomicUsize::new(0),
             loader,
-            dims: [
-                surface_resolution.width as usize,
-                surface_resolution.height as usize,
-            ],
         })
     }
 
-    pub fn acquire_next_image(&self) -> Result<AcquiredSurface, Error> {
+    pub(crate) fn acquire_next_image(&self) -> Result<AcquiredSurface, Error> {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];
@@ -247,7 +241,6 @@ impl Swapchain {
             swapchain: self,
             image: &self.images[present_index as usize],
             image_index: present_index as usize,
-            dims: self.dims,
             acquire_semaphore,
         }))
     }

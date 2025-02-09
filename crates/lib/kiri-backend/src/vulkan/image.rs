@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use crate::Error;
-use ash::vk::{self, ImageView};
+use ash::vk::{self};
 use kiri_common::Pool;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
@@ -52,6 +52,46 @@ impl ImageDesc {
 }
 
 impl ImageViewDesc {
+    pub fn new(aspect: vk::ImageAspectFlags) -> Self {
+        Self {
+            ty: None,
+            format: None,
+            aspect,
+            base_mip_level: 0,
+            mip_count: None,
+            base_layer: 0,
+            layer_count: None,
+        }
+    }
+
+    pub fn color() -> Self {
+        Self::new(vk::ImageAspectFlags::COLOR)
+    }
+
+    pub fn depth() -> Self {
+        Self::new(vk::ImageAspectFlags::DEPTH)
+    }
+
+    pub fn base_mip_level(mut self, value: usize) -> Self {
+        self.base_mip_level = value;
+        self
+    }
+
+    pub fn mip_count(mut self, value: usize) -> Self {
+        self.mip_count = Some(value);
+        self
+    }
+
+    pub fn base_layer(mut self, value: usize) -> Self {
+        self.base_layer = value;
+        self
+    }
+
+    pub fn layer_count(mut self, value: usize) -> Self {
+        self.layer_count = Some(value);
+        self
+    }
+
     fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::default()
             .format(self.format.unwrap_or(image.desc.format))
@@ -68,9 +108,9 @@ impl ImageViewDesc {
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: self.aspect,
                 base_mip_level: self.base_mip_level as u32,
-                level_count: self.level_count.unwrap_or(image.desc.mip_levels) as u32,
-                base_array_layer: 0,
-                layer_count: 1,
+                level_count: self.mip_count.unwrap_or(image.desc.mip_levels) as u32,
+                base_array_layer: self.base_layer as u32,
+                layer_count: self.layer_count.unwrap_or(1) as u32,
             })
             .image(image.raw)
     }
@@ -130,27 +170,9 @@ pub struct ImageViewDesc {
     pub format: Option<vk::Format>,
     pub aspect: vk::ImageAspectFlags,
     pub base_mip_level: usize,
-    pub level_count: Option<usize>,
-}
-
-impl ImageViewDesc {
-    pub fn new(aspect: vk::ImageAspectFlags) -> Self {
-        Self {
-            ty: None,
-            format: None,
-            aspect,
-            base_mip_level: 0,
-            level_count: None,
-        }
-    }
-
-    pub fn color() -> Self {
-        Self::new(vk::ImageAspectFlags::COLOR)
-    }
-
-    pub fn depth() -> Self {
-        Self::new(vk::ImageAspectFlags::DEPTH)
-    }
+    pub mip_count: Option<usize>,
+    pub base_layer: usize,
+    pub layer_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -318,14 +340,23 @@ impl<'a> ImageCreateDesc<'a> {
 
 #[derive(Debug)]
 pub struct Image {
-    pub raw: vk::Image,
+    raw: vk::Image,
     pub desc: ImageDesc,
-    pub memory: Option<GpuMemoryBlock>,
-    pub views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
+    memory: Option<GpuMemoryBlock>,
+    views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 impl Image {
-    pub fn free(mut self, drop_list: &mut DropList) {
+    pub(crate) fn external(raw: vk::Image, desc: ImageDesc) -> Self {
+        Self {
+            raw,
+            desc,
+            memory: None,
+            views: Default::default(),
+        }
+    }
+
+    pub(crate) fn free(mut self, drop_list: &mut DropList) {
         if let Some(memory) = self.memory.take() {
             self.free_views(drop_list);
             drop_list.drop_image(self.raw);
@@ -333,7 +364,7 @@ impl Image {
         }
     }
 
-    pub fn free_views(&self, drop_list: &mut DropList) {
+    pub(crate) fn free_views(&self, drop_list: &mut DropList) {
         self.views
             .write()
             .drain()
@@ -360,40 +391,18 @@ impl Image {
             }
         }
     }
+
+    pub(crate) fn raw(&self) -> vk::Image {
+        self.raw
+    }
 }
 
 impl GraphicsDevice {
-    /// Wraps external image
-    ///
-    /// Image won't be destroyed when instance is dropped. But views will be freed.
-    pub(crate) fn crate_external_image(
-        &self,
-        image: vk::Image,
-        desc: ImageDesc,
-        name: Option<&str>,
-    ) -> ImageHandle {
-        if let Some(name) = name {
-            self.set_object_name(image, name);
-        }
-
-        let image = Image {
-            raw: image,
-            desc,
-            views: Default::default(),
-            memory: None,
-        };
-        self.images.write().push(image)
-    }
-
     /// Creates new image
     ///
     /// Including memory allocation. All resources will be freed when instance
     /// is dropped.    
-    pub fn create_image(
-        &self,
-        desc: ImageCreateDesc,
-        data: Option<&[ImageUploadData]>,
-    ) -> Result<ImageHandle, Error> {
+    pub fn create_image<'a>(&self, desc: ImageCreateDesc) -> Result<ImageHandle, Error> {
         let image = unsafe { self.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             self.set_object_name(image, name);
@@ -422,11 +431,6 @@ impl GraphicsDevice {
             mip_levels: desc.mip_levels,
             array_elements: desc.array_elements,
         };
-        if let Some(data) = data {
-            self.staging
-                .lock()
-                .upload_image(&self.raw, image, desc, data)?;
-        }
         let image = Image {
             raw: image,
             desc,
@@ -434,6 +438,24 @@ impl GraphicsDevice {
             memory: Some(memory),
         };
         Ok(self.images.write().push(image))
+    }
+
+    pub fn upload_image_data<'a>(
+        &self,
+        handle: ImageHandle,
+        layer: usize,
+        data: impl IntoIterator<Item = ImageUploadData<'a>>,
+    ) -> Result<(), Error> {
+        let images = self.images.read();
+        let image = images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?;
+        let raw = image.raw();
+        let desc = image.desc;
+        drop(images);
+        self.staging
+            .lock()
+            .upload_image(&self.raw, raw, layer, desc, data)
     }
 
     pub fn clear_image_views(&self, handle: ImageHandle) {

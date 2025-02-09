@@ -1,4 +1,4 @@
-// Copyright (C) 2024 gigablaster
+// Copyright (C) 2024-2025 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@ use kiri_backend::{
     ash::vk::{self},
     vulkan::{
         BufferCreateDesc, BufferHandle, BufferPointer, BufferSlice, DescriptorDesc,
-        DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice,
+        DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice, ImageHandle,
     },
 };
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
@@ -56,7 +56,7 @@ pub struct RenderMeshSurface {
 }
 
 impl RenderMeshMaterial {
-    pub fn free(self, device: &GraphicsDevice, uniforms: &ShaderUniforms) {
+    fn free(self, device: &GraphicsDevice, uniforms: &ShaderUniforms) {
         uniforms.free(self.uniform);
         device.descriptors().destroy_descriptor(self.descriptor);
     }
@@ -75,6 +75,7 @@ pub struct RenderMesh {
 #[derive(Debug)]
 pub struct RenderModel {
     device: Arc<GraphicsDevice>,
+    uniforms: Arc<ShaderUniforms>,
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<RenderMesh>,
@@ -85,6 +86,17 @@ pub struct RenderModel {
     pub world_transforms: Vec<Affine3A>,
     pub node_to_mesh: Vec<(u32, u32)>,
     pub bounds: BoundingBox,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderMeshPbrMaterialDesc {
+    pub emissive_power: f32,
+    pub alpha_cutoff: f32,
+    pub base_color: ImageHandle,
+    pub metallic_roughness: ImageHandle,
+    pub normals: ImageHandle,
+    pub occlusion: ImageHandle,
+    pub emissive: ImageHandle,
 }
 
 pub struct RenderMeshBuilder {
@@ -229,6 +241,7 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
         let bounds = self.calculate_bounds();
         Ok(RenderModel {
             device,
+            uniforms,
             vertices,
             indices,
             bounds_per_mesh: self.meshes.iter().map(|x| x.bounds).collect(),

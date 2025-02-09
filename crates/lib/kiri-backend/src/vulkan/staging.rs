@@ -33,7 +33,7 @@ use super::{GpuAllocator, GpuMemoryBlock, ImageDesc, ImageUploadData, PhysicalDe
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
 
 #[derive(Debug)]
-pub struct Staging {
+pub(crate) struct Staging {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     fence: vk::Fence,
@@ -147,17 +147,18 @@ impl Staging {
         }
     }
 
-    pub fn upload_image(
+    pub fn upload_image<'a>(
         &mut self,
         device: &ash::Device,
         target: vk::Image,
+        layer: usize,
         desc: ImageDesc,
-        data: &[ImageUploadData],
+        data: impl IntoIterator<Item = ImageUploadData<'a>>,
     ) -> Result<(), Error> {
         // If we have operations for same target then we just cancel them
         self.upload_images.remove(&target);
-        for (mip, data) in data.iter().enumerate() {
-            while !self.try_push_mip(target, desc, mip as _, data)? {
+        for (mip, data) in data.into_iter().enumerate() {
+            while !self.try_push_mip(target, layer, desc, mip as _, &data)? {
                 self.upload_impl(device, false)?;
             }
         }
@@ -167,6 +168,7 @@ impl Staging {
     fn try_push_mip(
         &mut self,
         target: vk::Image,
+        layer: usize,
         desc: ImageDesc,
         mip: usize,
         data: &ImageUploadData,
@@ -195,14 +197,14 @@ impl Staging {
                 .image_subresource(vk::ImageSubresourceLayers {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_level: mip as u32,
-                    base_array_layer: 0,
+                    base_array_layer: layer as u32,
                     layer_count: 1,
                 });
             let range = vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 base_mip_level: mip as u32,
                 level_count: 1,
-                base_array_layer: 0,
+                base_array_layer: layer as u32,
                 layer_count: 1,
             };
 

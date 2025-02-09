@@ -30,11 +30,10 @@ use bytes::Bytes;
 use log::{info, warn};
 use rayon::iter::{ParallelDrainRange, ParallelIterator};
 
-use crate::{vulkan::pipeline, Error};
+use crate::Error;
 
-use super::{
-    DescriptorLayoutDesc, GraphicsDevice, RasterPipelineHandle, ShaderDesc, MAX_DESCRIPTOR_SETS,
-};
+use super::MAX_DESCRIPTOR_SETS;
+use super::{DescriptorLayoutDesc, GraphicsDevice, RasterPipelineHandle, ShaderDesc};
 
 pub(crate) type RasterPipelinePool = Vec<Pipeline<RasterPipelineDesc>>;
 

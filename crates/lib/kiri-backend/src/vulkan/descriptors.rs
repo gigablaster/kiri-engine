@@ -30,6 +30,12 @@ use super::{
 
 pub(crate) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
 
+pub const PASS_DESCRIPTOR_SLOT_INDEX: usize = 0;
+pub const OBJECT_DESCRIPTOR_SLOT_INDEX: usize = 1;
+pub const MATERIAL_DESCRIPTOR_SLOT_IDNEX: usize = 2;
+pub const DYNAMIC_DESCRIPTOR_SLOT_INDEX: usize = 3;
+pub const MAX_DESCRIPTOR_SETS: usize = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DescriptorDesc<'a> {
     pub name: &'a str,
@@ -122,7 +128,7 @@ impl<'a> ShaderDesc<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct DescriptorSetCreateDesc<'a> {
+pub struct DescriptorSetCreateData<'a> {
     pub layout: DescriptorLayoutDesc<'static>,
     pub stages: vk::ShaderStageFlags,
     pub images: &'a [ImageHandle],
@@ -143,9 +149,9 @@ pub struct DescriptorUpdateContext<'a> {
 impl DescriptorUpdateContext<'_> {
     pub fn create_descriptor(
         &mut self,
-        builder: DescriptorSetCreateDesc,
+        data: DescriptorSetCreateData,
     ) -> Result<DescriptorHandle, Error> {
-        let data = builder.build(self.device)?;
+        let data = data.build(self.device)?;
         let handle = self.descriptors.push(vk::DescriptorSet::null(), data);
         self.dirty.push(handle);
         Ok(handle)
@@ -218,7 +224,7 @@ pub(crate) struct DescriptorSetData {
     name: Option<String>,
 }
 
-impl DescriptorSetCreateDesc<'_> {
+impl DescriptorSetCreateData<'_> {
     pub(crate) fn build(self, device: &GraphicsDevice) -> Result<DescriptorSetData, Error> {
         let images = self
             .layout

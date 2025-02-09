@@ -16,6 +16,7 @@ struct UniformPage {
 const UNIFORM_PAGE_SIZE: usize = 64536;
 const MAX_UNIFOMR_SIZE: usize = 16384;
 
+#[derive(Debug)]
 pub struct ShaderUniforms {
     device: Arc<GraphicsDevice>,
     uniforms: Mutex<Vec<UniformPage>>,

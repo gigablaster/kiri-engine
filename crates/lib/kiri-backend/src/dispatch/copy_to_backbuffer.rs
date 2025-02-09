@@ -46,7 +46,7 @@ impl PassDispatcher for CopyToBackbufferPassDispatcher {
                     .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .image(resolver.backbuffer.raw)
+                    .image(resolver.backbuffer.raw())
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -81,7 +81,7 @@ impl PassDispatcher for CopyToBackbufferPassDispatcher {
                 command_buffer,
                 image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                resolver.backbuffer.raw,
+                resolver.backbuffer.raw(),
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[vk::ImageBlit::default()
                     .src_offsets([
@@ -114,7 +114,7 @@ impl PassDispatcher for CopyToBackbufferPassDispatcher {
                 .dst_access_mask(vk::AccessFlags::MEMORY_READ)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .image(resolver.backbuffer.raw)
+                .image(resolver.backbuffer.raw())
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,

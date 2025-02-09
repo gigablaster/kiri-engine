@@ -153,6 +153,10 @@ impl DynamicGpuMemoryPool {
         }
     }
 
+    /// Recycles used memory pages
+    ///
+    /// Memory used in current frame will be put in wait, memory from previous
+    /// frame will be put in use for next frame. Should be called once per frame.
     pub fn recycle(&mut self) {
         self.pool.append(&mut self.recycle);
         self.recycle.append(&mut self.used);
