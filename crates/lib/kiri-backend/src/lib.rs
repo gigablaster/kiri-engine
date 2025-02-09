@@ -18,7 +18,7 @@ mod draw_stream;
 mod error;
 pub mod vulkan;
 
-pub use ash::vk;
+pub use ash;
 pub use dispatch::*;
 pub use draw_stream::*;
 pub use error::*;

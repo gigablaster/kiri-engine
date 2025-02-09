@@ -15,7 +15,10 @@
 
 use std::{collections::HashMap, mem};
 
-use kiri_backend::{ash::vk, InputVertexAttrubute, InputVertexStreamLayout};
+use kiri_backend::{
+    ash::vk,
+    vulkan::{InputVertexAttrubute, InputVertexStreamLayout},
+};
 use speedy::{Context, Readable, Writable};
 
 use crate::{Asset, CompiledAssetPath};

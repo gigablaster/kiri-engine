@@ -3,7 +3,7 @@ members = [
     # "crates/lib/kiri-runner",
     "crates/lib/kiri-common",
     "crates/lib/kiri-backend",
-    # "crates/lib/kiri-assets",
+    "crates/lib/kiri-assets",
     # "crates/bin/builder",
     "crates/lib/kiri-vfs",
     # "crates/lib/kiri",

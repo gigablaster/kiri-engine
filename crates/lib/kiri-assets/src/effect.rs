@@ -15,7 +15,10 @@
 
 use std::collections::HashMap;
 
-use kiri_backend::{ash::vk, PipelineBlendDesc, RasterPipelineCreateDesc};
+use kiri_backend::{
+    ash::vk,
+    vulkan::{PipelineBlendDesc, RasterPipelineCreateDesc},
+};
 use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
 
