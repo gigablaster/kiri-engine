@@ -13,7 +13,7 @@ mod swapchain;
 pub use ash;
 use ash::vk;
 pub use buffer::*;
-pub(crate) use descriptors::*;
+pub use descriptors::*;
 use drop_list::*;
 pub use frame::*;
 pub use graphics_device::*;

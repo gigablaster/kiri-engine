@@ -15,13 +15,17 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use crate::{BufferHandle, BufferPointer, BufferSlice, DescriptorHandle, Error, Renderer};
 use kiri_assets::NodeIndex;
 use kiri_backend::{
     ash::vk::{self},
-    BufferCreateDesc, DescriptorDesc, DescriptorSetLayoutDesc,
+    vulkan::{
+        BufferCreateDesc, BufferHandle, BufferPointer, BufferSlice, DescriptorDesc,
+        DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice,
+    },
 };
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
+
+use crate::{Error, ShaderUniforms};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RenderMeshMaterialType {
@@ -52,11 +56,9 @@ pub struct RenderMeshSurface {
 }
 
 impl RenderMeshMaterial {
-    pub fn free(self, renderer: &Renderer) {
-        renderer.free_uniform(self.uniform);
-        renderer
-            .with_descriptors()
-            .destroy_descriptor(self.descriptor);
+    pub fn free(self, device: &GraphicsDevice, uniforms: &ShaderUniforms) {
+        uniforms.free(self.uniform);
+        device.descriptors().destroy_descriptor(self.descriptor);
     }
 }
 
@@ -72,7 +74,7 @@ pub struct RenderMesh {
 
 #[derive(Debug)]
 pub struct RenderModel {
-    renderer: Arc<Renderer>,
+    device: Arc<GraphicsDevice>,
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<RenderMesh>,
@@ -206,29 +208,27 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
         self
     }
 
-    pub fn build(self, renderer: &Arc<Renderer>) -> Result<RenderModel, Error> {
+    pub fn build(self, device: Arc<GraphicsDevice>) -> Result<RenderModel, Error> {
         assert!(!self.meshes.is_empty(), "Model must have at least one mesh");
         assert!(!self.nodes.is_empty(), "Model must have at least one node");
         let name = self.name.unwrap_or("Mesh");
-        let vertices = renderer.create_buffer(
+        let vertices = device.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.vertices) as _)
                 .transfer_destination()
                 .veretex_buffer()
-                .device_address()
                 .name(&format!("{} positions", name)),
         )?;
-        let indices = renderer.create_buffer(
+        let indices = device.create_buffer(
             BufferCreateDesc::gpu(mem::size_of_val(self.indices) as _)
                 .transfer_destination()
                 .index_buffer()
-                .device_address()
                 .name(&format!("{} indices", name)),
         )?;
-        renderer.upload_buffer_data(BufferPointer::new(vertices, 0), self.vertices)?;
-        renderer.upload_buffer_data(BufferPointer::new(indices, 0), self.indices)?;
+        device.upload_buffer(BufferPointer::new(vertices, 0), self.vertices)?;
+        device.upload_buffer(BufferPointer::new(indices, 0), self.indices)?;
         let bounds = self.calculate_bounds();
         Ok(RenderModel {
-            renderer: renderer.clone(),
+            device,
             vertices,
             indices,
             bounds_per_mesh: self.meshes.iter().map(|x| x.bounds).collect(),
@@ -267,12 +267,12 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
 
 impl Drop for RenderModel {
     fn drop(&mut self) {
-        self.renderer.destroy_buffer(self.vertices);
-        self.renderer.destroy_buffer(self.indices);
+        self.device.destroy_buffer(self.vertices);
+        self.device.destroy_buffer(self.indices);
     }
 }
 
-pub static MESH_PBR_MATERIAL_DESCRIPTOR_SET: DescriptorSetLayoutDesc = DescriptorSetLayoutDesc {
+pub static MESH_PBR_MATERIAL_DESCRIPTOR_SET: DescriptorLayoutDesc = DescriptorLayoutDesc {
     layout: &[
         (
             0,

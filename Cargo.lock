@@ -1124,6 +1124,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiri-gfx"
+version = "0.2.0"
+dependencies = [
+ "arrayvec",
+ "byte-slice-cast",
+ "byteorder",
+ "bytes",
+ "kiri-assets",
+ "kiri-backend",
+ "kiri-common",
+ "kiri-math",
+ "log",
+ "parking_lot",
+ "puffin",
+ "rayon",
+ "thiserror 2.0.9",
+]
+
+[[package]]
 name = "kiri-math"
 version = "0.2.0"
 dependencies = [

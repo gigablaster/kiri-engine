@@ -206,7 +206,7 @@ struct DynamicBufferBindingData {
 }
 
 #[derive(Debug)]
-pub struct DescriptorSetData {
+pub(crate) struct DescriptorSetData {
     pub descriptor: Option<GpuDescriptor>,
     count: DescriptorTotalCount,
     layout: vk::DescriptorSetLayout,
@@ -219,7 +219,7 @@ pub struct DescriptorSetData {
 }
 
 impl DescriptorSetCreateDesc<'_> {
-    pub fn build(self, device: &GraphicsDevice) -> Result<DescriptorSetData, Error> {
+    pub(crate) fn build(self, device: &GraphicsDevice) -> Result<DescriptorSetData, Error> {
         let images = self
             .layout
             .by_types(&[
@@ -302,7 +302,7 @@ impl DescriptorSetCreateDesc<'_> {
 const DEFAULT_UPDATES: usize = 16384;
 
 impl GraphicsDevice {
-    pub fn update_descriptors(
+    pub(crate) fn update_descriptors(
         &self,
         descriptors: &mut DescriptorPool,
         buffers: &BufferPool,

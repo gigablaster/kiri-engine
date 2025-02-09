@@ -15,12 +15,12 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use ash::vk;
 use log::debug;
 use parking_lot::Mutex;
 
-use crate::{
-    vulkan::{ImageCreateDesc, ImageHandle, RenderDevice},
+use kiri_backend::{
+    ash::vk,
+    vulkan::{GraphicsDevice, ImageCreateDesc, ImageHandle},
     Error,
 };
 
@@ -43,7 +43,7 @@ struct TempImageKey {
 
 #[derive(Debug)]
 pub struct RenderTargetPool {
-    device: Arc<RenderDevice>,
+    device: Arc<GraphicsDevice>,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
@@ -55,7 +55,7 @@ pub struct TransientImage<'a> {
 }
 
 impl RenderTargetPool {
-    pub fn new(device: Arc<RenderDevice>) -> Self {
+    pub fn new(device: Arc<GraphicsDevice>) -> Self {
         Self {
             device,
             images: Default::default(),

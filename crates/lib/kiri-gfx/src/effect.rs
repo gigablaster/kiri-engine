@@ -15,10 +15,11 @@
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use kiri_assets::EffectAsset;
-use kiri_backend::{DescriptorSetLayoutDesc, RasterPipelineCreateDesc, ShaderDesc};
+use kiri_backend::vulkan::{DescriptorLayoutDesc, RasterPipelineCreateDesc};
 
-use crate::{Error, ProgramHandle, Renderer};
+use crate::Error;
 
 #[derive(Debug)]
 pub struct RenderTechinque {
@@ -28,24 +29,17 @@ pub struct RenderTechinque {
 
 #[derive(Debug)]
 pub struct RenderEffect {
-    pub program: ProgramHandle,
-    pub descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
+    pub vertex_shader: Bytes,
+    pub fragment_shader: Bytes,
+    pub descriptor_layout: &'static [DescriptorLayoutDesc<'static>],
     techinques: HashMap<String, RenderTechinque>,
 }
 
 impl RenderEffect {
     pub fn new(
-        renderer: &Renderer,
-        descriptor_layout: &'static [DescriptorSetLayoutDesc<'static>],
+        descriptor_layout: &'static [DescriptorLayoutDesc<'static>],
         asset: EffectAsset,
     ) -> Result<Self, Error> {
-        let program = renderer.create_program(
-            descriptor_layout,
-            &[
-                ShaderDesc::vertex(&asset.vertex_shader),
-                ShaderDesc::fragment(&asset.fragment_shader),
-            ],
-        )?;
         let techinques = asset
             .techniques
             .into_iter()
@@ -64,7 +58,8 @@ impl RenderEffect {
             })
             .collect::<HashMap<_, _>>();
         Ok(Self {
-            program,
+            vertex_shader: asset.vertex_shader.into(),
+            fragment_shader: asset.fragment_shader.into(),
             descriptor_layout,
             techinques,
         })

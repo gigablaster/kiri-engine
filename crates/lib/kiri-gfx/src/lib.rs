@@ -13,19 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod draw_stream;
 mod dynamic;
 mod effect;
 mod error;
 mod image_pool;
 mod mesh;
-pub mod passes;
-mod renderer;
+mod uniforms;
 
-pub use draw_stream::*;
-use dynamic::*;
+pub use dynamic::*;
 pub use effect::*;
 pub use error::*;
 pub use image_pool::*;
 pub use mesh::*;
-pub use renderer::*;
+pub use uniforms::*;

@@ -20,14 +20,17 @@ use std::{
     sync::Arc,
 };
 
-use kiri_backend::{BufferData, BufferCreateDesc, PhysicalDevice};
+use kiri_backend::vulkan::{
+    BufferCreateDesc, BufferHandle, BufferSlice, GraphicsDevice, PhysicalDevice,
+};
 use kiri_common::BumpAllocator;
 
-use crate::{BufferHandle, BufferSlice, Error, Renderer};
+use crate::Error;
 
 #[derive(Debug)]
 pub struct DynamicGpuMemory {
-    buffer_handle: BufferHandle,
+    device: Arc<GraphicsDevice>,
+    buffer: BufferHandle,
     mapping: NonNull<u8>,
     allocator: BumpAllocator,
 }
@@ -36,35 +39,31 @@ unsafe impl Send for DynamicGpuMemory {}
 unsafe impl Sync for DynamicGpuMemory {}
 
 impl DynamicGpuMemory {
-    pub fn new(renderer: &Renderer, size: usize) -> Result<Self, Error> {
-        let buffer = Buffer::new(
-            &renderer.device,
+    fn new(device: Arc<GraphicsDevice>, size: usize) -> Result<Self, Error> {
+        let buffer = device.create_buffer(
             BufferCreateDesc::shared(size)
                 .name("Dynamic data")
                 .storage_buffer()
-                .device_address()
                 .indirect_draw()
                 .veretex_buffer()
                 .index_buffer()
                 .uniform_buffer(),
         )?;
-        let mapping = buffer.mapping.unwrap();
+        let mapping = device.get_buffer_mapping(buffer)?;
         Ok(Self {
-            buffer_handle: renderer.register_buffer(buffer),
+            device,
+            buffer,
             mapping,
             allocator: BumpAllocator::new(size as _),
         })
     }
 
-    pub fn push<T: Copy>(
-        &self,
-        pdevice: &PhysicalDevice,
-        data: &[T],
-    ) -> Result<BufferSlice, Error> {
+    pub fn push<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
         let size = mem::size_of_val(data);
         if let Some(offset) = self.allocator.allocate(
             size as _,
-            pdevice
+            self.device
+                .physical_device
                 .properties
                 .limits
                 .min_uniform_buffer_offset_alignment as _,
@@ -76,7 +75,7 @@ impl DynamicGpuMemory {
                     size,
                 )
             }
-            Ok(BufferSlice::new(self.buffer_handle, offset, size))
+            Ok(BufferSlice::new(self.buffer, offset, size))
         } else {
             Err(Error::OutOfDynamicMemory)
         }
@@ -106,7 +105,7 @@ impl DynamicGpuMemory {
     }
 
     pub fn get_buffer_handle(&self) -> BufferHandle {
-        self.buffer_handle
+        self.buffer
     }
 
     pub fn recycle(&self) {
@@ -114,8 +113,15 @@ impl DynamicGpuMemory {
     }
 }
 
-#[derive(Debug, Default)]
+impl Drop for DynamicGpuMemory {
+    fn drop(&mut self) {
+        self.device.destroy_buffer(self.buffer);
+    }
+}
+
+#[derive(Debug)]
 pub struct DynamicGpuMemoryPool {
+    device: Arc<GraphicsDevice>,
     pool: Vec<Arc<DynamicGpuMemory>>,
     used: Vec<Arc<DynamicGpuMemory>>,
     recycle: Vec<Arc<DynamicGpuMemory>>,
@@ -124,12 +130,24 @@ pub struct DynamicGpuMemoryPool {
 const DYNAMIC_PAGE_SIZE: usize = 16 * 1024 * 1024;
 
 impl DynamicGpuMemoryPool {
-    pub fn take(&mut self, renderer: &Renderer) -> Result<Arc<DynamicGpuMemory>, Error> {
+    pub fn new(device: Arc<GraphicsDevice>) -> Self {
+        Self {
+            device,
+            pool: Default::default(),
+            used: Default::default(),
+            recycle: Default::default(),
+        }
+    }
+
+    pub fn get_or_allocate(&mut self) -> Result<Arc<DynamicGpuMemory>, Error> {
         if let Some(page) = self.pool.pop() {
             self.used.push(page.clone());
             Ok(page)
         } else {
-            let page = Arc::new(DynamicGpuMemory::new(renderer, DYNAMIC_PAGE_SIZE)?);
+            let page = Arc::new(DynamicGpuMemory::new(
+                self.device.clone(),
+                DYNAMIC_PAGE_SIZE,
+            )?);
             self.used.push(page.clone());
             Ok(page)
         }

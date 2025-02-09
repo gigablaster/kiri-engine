@@ -21,7 +21,7 @@ use kiri_common::HotColdPool;
 
 use crate::Error;
 
-use super::{drop_list::DropList, BufferHandle, GpuMemoryBlock, GraphicsDevice};
+use super::{drop_list::DropList, BufferHandle, BufferPointer, GpuMemoryBlock, GraphicsDevice};
 
 pub(crate) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
 
@@ -190,21 +190,16 @@ impl GraphicsDevice {
         Ok(self.buffers.write().push(buffer.raw, buffer))
     }
 
-    pub fn upload_buffer<T: Copy>(
-        &self,
-        handle: BufferHandle,
-        offset: usize,
-        data: &[T],
-    ) -> Result<(), Error> {
+    pub fn upload_buffer<T: Copy>(&self, target: BufferPointer, data: &[T]) -> Result<(), Error> {
         let buffer = self
             .buffers
             .read()
-            .get(handle)
+            .get(target.handle)
             .copied()
-            .ok_or(Error::InvalidBufferHandle(handle))?;
+            .ok_or(Error::InvalidBufferHandle(target.handle))?;
         self.staging
             .lock()
-            .upload_buffer(&self.raw, buffer, offset, data)
+            .upload_buffer(&self.raw, buffer, target.offset as _, data)
     }
 
     pub fn get_buffer_mapping(&self, handle: BufferHandle) -> Result<NonNull<u8>, Error> {
