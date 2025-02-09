@@ -25,8 +25,8 @@ use ash::vk;
 
 use crate::{
     vulkan::{
-        DescriptorHandle, DescriptorPool, DescriptorSetCreateDesc, Frame, ImageHandle,
-        ImageViewDesc, RenderDevice, RenderResourceResolver, SwapchainImage, MAX_ATTACHMENTS,
+        DescriptorHandle, DescriptorPool, DescriptorSetCreateDesc, Frame, GraphicsDevice,
+        ImageHandle, ImageViewDesc, RenderResourceResolver, SwapchainImage, MAX_ATTACHMENTS,
     },
     DrawStream, Error,
 };
@@ -184,7 +184,7 @@ pub trait PassDispatcher {
 }
 
 pub struct FrameDispatcher<'a> {
-    device: &'a RenderDevice,
+    device: &'a GraphicsDevice,
     frame: Arc<Frame>,
     passes: Vec<Box<dyn PassDispatcher>>,
     target: SwapchainImage<'a>,
@@ -212,7 +212,7 @@ pub enum RenderFrame<'a> {
 
 impl<'a> FrameDispatcher<'a> {
     pub(crate) fn new(
-        device: &'a RenderDevice,
+        device: &'a GraphicsDevice,
         frame: Arc<Frame>,
         target: SwapchainImage<'a>,
     ) -> Self {

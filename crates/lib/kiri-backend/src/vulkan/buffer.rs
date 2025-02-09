@@ -21,7 +21,7 @@ use kiri_common::HotColdPool;
 
 use crate::Error;
 
-use super::{drop_list::DropList, BufferCreateDesc, BufferHandle, GpuMemoryBlock, RenderDevice};
+use super::{drop_list::DropList, BufferCreateDesc, BufferHandle, GpuMemoryBlock, GraphicsDevice};
 
 pub type BufferPool = HotColdPool<vk::Buffer, BufferData>;
 
@@ -51,7 +51,7 @@ impl BufferData {
     }
 }
 
-impl RenderDevice {
+impl GraphicsDevice {
     pub fn create_buffer(&self, desc: BufferCreateDesc) -> Result<BufferHandle, Error> {
         let buffer = unsafe { self.raw.create_buffer(&desc.build(), None) }?;
         let requirements = unsafe { self.raw.get_buffer_memory_requirements(buffer) };

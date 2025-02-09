@@ -25,7 +25,7 @@ use crate::Error;
 
 use super::{
     buffer::BufferPool, image::ImagePool, BufferHandle, BufferSlice, DescriptorLayoutDesc,
-    DescriptorSetCreateDesc, GpuDescriptor, ImageHandle, ImageViewDesc, RenderDevice,
+    DescriptorSetCreateDesc, GpuDescriptor, GraphicsDevice, ImageHandle, ImageViewDesc,
 };
 
 pub type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
@@ -88,7 +88,7 @@ pub struct DescriptorSetData {
 }
 
 impl DescriptorSetCreateDesc<'_> {
-    pub fn build(self, device: &RenderDevice) -> Result<DescriptorSetData, Error> {
+    pub fn build(self, device: &GraphicsDevice) -> Result<DescriptorSetData, Error> {
         let images = self
             .layout
             .by_types(&[
@@ -170,7 +170,7 @@ impl DescriptorSetCreateDesc<'_> {
 
 const DEFAULT_UPDATES: usize = 16384;
 
-impl RenderDevice {
+impl GraphicsDevice {
     pub fn update_descriptors(
         &self,
         descriptors: &mut DescriptorPool,

@@ -22,7 +22,7 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use super::{
     drop_list::DropList, GpuMemoryBlock, ImageCreateDesc, ImageHandle, ImageUploadData,
-    ImageViewDesc, RenderDevice,
+    ImageViewDesc, GraphicsDevice,
 };
 
 pub type ImagePool = Pool<ImageData>;
@@ -162,7 +162,7 @@ impl ImageData {
     }
 }
 
-impl RenderDevice {
+impl GraphicsDevice {
     /// Wraps external image
     ///
     /// Image won't be destroyed when instance is dropped. But views will be freed.

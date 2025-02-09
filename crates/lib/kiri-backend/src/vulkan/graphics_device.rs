@@ -136,7 +136,7 @@ pub struct SamplerDesc {
     pub anisotropy_level: u32,
 }
 
-pub struct RenderDevice {
+pub struct GraphicsDevice {
     pub instance: Arc<Instance>,
     pub physical_device: PhysicalDevice,
     pub raw: ash::Device,
@@ -159,7 +159,7 @@ pub struct RenderDevice {
     pub(crate) descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
 }
 
-impl Debug for RenderDevice {
+impl Debug for GraphicsDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "VkDevice({})", vk::Handle::as_raw(self.raw.handle()))
     }
@@ -243,7 +243,7 @@ impl<E: From<Error>> DescriptorAllocatorContext<'_, E> {
     }
 }
 
-impl RenderDevice {
+impl GraphicsDevice {
     pub fn new(
         instance: &Arc<Instance>,
         surface: &Surface,
@@ -804,7 +804,7 @@ impl RenderDevice {
     }
 }
 
-impl Drop for RenderDevice {
+impl Drop for GraphicsDevice {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle() }.expect("device_wait_idle isn't supposed to fail");
         let mut drop_list = self.current_drop_list.lock();

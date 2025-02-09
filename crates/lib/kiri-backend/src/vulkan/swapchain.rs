@@ -25,7 +25,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::Error;
 
-use super::{image::ImageData, ImageDesc, ImageHandle, Instance, RenderDevice};
+use super::{image::ImageData, ImageDesc, ImageHandle, Instance, GraphicsDevice};
 
 use super::physical_device::PhysicalDevice;
 
@@ -63,7 +63,7 @@ impl Drop for Surface {
 }
 
 pub struct Swapchain {
-    device: Arc<RenderDevice>,
+    device: Arc<GraphicsDevice>,
     pub(crate) raw: vk::SwapchainKHR,
     images: ArrayVec<ImageData, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
@@ -87,7 +87,7 @@ pub enum AcquiredSurface<'a> {
 
 impl Swapchain {
     pub fn new(
-        device: Arc<RenderDevice>,
+        device: Arc<GraphicsDevice>,
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, Error> {

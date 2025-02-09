@@ -6,7 +6,7 @@ mod image;
 mod instance;
 mod physical_device;
 mod pipeline;
-mod render_device;
+mod graphics_device;
 mod staging;
 mod swapchain;
 
@@ -21,7 +21,7 @@ pub use instance::*;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
 pub use physical_device::*;
 use pipeline::*;
-pub use render_device::*;
+pub use graphics_device::*;
 use staging::*;
 pub use swapchain::*;
 
@@ -600,7 +600,7 @@ pub struct DescriptorSetCreateDesc<'a> {
 }
 
 pub struct DescriptorUpdateContext<'a> {
-    device: &'a RenderDevice,
+    device: &'a GraphicsDevice,
     descriptors: RwLockWriteGuard<'a, DescriptorPool>,
     dirty: MutexGuard<'a, Vec<DescriptorHandle>>,
     to_destroy: MutexGuard<'a, Vec<DescriptorHandle>>,
@@ -622,7 +622,7 @@ impl DescriptorUpdateContext<'_> {
     }
 }
 
-impl RenderDevice {
+impl GraphicsDevice {
     pub fn descriptors(&self) -> DescriptorUpdateContext {
         DescriptorUpdateContext {
             device: self,

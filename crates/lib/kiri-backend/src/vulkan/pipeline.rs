@@ -34,7 +34,7 @@ use crate::{vulkan::pipeline, Error};
 
 use super::{
     DescriptorLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RasterPipelineHandle,
-    RenderDevice, RenderPassLayout, ShaderDesc, MAX_DESCRIPTOR_SETS,
+    GraphicsDevice, RenderPassLayout, ShaderDesc, MAX_DESCRIPTOR_SETS,
 };
 
 pub type RasterPipelinePool = Vec<Pipeline<RasterPipelineDesc>>;
@@ -84,7 +84,7 @@ pub struct CompiledPipeline {
 impl ShaderDesc<'_> {
     fn build(
         self,
-        device: &RenderDevice,
+        device: &GraphicsDevice,
     ) -> Result<(CString, vk::ShaderStageFlags, vk::ShaderModule), Error> {
         let shader_create_info =
             vk::ShaderModuleCreateInfo::default().code(self.code.as_slice_of::<u32>().unwrap());
@@ -98,7 +98,7 @@ impl ShaderDesc<'_> {
 impl CompiledPipeline {
     #[allow(clippy::too_many_arguments)]
     pub fn raster(
-        device: &RenderDevice,
+        device: &GraphicsDevice,
         cache: vk::PipelineCache,
         vertex_shader: ShaderDesc,
         fragment_shader: ShaderDesc,
@@ -338,7 +338,7 @@ struct PipelineDiskCache {
 }
 
 impl PipelineDiskCache {
-    pub fn new(device: &RenderDevice, data: &[u8]) -> Self {
+    pub fn new(device: &GraphicsDevice, data: &[u8]) -> Self {
         let pdevice = &device.physical_device;
         let vendor_id = pdevice.properties.vendor_id;
         let device_id = pdevice.properties.device_id;
@@ -396,7 +396,7 @@ impl PipelineDiskCache {
 }
 
 pub fn load_or_create_pipeline_cache<P: AsRef<Path>>(
-    device: &RenderDevice,
+    device: &GraphicsDevice,
     path: P,
 ) -> io::Result<vk::PipelineCache> {
     info!("Loading pipeline cache from {:?}", path.as_ref());
@@ -440,7 +440,7 @@ pub fn load_or_create_pipeline_cache<P: AsRef<Path>>(
 }
 
 pub fn save_pipeline_cache<P: AsRef<Path>>(
-    device: &RenderDevice,
+    device: &GraphicsDevice,
     cache: vk::PipelineCache,
     path: P,
 ) -> io::Result<()> {
@@ -458,7 +458,7 @@ pub fn save_pipeline_cache<P: AsRef<Path>>(
     PipelineDiskCache::new(device, &data).save(File::create(path)?)
 }
 
-impl RenderDevice {
+impl GraphicsDevice {
     pub fn create_raster_pipeline(
         &self,
         vertex_shader: &[u8],
