@@ -15,17 +15,16 @@
 
 use std::io::{self, Cursor, Read};
 
-use crate::{BufferPointer, DescriptorHandle, Error, RasterPipelineHandle, RenderResourceResolver};
-use arrayvec::ArrayVec;
-use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use kiri_backend::{
-    ash::{
-        self,
-        vk::{self, Rect2D},
+use crate::{
+    vulkan::{
+        BufferPointer, DescriptorHandle, RasterPipelineHandle, RenderResourceResolver,
+        DYNAMIC_DESCRIPTOR_SLOT_INDEX, MAX_DESCRIPTOR_SETS,
     },
-    DYNAMIC_DESCRIPTOR_SLOT_INDEX, MAX_DESCRIPTOR_SETS,
+    Error,
 };
-use log::debug;
+use arrayvec::ArrayVec;
+use ash::vk;
+use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 
 const MAX_VERTEX_STREAMS: usize = 2;
 const MAX_DYNAMIC_OFFSETS: usize = 2;
@@ -252,7 +251,7 @@ impl DrawStream {
         &self,
         device: &ash::Device,
         command_buffer: vk::CommandBuffer,
-        render_area: Rect2D,
+        render_area: vk::Rect2D,
         resolver: &RenderResourceResolver,
     ) -> Result<(), Error> {
         unsafe {

@@ -13,8 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod dispatch;
+mod draw_stream;
 mod error;
 pub mod vulkan;
 
-use ash::vk;
+pub use ash::vk;
+pub use dispatch::*;
+pub use draw_stream::*;
 pub use error::*;

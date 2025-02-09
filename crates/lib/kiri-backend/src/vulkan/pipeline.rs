@@ -56,6 +56,7 @@ impl InputVertexStreamLayout<'_> {
     }
 }
 
+#[derive(Debug)]
 pub enum Pipeline<D> {
     Pending(D),
     Compiled(CompiledPipeline),
@@ -277,6 +278,13 @@ impl CompiledPipeline {
             pipeline,
             pipeline_layout,
         })
+    }
+
+    pub fn free(&self, device: &ash::Device) {
+        unsafe {
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+        }
     }
 }
 

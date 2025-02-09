@@ -25,7 +25,7 @@ use kiri_common::{Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::Error;
+use crate::{Error, FrameDispatcher, PassDispatcher, RenderFrame};
 
 use super::buffer::BufferPool;
 use super::descriptors::DescriptorPool;
@@ -33,7 +33,7 @@ use super::image::ImagePool;
 use super::pipeline::{Pipeline, RasterPipelineDesc, RasterPipelinePool};
 use super::{
     BufferData, DescriptorLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock,
-    ImageData, Instance, Staging,
+    ImageData, Instance, RenderResourceResolver, Staging, Swapchain,
 };
 
 use super::{
@@ -49,6 +49,24 @@ pub type BufferHandle = Handle<vk::Buffer>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RasterPipelineHandle(pub(crate) u32);
+
+impl From<RasterPipelineHandle> for u32 {
+    fn from(value: RasterPipelineHandle) -> Self {
+        value.0
+    }
+}
+
+impl From<u32> for RasterPipelineHandle {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl Default for RasterPipelineHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferSlice {
@@ -494,11 +512,21 @@ impl RenderDevice {
         }
     }
 
+    pub fn frame<'a>(&'a self, swapchain: &'a Swapchain) -> Result<RenderFrame<'a>, Error> {
+        let frame = self.begin_frame()?;
+        match swapchain.acquire_next_image()? {
+            super::AcquiredSurface::NeedRecreate => Ok(RenderFrame::NeedRecreateSwapchain),
+            super::AcquiredSurface::Image(target) => Ok(RenderFrame::Dispatch(
+                FrameDispatcher::new(self, frame, target),
+            )),
+        }
+    }
+
     /// Begins frame
     ///
     /// Waiting for last frame to finish rendering, them resets fences and frame state.
     /// Returns frame data and staging semaphore
-    pub fn begin_frame(&self) -> Result<(Arc<Frame>, vk::Semaphore), Error> {
+    fn begin_frame(&self) -> Result<Arc<Frame>, Error> {
         puffin::profile_function!();
         let mut frame = self.frames[0].lock();
         {
@@ -513,15 +541,19 @@ impl RenderDevice {
                 &mut self.memory_allocator.lock(),
                 &mut self.descriptor_allocator.lock(),
             )?;
+            frame.upload_semaphore = self.staging.lock().upload(&self.raw)?;
         }
-        let upload_finished = self.staging.lock().upload(&self.raw)?;
-        Ok((frame.clone(), upload_finished))
+        Ok(frame.clone())
     }
 
     /// Ends frame
     ///
     /// Current frame marked for execution, last frame moved to be waited.
-    pub fn end_frame(&self, frame: Arc<Frame>) {
+    fn end_frame(
+        &self,
+        frame: Arc<Frame>,
+        temp_descriptors: impl IntoIterator<Item = DescriptorHandle>,
+    ) {
         drop(frame);
 
         let mut frame = self.frames[0].lock();
@@ -531,21 +563,114 @@ impl RenderDevice {
         let mut buffers = self.buffers.write();
         let mut drop_list = self.current_drop_list.lock();
         self.buffers_to_destroy.lock().drain(..).for_each(|handle| {
-            if let Some((_, mut data)) = buffers.remove(handle) {
+            if let Some((_, data)) = buffers.remove(handle) {
                 data.free(&mut drop_list);
             }
         });
         let mut images = self.images.write();
         self.images_to_destroy.lock().drain(..).for_each(|handle| {
-            if let Some(mut image) = images.remove(handle) {
+            if let Some(image) = images.remove(handle) {
                 image.free(&mut drop_list);
             }
         });
+        let mut descriptors = self.descriptors.write();
+        drop_list.drop_descriptors(
+            self.descriptors_to_destroy
+                .lock()
+                .drain(..)
+                .chain(temp_descriptors)
+                .filter_map(|handle| descriptors.remove(handle))
+                .filter_map(|(_, mut data)| data.descriptor.take()),
+        );
         frame.assign_drop_list(mem::take(&mut drop_list));
         mem::swap(frame, next_frame);
     }
 
-    pub fn present(&self, target: SwapchainImage, frame: &Frame) -> Result<(), Error> {
+    pub(crate) fn execute(
+        &self,
+        frame: Arc<Frame>,
+        target: SwapchainImage,
+        passes: impl IntoIterator<Item = Box<dyn PassDispatcher>>,
+        temp_descriptors: impl IntoIterator<Item = DescriptorHandle>,
+    ) -> Result<(), Error> {
+        let mut descriptors = self.descriptors.write();
+        let buffers = self.buffers.write();
+        let images = self.images.write();
+
+        self.update_descriptors(&mut descriptors, &buffers, &images)?;
+
+        // Prepare
+        self.compile_pipelines()?;
+
+        let raster_pipelines = self.raster_pipelines.lock();
+
+        // Actual rendering
+        let command_buffer =
+            frame.get_command_buffer(&self.raw, vk::CommandBufferLevel::PRIMARY)?;
+        unsafe {
+            self.raw.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+        }
+        let empty_descriptor_set = self
+            .allocate_descriptor_sets(
+                self.get_or_create_layout(
+                    vk::ShaderStageFlags::ALL_GRAPHICS,
+                    DescriptorLayoutDesc::default(),
+                )?,
+                &DescriptorTotalCount::default(),
+                1,
+            )?
+            .remove(0);
+        let resolver = RenderResourceResolver::new(
+            &self.raw,
+            target.image,
+            &buffers,
+            &images,
+            &raster_pipelines,
+            &descriptors,
+            *empty_descriptor_set.raw(),
+        );
+        for pass in passes {
+            self.begin_label(command_buffer, pass.name());
+            pass.dispatch(&self.raw, command_buffer, &resolver)?;
+            self.end_label(command_buffer);
+        }
+        unsafe {
+            self.raw.end_command_buffer(command_buffer)?;
+        }
+        drop(resolver);
+        drop(raster_pipelines);
+        drop(descriptors);
+        drop(buffers);
+        drop(images);
+        // Submit
+        self.submit(
+            &[command_buffer],
+            frame.render_fence,
+            &[
+                (
+                    frame.upload_semaphore,
+                    vk::PipelineStageFlags::VERTEX_INPUT
+                        | vk::PipelineStageFlags::FRAGMENT_SHADER
+                        | vk::PipelineStageFlags::DRAW_INDIRECT,
+                ),
+                (
+                    target.acquire_semaphore,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ),
+            ],
+            &[frame.render_finished],
+        )?;
+
+        self.present(target, &frame)?;
+        self.end_frame(frame, temp_descriptors);
+        Ok(())
+    }
+
+    fn present(&self, target: SwapchainImage, frame: &Frame) -> Result<(), Error> {
         puffin::profile_function!();
 
         let binding = target.swapchain.raw;
@@ -685,12 +810,18 @@ impl Drop for RenderDevice {
         let mut drop_list = self.current_drop_list.lock();
         let mut memory_allocator = self.memory_allocator.lock();
         let mut descriptor_allocator = self.descriptor_allocator.lock();
-        self.buffers.write().drain().for_each(|(_, mut data)| {
+        self.buffers.write().drain().for_each(|(_, data)| {
             data.free(&mut drop_list);
         });
-        self.images.write().drain().for_each(|mut image| {
+        self.images.write().drain().for_each(|image| {
             image.free(&mut drop_list);
         });
+        drop_list.drop_descriptors(
+            self.descriptors
+                .write()
+                .drain()
+                .filter_map(|(_, mut data)| data.descriptor.take()),
+        );
         self.staging.lock().free(&self.raw, &mut memory_allocator);
         drop_list.purge(&self.raw, &mut memory_allocator, &mut descriptor_allocator);
         self.frames.iter().for_each(|frame| {
@@ -710,6 +841,14 @@ impl Drop for RenderDevice {
         self.layouts.write().drain().for_each(|(_, layout)| unsafe {
             self.raw.destroy_descriptor_set_layout(layout, None)
         });
+        self.raster_pipelines
+            .lock()
+            .drain(..)
+            .filter_map(|pipeline| match pipeline {
+                Pipeline::Pending(_) => None,
+                Pipeline::Compiled(pipeline) => Some(pipeline),
+            })
+            .for_each(|pipeline| pipeline.free(&self.raw));
         unsafe {
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
             descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw));

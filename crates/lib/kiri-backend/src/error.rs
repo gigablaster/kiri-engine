@@ -16,7 +16,9 @@
 use ash::vk;
 use thiserror::Error;
 
-use crate::vulkan::{BufferHandle, ImageHandle, SamplerDesc};
+use crate::vulkan::{
+    BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle, SamplerDesc,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -62,6 +64,12 @@ pub enum Error {
     BindingSlotNotFound(String),
     #[error("Buffer {0} isn't mapped")]
     BufferIsntMapped(BufferHandle),
+    #[error("Invalid descriptor handle {0}")]
+    InvalidDescriptorHandle(DescriptorHandle),
+    #[error("Texture slot {0} not found")]
+    TextureSlotNotFound(String),
+    #[error("Invalid raster pipeline handle {0:?}")]
+    InvalidRasterPipelineHandle(RasterPipelineHandle),
 }
 
 impl From<vk::Result> for Error {

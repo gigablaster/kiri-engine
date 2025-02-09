@@ -42,6 +42,7 @@ pub struct Frame {
     pub render_fence: vk::Fence,
     /// Signal this semaphore when finsihed rendering
     pub render_finished: vk::Semaphore,
+    pub upload_semaphore: vk::Semaphore,
 }
 
 impl CommandBufferPool {
@@ -101,6 +102,7 @@ impl Frame {
                 render_finished,
                 drop_list,
                 per_thread_pools: Default::default(),
+                upload_semaphore: vk::Semaphore::null(),
             })
         }
     }

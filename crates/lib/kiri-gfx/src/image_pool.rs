@@ -15,12 +15,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{ImageHandle, Renderer};
-use kiri_backend::{ash::vk, ImageCreateDesc};
+use ash::vk;
 use log::debug;
 use parking_lot::Mutex;
 
-use crate::Error;
+use crate::{
+    vulkan::{ImageCreateDesc, ImageHandle, RenderDevice},
+    Error,
+};
 
 pub trait ResolutionScale {
     fn scale_down(&self, scale: u32) -> [u32; 2];
@@ -41,7 +43,7 @@ struct TempImageKey {
 
 #[derive(Debug)]
 pub struct RenderTargetPool {
-    renderer: Arc<Renderer>,
+    device: Arc<RenderDevice>,
     images: Mutex<HashMap<TempImageKey, Vec<ImageHandle>>>,
 }
 
@@ -53,9 +55,9 @@ pub struct TransientImage<'a> {
 }
 
 impl RenderTargetPool {
-    pub fn new(renderer: &Arc<Renderer>) -> Self {
+    pub fn new(device: Arc<RenderDevice>) -> Self {
         Self {
-            renderer: renderer.clone(),
+            device,
             images: Default::default(),
         }
     }
@@ -101,7 +103,7 @@ impl RenderTargetPool {
                 "Create render taget resolution: {:?} format: {:?} usage: {:?}",
                 dims, format, usage,
             );
-            let image = self.renderer.create_image(
+            let image = self.device.create_image(
                 ImageCreateDesc::new(format, dims)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .usage(usage),
