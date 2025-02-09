@@ -10,7 +10,7 @@ members = [
     # "crates/lib/kiri-gfx",
     # "crates/lib/kiri-resources",
     "crates/lib/kiri-math",
-    # "crates/lib/kiri-asset-pipeline",
+    "crates/lib/kiri-asset-pipeline",
 ]
 
 resolver = "2"
