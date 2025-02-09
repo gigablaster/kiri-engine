@@ -16,12 +16,9 @@
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::{
-    vulkan::{RenderResourceResolver, MAX_ATTACHMENTS},
-    DrawStream, Error,
-};
+use crate::{vulkan::MAX_ATTACHMENTS, DrawStream, Error};
 
-use super::{ImageDependency, PassDispatcher, RenderArea, RenderTarget};
+use super::{ImageDependency, PassDispatcher, RenderArea, RenderResourceResolver, RenderTarget};
 
 pub struct RenderPassDispatcher {
     name: String,

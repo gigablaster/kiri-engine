@@ -25,7 +25,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::Error;
 
-use super::{image::ImageData, ImageDesc, ImageHandle, Instance, GraphicsDevice};
+use super::{image::Image, GraphicsDevice, ImageDesc, ImageHandle, Instance};
 
 use super::physical_device::PhysicalDevice;
 
@@ -65,7 +65,7 @@ impl Drop for Surface {
 pub struct Swapchain {
     device: Arc<GraphicsDevice>,
     pub(crate) raw: vk::SwapchainKHR,
-    images: ArrayVec<ImageData, DESIRED_IMAGES_COUNT>,
+    images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
     loader: ash::khr::swapchain::Device,
     acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
@@ -74,7 +74,7 @@ pub struct Swapchain {
 
 pub(crate) struct SwapchainImage<'a> {
     pub swapchain: &'a Swapchain,
-    pub image: &'a ImageData,
+    pub image: &'a Image,
     pub dims: [usize; 2],
     pub image_index: usize,
     pub acquire_semaphore: vk::Semaphore,
@@ -171,7 +171,7 @@ impl Swapchain {
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?
             .iter()
-            .map(|image| ImageData {
+            .map(|image| Image {
                 raw: *image,
                 desc: ImageDesc {
                     ty: vk::ImageType::TYPE_2D,

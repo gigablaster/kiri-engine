@@ -28,16 +28,161 @@ use byte_slice_cast::AsSliceOf;
 use byteorder::{LittleEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use log::{info, warn};
-use rayon::iter::{IntoParallelRefIterator, ParallelDrainRange, ParallelIterator};
+use rayon::iter::{ParallelDrainRange, ParallelIterator};
 
 use crate::{vulkan::pipeline, Error};
 
 use super::{
-    DescriptorLayoutDesc, InputVertexStreamLayout, RasterPipelineCreateDesc, RasterPipelineHandle,
-    GraphicsDevice, RenderPassLayout, ShaderDesc, MAX_DESCRIPTOR_SETS,
+    DescriptorLayoutDesc, GraphicsDevice, RasterPipelineHandle, ShaderDesc, MAX_DESCRIPTOR_SETS,
 };
 
-pub type RasterPipelinePool = Vec<Pipeline<RasterPipelineDesc>>;
+pub(crate) type RasterPipelinePool = Vec<Pipeline<RasterPipelineDesc>>;
+
+pub const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RenderPassLayout<'a> {
+    pub color: &'a [vk::Format],
+    pub depth: Option<vk::Format>,
+}
+
+impl<'a> RenderPassLayout<'a> {
+    fn build(self) -> vk::PipelineRenderingCreateInfo<'a> {
+        let mut info =
+            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(self.color);
+        if let Some(depth) = self.depth {
+            info = info.depth_attachment_format(depth);
+        }
+        info
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct PipelineBlendDesc {
+    pub src: vk::BlendFactor,
+    pub dst: vk::BlendFactor,
+    pub op: vk::BlendOp,
+}
+
+impl PipelineBlendDesc {
+    pub fn new(src: vk::BlendFactor, dst: vk::BlendFactor, op: vk::BlendOp) -> Self {
+        Self { src, dst, op }
+    }
+}
+
+/// Data to create pipeline.
+///
+/// Contains all data to create new pipeline.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct RasterPipelineCreateDesc {
+    /// Blend data, None if opaque. Order: color, alpha
+    pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
+    /// Culling
+    pub cull: Option<vk::CullModeFlags>,
+    /// Depth testing
+    pub depth_test: Option<vk::CompareOp>,
+    /// Depth writing
+    pub depth_write: bool,
+}
+
+impl Default for RasterPipelineCreateDesc {
+    fn default() -> Self {
+        Self {
+            blend: None,
+            cull: None,
+            depth_test: Some(vk::CompareOp::LESS_OR_EQUAL),
+            depth_write: true,
+        }
+    }
+}
+
+impl RasterPipelineCreateDesc {
+    pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
+        self.blend = Some((color, alpha));
+
+        self
+    }
+
+    pub fn cull(mut self, mode: vk::CullModeFlags) -> Self {
+        self.cull = Some(mode);
+
+        self
+    }
+
+    pub fn alpha_blend(mut self) -> Self {
+        self.blend = Some((
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
+            ),
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
+            ),
+        ));
+        self
+    }
+
+    pub fn premultiplied(mut self) -> Self {
+        self.blend = Some((
+            PipelineBlendDesc::new(
+                vk::BlendFactor::ONE,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
+            ),
+            PipelineBlendDesc::new(
+                vk::BlendFactor::ONE,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
+            ),
+        ));
+        self
+    }
+
+    pub fn additive(mut self) -> Self {
+        self.blend = Some((
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE,
+                vk::BlendOp::ADD,
+            ),
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE,
+                vk::BlendOp::ADD,
+            ),
+        ));
+        self
+    }
+
+    pub fn depth_write(mut self, value: bool) -> Self {
+        self.depth_write = value;
+
+        self
+    }
+
+    pub fn depth_test(mut self, value: vk::CompareOp) -> Self {
+        self.depth_test = Some(value);
+
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexAttrubute {
+    pub location: usize,
+    pub format: vk::Format,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexStreamLayout<'a> {
+    pub streams: &'a [InputVertexAttrubute],
+    pub stride: usize,
+}
 
 impl InputVertexStreamLayout<'_> {
     fn build(&self, binding: u32) -> (u32, Vec<vk::VertexInputAttributeDescription>) {

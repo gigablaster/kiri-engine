@@ -21,9 +21,112 @@ use kiri_common::HotColdPool;
 
 use crate::Error;
 
-use super::{drop_list::DropList, BufferCreateDesc, BufferHandle, GpuMemoryBlock, GraphicsDevice};
+use super::{drop_list::DropList, BufferHandle, GpuMemoryBlock, GraphicsDevice};
 
-pub type BufferPool = HotColdPool<vk::Buffer, BufferData>;
+pub(crate) type BufferPool = HotColdPool<vk::Buffer, Buffer>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct BufferCreateDesc<'a> {
+    size: usize,
+    usage: vk::BufferUsageFlags,
+    memory_usage: gpu_alloc::UsageFlags,
+    name: Option<&'a str>,
+    dedicated: bool,
+}
+
+impl<'a> BufferCreateDesc<'a> {
+    pub fn gpu(size: usize) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_usage: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
+            name: None,
+            dedicated: false,
+        }
+    }
+
+    pub fn host(size: usize) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_usage: gpu_alloc::UsageFlags::HOST_ACCESS,
+            name: None,
+            dedicated: false,
+        }
+    }
+
+    pub fn upload(size: usize) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_usage: gpu_alloc::UsageFlags::HOST_ACCESS | gpu_alloc::UsageFlags::UPLOAD,
+            name: None,
+            dedicated: false,
+        }
+    }
+
+    pub fn shared(size: usize) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_usage: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS
+                | gpu_alloc::UsageFlags::HOST_ACCESS,
+            name: None,
+            dedicated: false,
+        }
+    }
+
+    pub fn index_buffer(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::INDEX_BUFFER;
+        self
+    }
+
+    pub fn veretex_buffer(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        self
+    }
+
+    pub fn storage_buffer(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::STORAGE_BUFFER;
+        self
+    }
+
+    pub fn uniform_buffer(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::UNIFORM_BUFFER;
+        self
+    }
+
+    pub fn transfer_destination(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::TRANSFER_DST;
+        self
+    }
+
+    pub fn transfer_source(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::TRANSFER_SRC;
+        self
+    }
+
+    pub fn indirect_draw(mut self) -> Self {
+        self.usage |= vk::BufferUsageFlags::INDIRECT_BUFFER;
+        self
+    }
+
+    pub fn name(mut self, value: &'a str) -> Self {
+        self.name = Some(value);
+        self
+    }
+
+    pub fn dedicated(mut self) -> Self {
+        self.dedicated = true;
+        self
+    }
+
+    fn build(&self) -> vk::BufferCreateInfo {
+        vk::BufferCreateInfo::default()
+            .usage(self.usage)
+            .size(self.size as _)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
@@ -32,17 +135,17 @@ pub struct BufferDesc {
 }
 
 #[derive(Debug)]
-pub struct BufferData {
+pub struct Buffer {
     pub raw: vk::Buffer,
     pub desc: BufferDesc,
     pub mapping: Option<NonNull<u8>>,
     pub memory: Option<GpuMemoryBlock>,
 }
 
-unsafe impl Send for BufferData {}
-unsafe impl Sync for BufferData {}
+unsafe impl Send for Buffer {}
+unsafe impl Sync for Buffer {}
 
-impl BufferData {
+impl Buffer {
     pub fn free(mut self, drop_list: &mut DropList) {
         if let Some(memory) = self.memory.take() {
             drop_list.drop_buffer(self.raw);
@@ -75,7 +178,7 @@ impl GraphicsDevice {
         } else {
             None
         };
-        let buffer = BufferData {
+        let buffer = Buffer {
             raw: buffer,
             desc: BufferDesc {
                 size: desc.size,

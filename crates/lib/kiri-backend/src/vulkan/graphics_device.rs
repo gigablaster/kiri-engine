@@ -25,15 +25,15 @@ use kiri_common::{Handle, HotColdPool, Pool, TempList};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::fmt::Debug;
 
-use crate::{Error, FrameDispatcher, PassDispatcher, RenderFrame};
+use crate::{Error, FrameDispatcher, PassDispatcher, RenderFrame, RenderResourceResolver};
 
 use super::buffer::BufferPool;
 use super::descriptors::DescriptorPool;
 use super::image::ImagePool;
-use super::pipeline::{Pipeline, RasterPipelineDesc, RasterPipelinePool};
+use super::pipeline::{Pipeline, RasterPipelinePool};
 use super::{
-    BufferData, DescriptorLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock,
-    ImageData, Instance, RenderResourceResolver, Staging, Swapchain,
+    DescriptorLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock, Image, Instance,
+    Staging, Swapchain,
 };
 
 use super::{
@@ -44,7 +44,7 @@ use super::{
 const MAX_SUBMITS: usize = 32;
 const MAX_RESOURCES: usize = 0xFFFF;
 
-pub type ImageHandle = Handle<ImageData>;
+pub type ImageHandle = Handle<Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

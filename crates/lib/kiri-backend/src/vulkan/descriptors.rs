@@ -19,16 +19,147 @@ use ash::vk;
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use kiri_common::{HotColdPool, TempList};
-use parking_lot::RwLockWriteGuard;
+use parking_lot::{MutexGuard, RwLockWriteGuard};
 
 use crate::Error;
 
 use super::{
-    buffer::BufferPool, image::ImagePool, BufferHandle, BufferSlice, DescriptorLayoutDesc,
-    DescriptorSetCreateDesc, GpuDescriptor, GraphicsDevice, ImageHandle, ImageViewDesc,
+    buffer::BufferPool, image::ImagePool, BufferHandle, BufferSlice, DescriptorHandle,
+    GpuDescriptor, GraphicsDevice, ImageHandle, ImageViewDesc,
 };
 
-pub type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+pub(crate) type DescriptorPool = HotColdPool<vk::DescriptorSet, DescriptorSetData>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorDesc<'a> {
+    pub name: &'a str,
+    pub ty: vk::DescriptorType,
+    pub count: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DescriptorLayoutDesc<'a> {
+    pub layout: &'a [(usize, DescriptorDesc<'a>)],
+    pub compute_groups_size: Option<(u32, u32, u32)>,
+}
+
+impl<'a> DescriptorLayoutDesc<'a> {
+    pub fn has_slot(&self, index: usize) -> bool {
+        self.layout.iter().any(|(x, _)| *x == index)
+    }
+
+    pub fn get_slot(&self, name: &str) -> Option<usize> {
+        self.layout
+            .iter()
+            .find_map(|(slot, desc)| (desc.name == name).then_some(*slot))
+    }
+
+    pub fn get_desc(&self, slot: usize) -> Option<&DescriptorDesc> {
+        self.layout
+            .iter()
+            .find_map(|(x, data)| if slot == *x { Some(data) } else { None })
+    }
+
+    pub fn get_layout(&self) -> &[(usize, DescriptorDesc<'a>)] {
+        self.layout
+    }
+
+    pub fn by_types(
+        &self,
+        ty: &'a [vk::DescriptorType],
+    ) -> impl Iterator<Item = (usize, DescriptorDesc)> {
+        self.layout
+            .iter()
+            .copied()
+            .filter(move |x| ty.contains(&x.1.ty))
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub struct ShaderDesc<'a> {
+    pub stage: vk::ShaderStageFlags,
+    pub entry: &'a str,
+    pub code: &'a [u8],
+}
+
+impl<'a> ShaderDesc<'a> {
+    pub fn new(stage: vk::ShaderStageFlags, code: &'a [u8]) -> Self {
+        Self {
+            stage,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn vertex(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn fragment(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn compute(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::COMPUTE,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn entry(mut self, entry: &'a str) -> Self {
+        self.entry = entry;
+        self
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DescriptorSetCreateDesc<'a> {
+    pub layout: DescriptorLayoutDesc<'static>,
+    pub stages: vk::ShaderStageFlags,
+    pub images: &'a [ImageHandle],
+    pub unifoms: &'a [BufferSlice],
+    pub storages: &'a [BufferSlice],
+    pub dynamic_uniforms: &'a [(BufferHandle, usize)],
+    pub dynamic_storage_buffers: &'a [(BufferHandle, usize)],
+    pub name: Option<&'a str>,
+}
+
+pub struct DescriptorUpdateContext<'a> {
+    device: &'a GraphicsDevice,
+    descriptors: RwLockWriteGuard<'a, DescriptorPool>,
+    dirty: MutexGuard<'a, Vec<DescriptorHandle>>,
+    to_destroy: MutexGuard<'a, Vec<DescriptorHandle>>,
+}
+
+impl DescriptorUpdateContext<'_> {
+    pub fn create_descriptor(
+        &mut self,
+        builder: DescriptorSetCreateDesc,
+    ) -> Result<DescriptorHandle, Error> {
+        let data = builder.build(self.device)?;
+        let handle = self.descriptors.push(vk::DescriptorSet::null(), data);
+        self.dirty.push(handle);
+        Ok(handle)
+    }
+
+    pub fn destroy_descriptor(&mut self, handle: DescriptorHandle) {
+        self.to_destroy.push(handle);
+    }
+}
+
+pub const EMPTY_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLayoutDesc {
+    layout: &[],
+    compute_groups_size: None,
+};
 
 impl<'a> DescriptorLayoutDesc<'a> {
     pub(crate) fn get_descriptor_count(&self) -> DescriptorTotalCount {
@@ -340,5 +471,14 @@ impl GraphicsDevice {
         dirty.clear();
         self.current_drop_list.lock().drop_descriptors(drop_list);
         Ok(())
+    }
+
+    pub fn descriptors(&self) -> DescriptorUpdateContext {
+        DescriptorUpdateContext {
+            device: self,
+            descriptors: self.descriptors.write(),
+            dirty: self.dirty_descriptors.lock(),
+            to_destroy: self.descriptors_to_destroy.lock(),
+        }
     }
 }

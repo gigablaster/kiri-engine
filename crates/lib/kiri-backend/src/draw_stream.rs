@@ -17,10 +17,10 @@ use std::io::{self, Cursor, Read};
 
 use crate::{
     vulkan::{
-        BufferPointer, DescriptorHandle, RasterPipelineHandle, RenderResourceResolver,
-        DYNAMIC_DESCRIPTOR_SLOT_INDEX, MAX_DESCRIPTOR_SETS,
+        BufferPointer, DescriptorHandle, RasterPipelineHandle, DYNAMIC_DESCRIPTOR_SLOT_INDEX,
+        MAX_DESCRIPTOR_SETS,
     },
-    Error,
+    Error, RenderResourceResolver,
 };
 use arrayvec::ArrayVec;
 use ash::vk;

@@ -25,8 +25,9 @@ use ash::vk;
 
 use crate::{
     vulkan::{
-        DescriptorHandle, DescriptorPool, DescriptorSetCreateDesc, Frame, GraphicsDevice,
-        ImageHandle, ImageViewDesc, RenderResourceResolver, SwapchainImage, MAX_ATTACHMENTS,
+        BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DescriptorSetCreateDesc, Frame,
+        GraphicsDevice, Image, ImageDesc, ImageHandle, ImagePool, ImageViewDesc, Pipeline,
+        RasterPipelineHandle, RasterPipelinePool, SwapchainImage, MAX_ATTACHMENTS,
     },
     DrawStream, Error,
 };
@@ -170,6 +171,100 @@ impl ImageDependency {
                 layer_count: vk::REMAINING_ARRAY_LAYERS,
             })
             .image(resolver.resolve_image(self.image)?))
+    }
+}
+
+pub struct RenderResourceResolver<'a> {
+    device: &'a ash::Device,
+    buffers: &'a BufferPool,
+    images: &'a ImagePool,
+    raster_pipelines: &'a RasterPipelinePool,
+    descriptors: &'a DescriptorPool,
+    pub(crate) empty_descriptor_set: vk::DescriptorSet,
+    pub backbuffer: &'a Image,
+}
+
+impl<'a> RenderResourceResolver<'a> {
+    pub(crate) fn new(
+        device: &'a ash::Device,
+        backbuffer: &'a Image,
+        buffers: &'a BufferPool,
+        images: &'a ImagePool,
+        raster_pipelines: &'a RasterPipelinePool,
+        descriptors: &'a DescriptorPool,
+        empty_descriptor_set: vk::DescriptorSet,
+    ) -> Self {
+        Self {
+            device,
+            buffers,
+            images,
+            raster_pipelines,
+            descriptors,
+            empty_descriptor_set,
+            backbuffer,
+        }
+    }
+
+    pub fn resolve_buffer(&self, handle: BufferHandle) -> Result<vk::Buffer, Error> {
+        self.buffers
+            .get(handle)
+            .copied()
+            .ok_or(Error::InvalidBufferHandle(handle))
+    }
+
+    pub fn resolve_image_view(
+        &self,
+        handle: ImageHandle,
+        desc: ImageViewDesc,
+    ) -> Result<vk::ImageView, Error> {
+        Ok(self
+            .images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .get_or_create_view(&self.device, desc)?)
+    }
+
+    pub fn resolve_image(&self, handle: ImageHandle) -> Result<vk::Image, Error> {
+        Ok(self
+            .images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .raw)
+    }
+
+    pub fn resolve_image_desc(&self, handle: ImageHandle) -> Result<&ImageDesc, Error> {
+        Ok(&self
+            .images
+            .get(handle)
+            .ok_or(Error::InvalidImageHandle(handle))?
+            .desc)
+    }
+
+    pub fn resolve_raster_pipeline(
+        &self,
+        handle: RasterPipelineHandle,
+    ) -> Result<(vk::Pipeline, vk::PipelineLayout), Error> {
+        let pipeline = self
+            .raster_pipelines
+            .get(handle.0 as usize)
+            .ok_or(Error::InvalidRasterPipelineHandle(handle))?;
+        match pipeline {
+            Pipeline::Pending(_) => panic!("Pipeline isn't compiled yet"),
+            Pipeline::Compiled(compiled_pipeline) => Ok((
+                compiled_pipeline.pipeline,
+                compiled_pipeline.pipeline_layout,
+            )),
+        }
+    }
+
+    pub fn resolve_descriptor_set(
+        &self,
+        handle: DescriptorHandle,
+    ) -> Result<vk::DescriptorSet, Error> {
+        self.descriptors
+            .get(handle)
+            .copied()
+            .ok_or(Error::InvalidDescriptorHandle(handle))
     }
 }
 

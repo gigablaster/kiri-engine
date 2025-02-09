@@ -15,9 +15,9 @@
 
 use ash::vk;
 
-use crate::vulkan::{ImageHandle, RenderResourceResolver};
+use crate::vulkan::ImageHandle;
 
-use super::PassDispatcher;
+use super::{PassDispatcher, RenderResourceResolver};
 
 /// Copy result image to backbuffer and prepare it for presentation
 pub struct CopyToBackbufferPassDispatcher {
