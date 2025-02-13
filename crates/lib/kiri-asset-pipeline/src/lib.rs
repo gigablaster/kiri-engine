@@ -13,43 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod effect;
 mod glsl;
 mod gltf;
 mod image;
 mod mesh_builder;
 
-pub use effect::*;
 pub use gltf::*;
-pub use image::*;
+use kiri_vfs::AssetReference;
 
-use std::{
-    fs,
-    io::{self, Read},
-    path::Path,
-    time::SystemTime,
-};
+use std::io::{self};
 
-use kiri_assets::{Asset, CompiledAssetPath, SourceAssetPath};
-
-pub trait AssetSource: Clone {
-    fn source(&self) -> &SourceAssetPath;
-    fn changed(&self, timestamp: SystemTime) -> bool;
-}
+use kiri_assets::{Asset, ImageAssetSource};
 
 pub trait ImportAsset<T: Asset> {
     fn import<I: AssetPipelineContext>(self, context: &I) -> io::Result<T>;
 }
 
-pub(crate) fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let file = fs::File::open(path.as_ref())?;
-    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-    let mut reader = io::BufReader::new(file);
-    let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data)?;
-    Ok(data)
-}
-
 pub trait AssetPipelineContext {
-    fn import_image(&self, image: ImageSource) -> CompiledAssetPath;
+    fn import_image(&self, image: ImageAssetSource) -> AssetReference;
 }

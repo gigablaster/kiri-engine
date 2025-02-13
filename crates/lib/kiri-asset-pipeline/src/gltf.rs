@@ -13,14 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::path::Path;
-use std::{collections::HashMap, io, time::SystemTime};
+use std::{collections::HashMap, io};
 
-use kiri_assets::{EmbeddedImage, ModelAsset, SourceAssetPath};
+use kiri_assets::{
+    EmbeddedImage, ImageAssetSource, ImageAssetType, ModelAsset, ModelAssetSource, SourceAssetPath,
+};
 use kiri_backend::ash::vk;
 
-use crate::{AssetPipelineContext, AssetSource};
-use crate::{ImageAssetType, ImportAsset};
+use crate::AssetPipelineContext;
+use crate::ImportAsset;
 
 use gltf::mesh::Mode;
 use kiri_assets::{
@@ -28,29 +29,7 @@ use kiri_assets::{
     StaticMeshAsset,
 };
 
-use crate::{
-    mesh_builder::{MeshAssetBuilder, MeshSurfaceBuilder},
-    ImageSource,
-};
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ModelSource(SourceAssetPath);
-
-impl ModelSource {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Self(SourceAssetPath::from(path.as_ref()))
-    }
-}
-
-impl AssetSource for ModelSource {
-    fn changed(&self, timestamp: SystemTime) -> bool {
-        self.0.changed(timestamp)
-    }
-
-    fn source(&self) -> &SourceAssetPath {
-        &self.0
-    }
-}
+use crate::mesh_builder::{MeshAssetBuilder, MeshSurfaceBuilder};
 
 pub struct GltfProcessingContext<'a, T: AssetPipelineContext> {
     pub pipeline: &'a T,
@@ -80,7 +59,7 @@ fn process_texture<T: AssetPipelineContext>(
 ) -> ImageReference {
     match texture.source().source() {
         gltf::image::Source::Uri { uri, .. } => {
-            ImageReference::External(context.pipeline.import_image(ImageSource {
+            ImageReference::External(context.pipeline.import_image(ImageAssetSource {
                 source: SourceAssetPath::new(format!("{}/{}", context.base_path, uri)),
                 ty,
                 srgb,
@@ -310,7 +289,7 @@ fn import_scenes<'a, T: AssetPipelineContext>(
     import_scene(context, scene)
 }
 
-impl ImportAsset<ModelAsset> for ModelSource {
+impl ImportAsset<ModelAsset> for ModelAssetSource {
     fn import<I: AssetPipelineContext>(self, context: &I) -> io::Result<ModelAsset> {
         let (document, buffers, _) = gltf::import(self.0.full_source_path())
             .map_err(|err| io::Error::other(err.to_string()))?;

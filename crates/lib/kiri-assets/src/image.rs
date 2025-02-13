@@ -13,10 +13,77 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::{
+    hash::{Hash, Hasher},
+    path::Path,
+};
+
 use kiri_backend::ash::vk;
 use speedy::{Context, Readable, Writable};
 
-use crate::Asset;
+use crate::{Asset, AssetSource, SourceAssetPath};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageAssetType {
+    Rgba,
+    Rg,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ImageAssetSource {
+    pub source: SourceAssetPath,
+    pub ty: ImageAssetType,
+    pub srgb: bool,
+}
+
+impl ImageAssetSource {
+    pub fn new<S: AsRef<Path>>(path: S) -> Self {
+        Self {
+            source: SourceAssetPath::new(path),
+            ty: ImageAssetType::Rgba,
+            srgb: false,
+        }
+    }
+
+    pub fn ty(mut self, value: ImageAssetType) -> Self {
+        self.ty = value;
+        self
+    }
+
+    pub fn srgb(mut self, value: bool) -> Self {
+        self.srgb = value;
+        self
+    }
+
+    pub fn compressed_format(&self) -> vk::Format {
+        match self.ty {
+            ImageAssetType::Rgba if self.srgb => vk::Format::BC7_SRGB_BLOCK,
+            ImageAssetType::Rgba => vk::Format::BC7_UNORM_BLOCK,
+            ImageAssetType::Rg => vk::Format::BC5_UNORM_BLOCK,
+        }
+    }
+
+    pub fn uncompressed_format(&self) -> vk::Format {
+        match self.ty {
+            ImageAssetType::Rgba if self.srgb => vk::Format::A8B8G8R8_SRGB_PACK32,
+            _ => vk::Format::A8B8G8R8_UNORM_PACK32,
+        }
+    }
+}
+
+impl AssetSource for ImageAssetSource {
+    fn changed(&self, timestamp: std::time::SystemTime) -> bool {
+        self.source.changed(timestamp)
+    }
+
+    fn reference(&self) -> kiri_vfs::AssetReference {
+        let mut hasher = siphasher::sip::SipHasher::default();
+        self.source.compiled().unwrap().hash(&mut hasher);
+        self.ty.hash(&mut hasher);
+        self.srgb.hash(&mut hasher);
+        hasher.finish().into()
+    }
+}
 
 #[derive(Debug)]
 pub struct ImageAsset {

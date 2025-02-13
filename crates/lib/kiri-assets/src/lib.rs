@@ -14,25 +14,24 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 // mod gltf;
-mod effect;
 mod image;
 mod model;
 mod shader;
 
-pub use effect::*;
 pub use image::*;
 pub use model::*;
 use normalize_path::NormalizePath;
 pub use shader::*;
 
 use std::{
+    fmt::Display,
     fs,
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
-use kiri_vfs::SOURCE_ASSETS_PATH;
+use kiri_vfs::{AssetReference, SOURCE_ASSETS_PATH};
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
@@ -116,7 +115,7 @@ impl SourceAssetPath {
         let root = Self::source_assets_root();
         assert!(path.starts_with(&root));
         let name = path
-            .with_extension("asset")
+            .with_extension("")
             .strip_prefix(root)
             .map_err(io::Error::other)?
             .to_str()
@@ -150,6 +149,11 @@ impl SourceAssetPath {
     pub fn source_assets_root() -> PathBuf {
         PathBuf::from(SOURCE_ASSETS_PATH)
     }
+}
+
+pub trait AssetSource {
+    fn changed(&self, timestamp: SystemTime) -> bool;
+    fn reference(&self) -> AssetReference;
 }
 
 pub trait Asset: Sized + Send + Sync + 'static {
@@ -229,7 +233,7 @@ mod test {
     #[test]
     fn source_asset_in_root() {
         assert_eq!(
-            CompiledAssetPath::from("aaa.asset"),
+            CompiledAssetPath::from("aaa"),
             SourceAssetPath::new("aaa.png").compiled().unwrap()
         );
     }
@@ -237,8 +241,17 @@ mod test {
     #[test]
     fn source_asset_in_folder() {
         assert_eq!(
-            CompiledAssetPath::from("foo/bar.asset"),
+            CompiledAssetPath::from("foo/bar"),
             SourceAssetPath::new("foo/bar.jpg").compiled().unwrap()
         )
     }
+}
+
+pub fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path.as_ref())?;
+    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+    let mut reader = io::BufReader::new(file);
+    let mut data = Vec::with_capacity(length as usize);
+    reader.read_to_end(&mut data)?;
+    Ok(data)
 }

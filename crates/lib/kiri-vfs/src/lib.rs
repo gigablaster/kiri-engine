@@ -16,6 +16,7 @@
 mod packed;
 
 use std::{
+    fmt::Display,
     fs::File,
     io::{self, Read},
     os::windows::fs::MetadataExt,
@@ -29,6 +30,7 @@ use normalize_path::NormalizePath;
 use once_cell::sync::Lazy;
 pub use packed::*;
 use parking_lot::RwLock;
+use speedy::{Readable, Writable};
 
 pub const SOURCE_ASSETS_PATH: &str = "assets";
 pub const COMPILED_ASSETS_PATH: &str = "data";
@@ -36,11 +38,32 @@ pub const PACKED_ASSETS_PATH: &str = "data.bin";
 
 #[async_trait]
 pub trait ArchiveLoad: Send + Sync + 'static {
-    async fn load(&self, path: &str) -> io::Result<Bytes>;
+    async fn load(&self, reference: AssetReference) -> io::Result<Bytes>;
 }
 
 pub trait Archive: ArchiveLoad {
-    fn exist(&self, path: &str) -> bool;
+    fn exist(&self, reference: AssetReference) -> bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Readable, Writable, Hash)]
+pub struct AssetReference(u64);
+
+impl Display for AssetReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{:08x}", self.0))
+    }
+}
+
+impl From<AssetReference> for u64 {
+    fn from(value: AssetReference) -> Self {
+        value.0
+    }
+}
+
+impl From<u64> for AssetReference {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 static ARCHIVES: Lazy<RwLock<Vec<Arc<dyn Archive>>>> = Lazy::new(|| {
@@ -58,22 +81,22 @@ pub fn vfs_register_archive(archive: Arc<dyn Archive>) {
     ARCHIVES.write().insert(0, archive);
 }
 
-pub async fn vfs_load<P: AsRef<str>>(path: P) -> io::Result<Bytes> {
+pub async fn vfs_load(reference: AssetReference) -> io::Result<Bytes> {
     let archive = ARCHIVES
         .read()
         .iter()
-        .find(|&x| x.exist(path.as_ref()))
+        .find(|&x| x.exist(reference))
         .cloned()
         .ok_or(io::Error::new(
             io::ErrorKind::NotFound,
-            path.as_ref().to_owned(),
+            format!("Asset {} not found", reference),
         ))?;
-    archive.load(path.as_ref()).await
+    archive.load(reference).await
 }
 
-pub fn vfs_exist<P: AsRef<str>>(path: P) -> bool {
+pub fn vfs_exist(reference: AssetReference) -> bool {
     let archives = ARCHIVES.read();
-    archives.iter().any(|x| x.exist(path.as_ref()))
+    archives.iter().any(|x| x.exist(reference))
 }
 
 #[derive(Debug)]
@@ -83,9 +106,9 @@ pub struct FileSystemArchive {
 
 #[async_trait]
 impl ArchiveLoad for FileSystemArchive {
-    async fn load(&self, path: &str) -> io::Result<Bytes> {
+    async fn load(&self, reference: AssetReference) -> io::Result<Bytes> {
         let path = self.root.join(
-            PathBuf::from(path)
+            PathBuf::from(format!("{}.asset", reference))
                 .try_normalize()
                 .expect("Path can't go outside of it's root"),
         );
@@ -98,10 +121,10 @@ impl ArchiveLoad for FileSystemArchive {
 }
 
 impl Archive for FileSystemArchive {
-    fn exist(&self, path: &str) -> bool {
+    fn exist(&self, reference: AssetReference) -> bool {
         self.root
             .join(
-                PathBuf::from(path)
+                PathBuf::from(format!("{}.asset", reference))
                     .try_normalize()
                     .expect("Path can't go outside of it's root"),
             )

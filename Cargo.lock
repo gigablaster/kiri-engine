@@ -1070,7 +1070,6 @@ dependencies = [
  "numquant",
  "serde",
  "serde_json",
- "shader-prepper",
 ]
 
 [[package]]
@@ -1084,7 +1083,8 @@ dependencies = [
  "kiri-vfs",
  "log",
  "normalize-path",
- "serde",
+ "shader-prepper",
+ "siphasher",
  "speedy",
  "thiserror 2.0.9",
  "uuid",

@@ -13,26 +13,26 @@ use std::{
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
 use clap::{Arg, ArgAction};
-use kiri_asset_pipeline::{
-    AssetPipelineContext, AssetSource, ImageSource, ImportAsset, ModelSource, RenderEffectSource,
+use kiri_asset_pipeline::{AssetPipelineContext, ImportAsset};
+use kiri_assets::{
+    save_asset, Asset, AssetSource, ImageAssetSource, ModelAssetSource, ShaderAssetSource,
 };
-use kiri_assets::{save_asset, Asset, CompiledAssetPath};
-use kiri_vfs::{COMPILED_ASSETS_PATH, SOURCE_ASSETS_PATH};
+use kiri_vfs::{AssetReference, COMPILED_ASSETS_PATH, SOURCE_ASSETS_PATH};
 use log::{error, info};
 use notify::{RecursiveMode, Watcher};
 use parking_lot::Mutex;
 
 struct ContentProcessor {
-    images: Mutex<HashSet<ImageSource>>,
-    scenes: Mutex<HashSet<ModelSource>>,
-    effects: Mutex<HashSet<RenderEffectSource>>,
+    images: Mutex<HashSet<ImageAssetSource>>,
+    scenes: Mutex<HashSet<ModelAssetSource>>,
+    shaders: Mutex<HashSet<ShaderAssetSource>>,
 }
 
 unsafe impl Send for ContentProcessor {}
 unsafe impl Sync for ContentProcessor {}
 
-fn compiled_asset_change_time(path: &CompiledAssetPath) -> Option<SystemTime> {
-    let path = Path::new(COMPILED_ASSETS_PATH).join(path);
+fn compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
+    let path = Path::new(COMPILED_ASSETS_PATH).join(format!("{}.asset", reference));
     if let Ok(metadata) = path.metadata() {
         if let Ok(changed) = metadata.modified() {
             Some(changed)
@@ -47,16 +47,15 @@ fn compiled_asset_change_time(path: &CompiledAssetPath) -> Option<SystemTime> {
 }
 
 fn asset_need_rebuild(asset: &impl AssetSource) -> bool {
-    if let Ok(compiled) = asset.source().compiled() {
-        if let Some(timestamp) = compiled_asset_change_time(&compiled) {
-            return asset.changed(timestamp);
-        }
+    if let Some(timestamp) = compiled_asset_change_time(asset.reference()) {
+        asset.changed(timestamp)
+    } else {
+        true
     }
-    true
 }
 
-fn save(path: &CompiledAssetPath, data: &[u8]) -> io::Result<()> {
-    let path = Path::new(COMPILED_ASSETS_PATH).join(path);
+fn save(reference: AssetReference, data: &[u8]) -> io::Result<()> {
+    let path = Path::new(COMPILED_ASSETS_PATH).join(format!("{}.asset", reference));
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -66,10 +65,10 @@ fn save(path: &CompiledAssetPath, data: &[u8]) -> io::Result<()> {
 }
 
 impl AssetPipelineContext for ContentProcessor {
-    fn import_image(&self, image: ImageSource) -> CompiledAssetPath {
-        let compiled = image.source.compiled().unwrap();
+    fn import_image(&self, image: ImageAssetSource) -> AssetReference {
+        let reference = image.reference();
         self.images.lock().insert(image);
-        compiled
+        reference
     }
 }
 
@@ -78,36 +77,36 @@ impl ContentProcessor {
         Self {
             images: Default::default(),
             scenes: Default::default(),
-            effects: Default::default(),
+            shaders: Default::default(),
         }
     }
 
-    fn import_scene(&self, source: ModelSource) {
+    fn import_scene(&self, source: ModelAssetSource) {
         self.scenes.lock().insert(source);
     }
 
-    fn import_effect(&self, source: RenderEffectSource) {
-        self.effects.lock().insert(source);
+    fn import_shader(&self, source: ShaderAssetSource) {
+        self.shaders.lock().insert(source);
     }
 
-    async fn build_scene(&self, scene: ModelSource) {
+    async fn build_scene(&self, scene: ModelAssetSource) {
         info!("Building scene {:?}", scene);
         if let Err(err) = self.build_asset(scene.clone()) {
-            error!("Failed to build scene {:?}: {}", scene.source(), err);
+            error!("Failed to build scene {:?}: {}", scene, err);
         }
     }
 
-    async fn build_image(&self, image: ImageSource) {
+    async fn build_image(&self, image: ImageAssetSource) {
         info!("Building image {:?}", image);
         if let Err(err) = self.build_asset(image.clone()) {
-            error!("Failed to build image {:?}: {}", image.source(), err);
+            error!("Failed to build image {:?}: {}", image, err);
         }
     }
 
-    async fn build_effect(&self, shader: RenderEffectSource) {
+    async fn build_shader(&self, shader: ShaderAssetSource) {
         info!("Compile effect {:?}", shader);
         if let Err(err) = self.build_asset(shader.clone()) {
-            error!("Failed to compiled effect {:?}:\n{}", shader.source(), err);
+            error!("Failed to compiled effect {:?}:\n{}", shader, err);
         }
     }
 
@@ -129,9 +128,9 @@ impl ContentProcessor {
         });
 
         AsyncComputeTaskPool::get().scope(|s| {
-            for shader in self.effects.lock().iter() {
+            for shader in self.shaders.lock().iter() {
                 if self.asset_need_rebuild(shader) {
-                    s.spawn(self.build_effect(shader.clone()));
+                    s.spawn(self.build_shader(shader.clone()));
                 }
             }
         });
@@ -141,14 +140,14 @@ impl ContentProcessor {
         &self,
         source: U,
     ) -> Result<(), io::Error> {
-        self.write_asset(source.source().compiled()?, source.import(self)?)?;
+        self.write_asset(source.reference(), source.import(self)?)?;
         Ok(())
     }
 
-    fn write_asset<T: Asset>(&self, path: CompiledAssetPath, asset: T) -> io::Result<()> {
+    fn write_asset<T: Asset>(&self, reference: AssetReference, asset: T) -> io::Result<()> {
         let mut cursor = Cursor::new(Vec::new());
         save_asset(&mut cursor, &asset)?;
-        save(&path, &cursor.into_inner())?;
+        save(reference, &cursor.into_inner())?;
         Ok(())
     }
 
@@ -170,9 +169,11 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
                 .to_owned();
             let path_str = path.to_str().unwrap();
             if path_str.ends_with(".gltf") {
-                processor.import_scene(ModelSource::new(path));
-            } else if path_str.ends_with(".effect") {
-                processor.import_effect(RenderEffectSource::new(path));
+                processor.import_scene(ModelAssetSource::new(path_str));
+            } else if path_str.ends_with(".vert") {
+                processor.import_shader(ShaderAssetSource::vertex(path_str));
+            } else if path_str.ends_with(".frag") {
+                processor.import_shader(ShaderAssetSource::fragment(path_str));
             }
         }
     }

@@ -13,15 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    mem,
+};
 
 use kiri_backend::{
     ash::vk,
     vulkan::{InputVertexAttrubute, InputVertexStreamLayout},
 };
+use kiri_vfs::AssetReference;
+use siphasher::sip::SipHasher;
 use speedy::{Context, Readable, Writable};
 
-use crate::{Asset, CompiledAssetPath};
+use crate::{Asset, AssetSource, SourceAssetPath};
 
 #[derive(Debug, Clone, Copy, Readable, Writable)]
 #[repr(C, align(8))]
@@ -83,7 +89,7 @@ impl EmbeddedImage {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Readable, Writable)]
 pub enum ImageReference {
-    External(CompiledAssetPath),
+    External(AssetReference),
     Embedded(EmbeddedImage),
 }
 
@@ -249,3 +255,24 @@ pub static STATIC_MESH_VERTEX_LAYOUT: [InputVertexStreamLayout; 1] = [InputVerte
     ],
     stride: mem::size_of::<RenderMeshVertex>(),
 }];
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModelAssetSource(pub SourceAssetPath);
+
+impl ModelAssetSource {
+    pub fn new<S: AsRef<str>>(path: S) -> Self {
+        Self(path.as_ref().into())
+    }
+}
+
+impl AssetSource for ModelAssetSource {
+    fn changed(&self, timestamp: std::time::SystemTime) -> bool {
+        self.0.changed(timestamp)
+    }
+
+    fn reference(&self) -> AssetReference {
+        let mut hasher = SipHasher::new();
+        self.0.hash(&mut hasher);
+        hasher.finish().into()
+    }
+}

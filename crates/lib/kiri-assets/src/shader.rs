@@ -13,12 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io::Write;
+use std::{
+    hash::{Hash, Hasher},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use kiri_backend::ash::vk;
+use shader_prepper::{IncludeProvider, ResolvedIncludePath};
+use siphasher::sip::SipHasher;
 use speedy::{Readable, Writable};
 
-use crate::Asset;
+use crate::{read_to_end, Asset, AssetSource, SourceAssetPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
 pub enum ShaderType {
@@ -52,5 +59,94 @@ impl Asset for ShaderAsset {
 
     fn deserialize<R: std::io::Read>(r: R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShaderAssetSource {
+    pub path: SourceAssetPath,
+    pub ty: ShaderType,
+}
+
+impl ShaderAssetSource {
+    pub fn vertex<S: AsRef<str>>(path: S) -> Self {
+        Self {
+            path: path.as_ref().into(),
+            ty: ShaderType::Vertex,
+        }
+    }
+
+    pub fn fragment<S: AsRef<str>>(path: S) -> Self {
+        Self {
+            path: path.as_ref().into(),
+            ty: ShaderType::Fragment,
+        }
+    }
+}
+
+impl IncludeProvider for ShaderIncludeProvider {
+    type IncludeContext = PathBuf;
+
+    fn resolve_path(
+        &self,
+        path: &str,
+        context: &Self::IncludeContext,
+    ) -> Result<
+        shader_prepper::ResolvedInclude<Self::IncludeContext>,
+        shader_prepper::BoxedIncludeProviderError,
+    > {
+        let path = PathBuf::from(path);
+        let full = context.join(path);
+        let root = full.parent().unwrap_or(Path::new("")).to_owned();
+        Ok(shader_prepper::ResolvedInclude {
+            resolved_path: ResolvedIncludePath(full.to_str().unwrap_or_default().into()),
+            context: root,
+        })
+    }
+
+    fn get_include(
+        &mut self,
+        path: &shader_prepper::ResolvedIncludePath,
+    ) -> Result<String, shader_prepper::BoxedIncludeProviderError> {
+        let data = read_to_end(SourceAssetPath::new(&path.0))?;
+        Ok(String::from_utf8_lossy(&data).into_owned())
+    }
+}
+
+pub fn is_glsl_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {
+    let source = SourceAssetPath::new(path);
+    if source.changed(timestamp) {
+        return true;
+    }
+
+    if let Ok(result) = are_includes_changed(source.as_ref(), timestamp) {
+        return result;
+    }
+
+    false
+}
+
+#[derive(Debug, Default)]
+struct ShaderIncludeProvider {}
+
+fn are_includes_changed(path: &str, timestamp: std::time::SystemTime) -> io::Result<bool> {
+    Ok(
+        shader_prepper::process_file(path, &mut ShaderIncludeProvider::default(), PathBuf::new())
+            .map_err(|err| io::Error::other(format!("Shader processing failed: {}", err)))?
+            .iter()
+            .any(|x| SourceAssetPath::new(&x.file).changed(timestamp)),
+    )
+}
+
+impl AssetSource for ShaderAssetSource {
+    fn changed(&self, timestamp: std::time::SystemTime) -> bool {
+        is_glsl_changed(&self.path, timestamp)
+    }
+
+    fn reference(&self) -> kiri_vfs::AssetReference {
+        let mut hasher = SipHasher::default();
+        self.path.compiled().unwrap().hash(&mut hasher);
+        self.ty.hash(&mut hasher);
+        hasher.finish().into()
     }
 }
