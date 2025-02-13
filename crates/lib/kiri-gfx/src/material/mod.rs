@@ -15,7 +15,13 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use kiri_backend::vulkan::{BufferSlice, DescriptorHandle, GraphicsDevice, RasterPipelineHandle};
+use kiri_backend::{
+    ash::vk,
+    vulkan::{
+        BufferSlice, DescriptorDesc, DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice,
+        RasterPipelineHandle, RenderPassLayout,
+    },
+};
 
 use crate::ShaderUniforms;
 
@@ -42,3 +48,37 @@ pub struct MaterialRenderData {
 pub trait Material {
     fn create_render_data(&self) -> MaterialRenderData;
 }
+
+pub const ZPASS_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[],
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
+pub const MAIN_RENDER_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color: &[vk::Format::R16G16B16A16_SFLOAT],
+    depth: Some(vk::Format::D24_UNORM_S8_UINT),
+};
+
+pub const SCENE_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorDesc {
+            name: "pass",
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            count: 1,
+        },
+    )],
+    compute_groups_size: None,
+};
+
+pub const INSTANCE_DESCRIPTOR_SET: DescriptorLayoutDesc = DescriptorLayoutDesc {
+    layout: &[(
+        0,
+        DescriptorDesc {
+            name: "instances",
+            ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            count: 1,
+        },
+    )],
+    compute_groups_size: None,
+};

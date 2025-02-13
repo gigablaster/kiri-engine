@@ -15,17 +15,22 @@
 
 use std::sync::Arc;
 
+use kiri_assets::STATIC_MESH_VERTEX_LAYOUT;
 use kiri_backend::{
     ash::vk,
     vulkan::{
         BufferSlice, DescriptorDesc, DescriptorHandle, DescriptorLayoutDesc,
-        DescriptorSetCreateData, GraphicsDevice, ImageHandle, RasterPipelineHandle,
+        DescriptorSetCreateData, GraphicsDevice, ImageHandle, RasterPipelineCreateDesc,
+        RasterPipelineHandle, EMPTY_DESCRIPTOR_LAYOUT,
     },
 };
 
-use crate::{Error, ShaderUniforms};
+use crate::{pipeline_cache::PipelineCache, Error, ShaderUniforms};
 
-use super::{Material, MaterialRenderData, RenderGroup};
+use super::{
+    Material, MaterialRenderData, RenderGroup, INSTANCE_DESCRIPTOR_SET, MAIN_RENDER_PASS_LAYOUT,
+    SCENE_DESCRIPTOR_LAYOUT, ZPASS_RENDER_PASS_LAYOUT,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BasicMaterialType {
@@ -88,6 +93,7 @@ impl BasicMaterialBuilder {
         self,
         device: Arc<GraphicsDevice>,
         uniforms: Arc<ShaderUniforms>,
+        cache: &PipelineCache,
     ) -> Result<BasicMaterial, Error> {
         let uniform = uniforms.allocate(BasicMaterialGpuData {
             alpha_cut: self.ty.alpha_cut(),
@@ -108,12 +114,66 @@ impl BasicMaterialBuilder {
                 unifoms: &[uniform],
                 ..Default::default()
             })?;
+        let (main, depth) = match self.ty {
+            BasicMaterialType::Opaque => (
+                cache.get_or_create_raster_pipeline(
+                    "shaders/basic",
+                    "shaders/basic",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                    &[],
+                    RasterPipelineCreateDesc::default().depth_test(vk::CompareOp::EQUAL),
+                )?,
+                cache.get_or_create_raster_pipeline(
+                    "shaders/depth",
+                    "shaders/depth",
+                    &ZPASS_RENDER_PASS_LAYOUT,
+                    &BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                    &[],
+                    RasterPipelineCreateDesc::default(),
+                )?,
+            ),
+            BasicMaterialType::Masked(_) => (
+                cache.get_or_create_raster_pipeline(
+                    "shaders/basic",
+                    "shaders/basic",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                    &[(0, 1)],
+                    RasterPipelineCreateDesc::default().depth_test(vk::CompareOp::EQUAL),
+                )?,
+                cache.get_or_create_raster_pipeline(
+                    "shaders/depth",
+                    "shaders/depth",
+                    &ZPASS_RENDER_PASS_LAYOUT,
+                    &BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                    &[(0, 1)],
+                    RasterPipelineCreateDesc::default(),
+                )?,
+            ),
+            BasicMaterialType::Transparent => (
+                cache.get_or_create_raster_pipeline(
+                    "shaders/basic",
+                    "shaders/basic",
+                    &MAIN_RENDER_PASS_LAYOUT,
+                    &BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT,
+                    &STATIC_MESH_VERTEX_LAYOUT,
+                    &[],
+                    RasterPipelineCreateDesc::default().alpha_blend(),
+                )?,
+                RasterPipelineHandle::default(),
+            ),
+        };
         Ok(BasicMaterial {
             device,
             uniforms,
             group: self.ty.into(),
-            main: todo!(),
-            depth: todo!(),
+            main,
+            depth,
             descriptor,
             uniform,
         })
@@ -194,3 +254,10 @@ pub static BASIC_MATERIAL_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLa
     ],
     compute_groups_size: None,
 };
+
+const BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT: [DescriptorLayoutDesc; 4] = [
+    SCENE_DESCRIPTOR_LAYOUT,
+    EMPTY_DESCRIPTOR_LAYOUT,
+    BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
+    INSTANCE_DESCRIPTOR_SET,
+];

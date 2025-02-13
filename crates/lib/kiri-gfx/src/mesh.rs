@@ -16,50 +16,22 @@
 use std::{collections::HashMap, mem, sync::Arc};
 
 use kiri_assets::NodeIndex;
-use kiri_backend::{
-    ash::vk::{self},
-    vulkan::{
-        BufferCreateDesc, BufferHandle, BufferPointer, BufferSlice, DescriptorDesc,
-        DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice, ImageHandle,
-    },
+use kiri_backend::vulkan::{
+    BufferCreateDesc, BufferHandle, BufferPointer, GraphicsDevice, ImageHandle,
 };
 use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3A};
 
-use crate::{Error, ShaderUniforms};
-
-#[derive(Debug, Clone, Copy)]
-pub enum RenderMeshMaterialType {
-    PBR,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum RenderMeshMaterialOrder {
-    Opaque,
-    Masked,
-    Transparent,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RenderMeshMaterial {
-    pub ty: RenderMeshMaterialType,
-    pub order: RenderMeshMaterialOrder,
-    pub descriptor: DescriptorHandle,
-    pub uniform: BufferSlice,
-}
+use crate::{
+    material::{Material, MaterialRenderData},
+    Error,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshSurface {
     pub first_index: u32,
     pub index_count: u32,
     pub vertex_offset: u32,
-    pub material: RenderMeshMaterial,
-}
-
-impl RenderMeshMaterial {
-    fn free(self, device: &GraphicsDevice, uniforms: &ShaderUniforms) {
-        uniforms.free(self.uniform);
-        device.descriptors().destroy_descriptor(self.descriptor);
-    }
+    pub material: MaterialRenderData,
 }
 
 #[derive(Debug, Default)]
@@ -75,7 +47,6 @@ pub struct RenderMesh {
 #[derive(Debug)]
 pub struct RenderModel {
     device: Arc<GraphicsDevice>,
-    uniforms: Arc<ShaderUniforms>,
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
     pub meshes: Vec<RenderMesh>,
@@ -120,12 +91,12 @@ impl RenderMeshBuilder {
         }
     }
 
-    pub fn surface(&mut self, first_index: u32, index_count: u32, material: RenderMeshMaterial) {
+    pub fn surface(&mut self, first_index: u32, index_count: u32, material: impl Material) {
         self.surfaces.push(RenderMeshSurface {
             vertex_offset: self.first_vertex as u32,
             first_index,
             index_count,
-            material,
+            material: material.create_render_data(),
         });
     }
 
@@ -241,7 +212,6 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
         let bounds = self.calculate_bounds();
         Ok(RenderModel {
             device,
-            uniforms,
             vertices,
             indices,
             bounds_per_mesh: self.meshes.iter().map(|x| x.bounds).collect(),
@@ -283,65 +253,4 @@ impl Drop for RenderModel {
         self.device.destroy_buffer(self.vertices);
         self.device.destroy_buffer(self.indices);
     }
-}
-
-pub static MESH_PBR_MATERIAL_DESCRIPTOR_SET: DescriptorLayoutDesc = DescriptorLayoutDesc {
-    layout: &[
-        (
-            0,
-            DescriptorDesc {
-                name: "base_color",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            1,
-            DescriptorDesc {
-                name: "metallic_roughness",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            2,
-            DescriptorDesc {
-                name: "normals",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            3,
-            DescriptorDesc {
-                name: "occlusion",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            4,
-            DescriptorDesc {
-                name: "occlusion",
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                count: 1,
-            },
-        ),
-        (
-            5,
-            DescriptorDesc {
-                name: "material",
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                count: 1,
-            },
-        ),
-    ],
-    compute_groups_size: None,
-};
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct GpuPbrMeshMaterialData {
-    pub emissive_power: f32,
-    pub alpha_cutoff: f32,
 }
