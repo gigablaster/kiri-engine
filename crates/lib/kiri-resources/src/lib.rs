@@ -47,8 +47,3 @@ pub enum Error {
     #[error("Render techinque {0} not found")]
     RenderTechinqueNotFound(String),
 }
-
-pub(crate) async fn load_asset_from_vfs<T: Asset>(path: impl AsRef<str>) -> io::Result<T> {
-    let data = spawn_io(vfs_load(path.as_ref().to_owned())).await?;
-    load_asset::<T>(&data)
-}

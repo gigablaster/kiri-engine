@@ -1135,6 +1135,7 @@ dependencies = [
  "kiri-backend",
  "kiri-common",
  "kiri-math",
+ "kiri-vfs",
  "log",
  "parking_lot",
  "puffin",

@@ -14,15 +14,14 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod dynamic;
-mod effect;
 mod error;
 mod image_pool;
 pub mod material;
 mod mesh;
+mod pipeline_cache;
 mod uniforms;
 
 pub use dynamic::*;
-pub use effect::*;
 pub use error::*;
 pub use image_pool::*;
 pub use mesh::*;

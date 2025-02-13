@@ -19,6 +19,7 @@ mod model;
 mod shader;
 
 pub use image::*;
+use kiri_common::spawn_io;
 pub use model::*;
 use normalize_path::NormalizePath;
 pub use shader::*;
@@ -31,7 +32,7 @@ use std::{
     time::SystemTime,
 };
 
-use kiri_vfs::{AssetReference, SOURCE_ASSETS_PATH};
+use kiri_vfs::{vfs_load, AssetReference, SOURCE_ASSETS_PATH};
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
@@ -254,4 +255,9 @@ pub fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
     let mut data = Vec::with_capacity(length as usize);
     reader.read_to_end(&mut data)?;
     Ok(data)
+}
+
+pub async fn load_asset_from_vfs<T: Asset>(reference: AssetReference) -> io::Result<T> {
+    let data = spawn_io(vfs_load(reference)).await?;
+    load_asset::<T>(&data)
 }
