@@ -17,6 +17,7 @@ mod dynamic;
 mod effect;
 mod error;
 mod image_pool;
+pub mod material;
 mod mesh;
 mod uniforms;
 

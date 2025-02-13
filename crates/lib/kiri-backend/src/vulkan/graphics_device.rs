@@ -136,9 +136,9 @@ pub struct SamplerDesc {
 }
 
 pub struct GraphicsDevice {
-    pub instance: Arc<Instance>,
+    pub(crate) instance: Arc<Instance>,
     pub physical_device: PhysicalDevice,
-    pub raw: ash::Device,
+    pub(crate) raw: ash::Device,
     debug: Option<ash::ext::debug_utils::Device>,
     pub(crate) current_drop_list: Mutex<DropList>,
     frames: [Mutex<Arc<Frame>>; 2],
@@ -469,7 +469,7 @@ impl GraphicsDevice {
         })
     }
 
-    pub fn allocate_descriptor_sets(
+    pub(crate) fn allocate_descriptor_sets(
         &self,
         layout: vk::DescriptorSetLayout,
         layout_descriptor_count: &DescriptorTotalCount,
@@ -484,7 +484,7 @@ impl GraphicsDevice {
         .allocate(layout, layout_descriptor_count, count)
     }
 
-    pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
+    pub(crate) fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
         if let Some(debug_utils) = &self.debug {
             let name = CString::new(name.as_ref()).unwrap();
             let name_info = vk::DebugUtilsObjectNameInfoEXT::default()
@@ -494,7 +494,7 @@ impl GraphicsDevice {
         }
     }
 
-    pub fn begin_label(&self, command_buffer: vk::CommandBuffer, name: &str) {
+    pub(crate) fn begin_label(&self, command_buffer: vk::CommandBuffer, name: &str) {
         if let Some(debug_utils) = &self.debug {
             unsafe {
                 debug_utils.cmd_begin_debug_utils_label(
@@ -505,7 +505,7 @@ impl GraphicsDevice {
         }
     }
 
-    pub fn end_label(&self, command_buffer: vk::CommandBuffer) {
+    pub(crate) fn end_label(&self, command_buffer: vk::CommandBuffer) {
         if let Some(debug_utils) = &self.debug {
             unsafe { debug_utils.cmd_end_debug_utils_label(command_buffer) };
         }
