@@ -49,7 +49,7 @@ pub struct RenderModel {
     device: Arc<GraphicsDevice>,
     pub vertices: BufferHandle,
     pub indices: BufferHandle,
-    pub meshes: Vec<RenderMesh>,
+    pub meshes: Vec<Arc<RenderMesh>>,
     pub bounds_per_mesh: Vec<BoundingBox>,
     pub names: HashMap<String, u32>,
     pub parents: Vec<NodeIndex>,
@@ -219,6 +219,7 @@ impl<'a, T: Copy> RenderModelBuilder<'a, T> {
                 .meshes
                 .into_iter()
                 .map(|x| x.build(vertices, indices))
+                .map(Arc::new)
                 .collect(),
             names: self
                 .nodes
