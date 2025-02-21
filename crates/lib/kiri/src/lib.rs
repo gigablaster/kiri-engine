@@ -13,15 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod render_world;
+// mod render_world;
+mod scene;
 use thiserror::Error;
 
-pub use render_world::*;
+// pub use render_world::*;
+pub use scene::*;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Renderer error: {0}")]
     GfxError(#[from] kiri_gfx::Error),
-    #[error("Resource error: {0}")]
-    ResourceError(#[from] kiri_resources::Error),
 }

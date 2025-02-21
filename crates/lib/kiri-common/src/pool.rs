@@ -21,6 +21,8 @@ use std::{
     mem::MaybeUninit,
 };
 
+use nohash_hasher::IsEnabled;
+
 const DEFAULT_SPACE: usize = 4096;
 const GENERATION_BITS: u32 = 14;
 const INDEX_BITS: u32 = 32 - GENERATION_BITS;
@@ -89,6 +91,8 @@ impl<T> Ord for Handle<T> {
         }
     }
 }
+
+impl<T> IsEnabled for Handle<T> {}
 
 impl<T> Handle<T> {
     pub fn into_another<U>(&self) -> Handle<U> {
