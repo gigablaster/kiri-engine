@@ -115,6 +115,7 @@ impl<C: Context> Writable<C> for EmbeddedImage {
 
 #[derive(Debug, Clone, Readable, Writable, PartialEq)]
 pub struct MeshAssetMaterial {
+    pub name: String,
     pub base_color: ImageReference,
     pub metallic_roughness: ImageReference,
     pub normals: ImageReference,
@@ -126,6 +127,7 @@ pub struct MeshAssetMaterial {
 
 impl std::hash::Hash for MeshAssetMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
         self.base_color.hash(state);
         self.metallic_roughness.hash(state);
         self.normals.hash(state);

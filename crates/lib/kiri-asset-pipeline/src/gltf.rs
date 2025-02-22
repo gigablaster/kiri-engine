@@ -145,6 +145,7 @@ fn process_material<T: AssetPipelineContext>(
         ))
     };
     MeshAssetMaterial {
+        name: material.name().unwrap_or("material").to_owned(),
         base_color,
         metallic_roughness,
         normals,
