@@ -224,7 +224,7 @@ impl Scene {
             meshes: Vec::with_capacity(64536),
             directional_lights: Vec::with_capacity(16),
             point_lights: Vec::with_capacity(256),
-        }
+        };
         for (handle, _) in self.nodes.enumerate() {
             let index = handle.index() as usize;
             self.data[index].cull(self.world_transforms[index], &culler, &mut result);
