@@ -17,12 +17,25 @@ use std::{collections::HashSet, sync::Arc};
 
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{RenderMesh, RenderModel};
-use kiri_math::{Affine3A, BoundingBox, Bounds};
+use kiri_math::{vec3, Affine3A, BoundingBox, Bounds, Vec3};
 use nohash_hasher::BuildNoHashHasher;
 use thiserror::Error;
 
 const MAX_NODES: usize = 262144;
 const MAX_SCENE_DEPTH: usize = 32;
+
+#[derive(Debug, Clone, Copy)]
+pub struct DirectionalLight {
+    pub color: Vec3,
+    pub power: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PointLight {
+    pub color: Vec3,
+    pub power: f32,
+    pub radius: f32,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Node {
@@ -46,20 +59,17 @@ pub enum NodeData {
     Empty,
     Mesh(Arc<RenderMesh>),
     Model(Arc<RenderModel>),
+    DirectionalLight(DirectionalLight),
+    PointLight(PointLight),
 }
 
 impl NodeData {
-    fn cull_meshes<'a, C: Culler>(
-        &'a self,
-        transform: Affine3A,
-        culler: &C,
-        out: &mut Vec<&'a RenderMesh>,
-    ) {
+    fn cull<'a, C: Culler>(&'a self, transform: Affine3A, culler: &C, out: &mut CullResult<'a>) {
         match self {
             Self::Mesh(mesh) => {
                 let bounds = mesh.bounds.transform(transform);
                 if culler.cull(bounds) {
-                    out.push(&mesh);
+                    out.meshes.push((&mesh, transform));
                 }
             }
             Self::Model(model) => {
@@ -72,12 +82,24 @@ impl NodeData {
                     {
                         let transform = model.world_transforms[node_index] * transform;
                         if culler.cull(model.bounds_per_mesh[mesh_index].transform(transform)) {
-                            out.push(&model.meshes[mesh_index]);
+                            out.meshes.push((&model.meshes[mesh_index], transform));
                         }
                     }
                 }
             }
             Self::Empty => {}
+            Self::DirectionalLight(directional_light) => {
+                out.directional_lights.push((*directional_light, transform))
+            }
+            Self::PointLight(point_light) => {
+                let bounds = BoundingBox::from_extent(
+                    transform.translation.into(),
+                    vec3(point_light.radius, point_light.radius, point_light.radius),
+                );
+                if culler.cull(bounds) {
+                    out.point_lights.push((*point_light, transform));
+                }
+            }
         }
     }
 }
@@ -90,8 +112,11 @@ pub trait Culler {
 
 pub type NodeHandle = Handle<Node>;
 
+#[derive(Debug)]
 pub struct CullResult<'a> {
-    pub meshes: Vec<&'a RenderMesh>,
+    pub meshes: Vec<(&'a RenderMesh, Affine3A)>,
+    pub directional_lights: Vec<(DirectionalLight, Affine3A)>,
+    pub point_lights: Vec<(PointLight, Affine3A)>,
 }
 
 #[derive(Debug)]
@@ -195,12 +220,16 @@ impl Scene {
 
     pub fn cull<'a, C: Culler>(&'a self, culler: C) -> CullResult<'a> {
         puffin::profile_function!();
-        let mut meshes = Vec::with_capacity(64536);
+        let mut result = CullResult {
+            meshes: Vec::with_capacity(64536),
+            directional_lights: Vec::with_capacity(16),
+            point_lights: Vec::with_capacity(256),
+        }
         for (handle, _) in self.nodes.enumerate() {
             let index = handle.index() as usize;
-            self.data[index].cull_meshes(self.world_transforms[index], &culler, &mut meshes);
+            self.data[index].cull(self.world_transforms[index], &culler, &mut result);
         }
-        CullResult { meshes }
+        result
     }
 
     pub fn get_world_transform(&self, handle: NodeHandle) -> Result<Affine3A, SceneError> {
