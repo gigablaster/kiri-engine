@@ -14,10 +14,14 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 // mod render_world;
+mod postporcess;
+mod render;
 mod scene;
 use thiserror::Error;
 
 // pub use render_world::*;
+pub use postporcess::*;
+pub use render::*;
 pub use scene::*;
 
 #[derive(Debug, Error)]

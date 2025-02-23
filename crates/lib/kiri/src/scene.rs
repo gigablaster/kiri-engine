@@ -24,13 +24,13 @@ use thiserror::Error;
 const MAX_NODES: usize = 262144;
 const MAX_SCENE_DEPTH: usize = 32;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DirectionalLight {
     pub color: Vec3,
     pub power: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PointLight {
     pub color: Vec3,
     pub power: f32,

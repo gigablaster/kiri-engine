@@ -33,16 +33,16 @@ impl RenderPassDispatcher {
     pub fn new(
         name: impl AsRef<str>,
         area: RenderArea,
-        color_targets: impl IntoIterator<Item = RenderTarget>,
+        color_targets: &[RenderTarget],
         depth_target: Option<RenderTarget>,
-        reads: impl IntoIterator<Item = ImageDependency>,
+        reads: &[ImageDependency],
         streams: impl IntoIterator<Item = DrawStream>,
     ) -> Self {
         Self {
             name: name.as_ref().to_owned(),
             area: area.into(),
-            reads: reads.into_iter().collect(),
-            color_targets: color_targets.into_iter().collect(),
+            reads: reads.to_vec(),
+            color_targets: color_targets.to_vec(),
             depth_target,
             streams: streams.into_iter().collect(),
         }

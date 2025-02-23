@@ -284,11 +284,13 @@ pub trait PassDispatcher {
 pub struct FrameDispatcher<'a> {
     device: &'a GraphicsDevice,
     frame: Arc<Frame>,
-    passes: Vec<Box<dyn PassDispatcher>>,
+    passes: Mutex<Vec<Box<dyn PassDispatcher>>>,
     target: SwapchainImage<'a>,
     temp_descriptors: Mutex<Vec<DescriptorHandle>>,
     current_memory_page: RwLock<Arc<DynamicMemoryPage>>,
 }
+
+unsafe impl Sync for FrameDispatcher<'_> {}
 
 pub enum RenderArea {
     AllTarget,
@@ -326,15 +328,15 @@ impl<'a> FrameDispatcher<'a> {
     }
 
     pub fn render_pass(
-        &mut self,
+        &self,
         name: impl AsRef<str>,
         area: RenderArea,
-        color_targets: impl IntoIterator<Item = RenderTarget>,
+        color_targets: &[RenderTarget],
         depth_target: Option<RenderTarget>,
-        reads: impl IntoIterator<Item = ImageDependency>,
+        reads: &[ImageDependency],
         streams: impl IntoIterator<Item = DrawStream>,
     ) {
-        self.passes.push(Box::new(RenderPassDispatcher::new(
+        self.passes.lock().push(Box::new(RenderPassDispatcher::new(
             name,
             area,
             color_targets,
@@ -344,7 +346,7 @@ impl<'a> FrameDispatcher<'a> {
         )))
     }
 
-    pub fn temp_descriptors(
+    pub fn temp_descriptor(
         &self,
         data: DescriptorSetCreateData,
     ) -> Result<DescriptorHandle, Error> {
@@ -354,10 +356,11 @@ impl<'a> FrameDispatcher<'a> {
     }
 
     pub fn present(self, image: ImageHandle) -> Result<(), Error> {
+        let passes = self.passes.into_inner();
         self.device.execute(
             self.frame,
             self.target,
-            self.passes.into_iter().chain([
+            passes.into_iter().chain([
                 Box::new(CopyToBackbufferPassDispatcher::new(image)) as Box<dyn PassDispatcher>
             ]),
             self.temp_descriptors.into_inner(),
@@ -379,5 +382,9 @@ impl<'a> FrameDispatcher<'a> {
                     .ok_or(Error::DynamicGpuMemoryAllocationFailed)
             }
         }
+    }
+
+    pub fn backbuffer_desc(&self) -> ImageDesc {
+        self.target.image.desc
     }
 }
