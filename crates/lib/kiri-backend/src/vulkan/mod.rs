@@ -7,6 +7,7 @@ mod image;
 mod instance;
 mod physical_device;
 mod pipeline;
+mod ringbuffer;
 mod staging;
 mod swapchain;
 
@@ -15,12 +16,13 @@ use ash::vk;
 pub use buffer::*;
 pub use descriptors::*;
 use drop_list::*;
-pub use frame::*;
+pub(crate) use frame::*;
 pub use graphics_device::*;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
+pub(crate) use ringbuffer::*;
 use staging::*;
 pub use swapchain::*;
 

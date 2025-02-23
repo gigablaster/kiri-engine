@@ -15,15 +15,19 @@
 
 use std::{
     collections::HashMap,
+    sync::Arc,
     thread::{self, ThreadId},
 };
 
 use ash::vk::{self};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::Error;
 
-use super::{GpuAllocator, GpuDescriptorAllocator};
+use super::{
+    ringbuffer::{DynamicMemoryPage, RingBuffer},
+    GpuAllocator, GpuDescriptorAllocator, GraphicsDevice,
+};
 
 use super::DropList;
 
@@ -42,7 +46,10 @@ pub(crate) struct Frame {
     pub render_fence: vk::Fence,
     /// Signal this semaphore when finsihed rendering
     pub render_finished: vk::Semaphore,
+    /// Wait for this semaphore before sumbiting
     pub upload_semaphore: vk::Semaphore,
+    ring_buffer: Arc<Mutex<RingBuffer>>,
+    used_memory_pages: Mutex<Vec<Arc<DynamicMemoryPage>>>,
 }
 
 impl CommandBufferPool {
@@ -88,7 +95,10 @@ unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
 impl Frame {
-    pub(super) fn new(device: &ash::Device) -> Result<Self, Error> {
+    pub(super) fn new(
+        device: &ash::Device,
+        ring_buffer: Arc<Mutex<RingBuffer>>,
+    ) -> Result<Self, Error> {
         unsafe {
             let render_fence = device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
@@ -103,6 +113,8 @@ impl Frame {
                 drop_list,
                 per_thread_pools: Default::default(),
                 upload_semaphore: vk::Semaphore::null(),
+                used_memory_pages: Default::default(),
+                ring_buffer,
             })
         }
     }
@@ -122,7 +134,13 @@ impl Frame {
             .lock()
             .iter_mut()
             .try_for_each(|(_, x)| x.recycle(device))?;
-
+        {
+            let mut ring_buffer = self.ring_buffer.lock();
+            self.used_memory_pages
+                .lock()
+                .drain(..)
+                .for_each(|page| ring_buffer.free(page));
+        }
         Ok(())
     }
 
@@ -163,5 +181,14 @@ impl Frame {
             pools.insert(therad_id, pool);
             Ok(cb)
         }
+    }
+
+    pub fn get_memory_page(
+        &self,
+        device: &GraphicsDevice,
+    ) -> Result<Arc<DynamicMemoryPage>, Error> {
+        let page = self.ring_buffer.lock().allocate(device)?;
+        self.used_memory_pages.lock().push(page.clone());
+        Ok(page)
     }
 }

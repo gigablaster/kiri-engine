@@ -70,6 +70,8 @@ pub enum Error {
     TextureSlotNotFound(String),
     #[error("Invalid raster pipeline handle {0:?}")]
     InvalidRasterPipelineHandle(RasterPipelineHandle),
+    #[error("Dynamic GPU memory allocation failed")]
+    DynamicGpuMemoryAllocationFailed,
 }
 
 impl From<vk::Result> for Error {

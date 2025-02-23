@@ -30,6 +30,7 @@ use super::buffer::BufferPool;
 use super::descriptors::DescriptorPool;
 use super::image::ImagePool;
 use super::pipeline::{Pipeline, RasterPipelinePool};
+use super::ringbuffer::RingBuffer;
 use super::{
     DescriptorLayoutDesc, GpuDescriptor, GpuDescriptorAllocator, GpuMemoryBlock, Image, Instance,
     Staging, Swapchain,
@@ -64,6 +65,12 @@ impl From<u32> for RasterPipelineHandle {
 impl Default for RasterPipelineHandle {
     fn default() -> Self {
         Self(u32::MAX)
+    }
+}
+
+impl RasterPipelineHandle {
+    pub fn is_valid(self) -> bool {
+        self.0 != u32::MAX
     }
 }
 
@@ -156,6 +163,7 @@ pub struct GraphicsDevice {
     pub(crate) buffers_to_destroy: Mutex<Vec<BufferHandle>>,
     pub(crate) images_to_destroy: Mutex<Vec<ImageHandle>>,
     pub(crate) descriptors_to_destroy: Mutex<Vec<DescriptorHandle>>,
+    ring_buffer: Arc<Mutex<RingBuffer>>,
 }
 
 impl Debug for GraphicsDevice {
@@ -351,6 +359,7 @@ impl GraphicsDevice {
         let mut allocator = GpuAllocator::new(allocator_config, unsafe {
             gpu_alloc_ash::device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw)
         }?);
+        let ring_buffer = Arc::new(Mutex::new(RingBuffer::default()));
 
         Ok(Arc::new(Self {
             instance: instance.clone(),
@@ -363,8 +372,8 @@ impl GraphicsDevice {
             samplers,
             universal_queue,
             frames: [
-                Mutex::new(Arc::new(Frame::new(&device)?)),
-                Mutex::new(Arc::new(Frame::new(&device)?)),
+                Mutex::new(Arc::new(Frame::new(&device, ring_buffer.clone())?)),
+                Mutex::new(Arc::new(Frame::new(&device, ring_buffer.clone())?)),
             ],
             current_drop_list: Mutex::default(),
             raw: device,
@@ -381,6 +390,7 @@ impl GraphicsDevice {
             raster_pipelines: Default::default(),
             dirty_descriptors: Default::default(),
             descriptors_to_destroy: Default::default(),
+            ring_buffer,
         }))
     }
 
@@ -516,7 +526,7 @@ impl GraphicsDevice {
         match swapchain.acquire_next_image()? {
             super::AcquiredSurface::NeedRecreate => Ok(RenderFrame::NeedRecreateSwapchain),
             super::AcquiredSurface::Image(target) => Ok(RenderFrame::Dispatch(
-                FrameDispatcher::new(self, frame, target),
+                FrameDispatcher::new(self, frame, target)?,
             )),
         }
     }

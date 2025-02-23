@@ -16,7 +16,9 @@
 mod copy_to_backbuffer;
 mod render;
 use copy_to_backbuffer::CopyToBackbufferPassDispatcher;
-use parking_lot::{Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{
+    Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard, RwLockWriteGuard,
+};
 use render::*;
 use std::sync::Arc;
 
@@ -25,10 +27,10 @@ use ash::vk;
 
 use crate::{
     vulkan::{
-        BufferHandle, BufferPool, DescriptorHandle, DescriptorPool, DescriptorSetCreateData,
-        DescriptorSetData, Frame, GraphicsDevice, Image, ImageDesc, ImageHandle, ImagePool,
-        ImageViewDesc, Pipeline, RasterPipelineHandle, RasterPipelinePool, SwapchainImage,
-        MAX_ATTACHMENTS,
+        BufferHandle, BufferPool, BufferSlice, DescriptorHandle, DescriptorPool,
+        DescriptorSetCreateData, DescriptorSetData, DynamicMemoryPage, Frame, GraphicsDevice,
+        Image, ImageDesc, ImageHandle, ImagePool, ImageViewDesc, Pipeline, RasterPipelineHandle,
+        RasterPipelinePool, SwapchainImage, MAX_ATTACHMENTS,
     },
     DrawStream, Error,
 };
@@ -285,6 +287,7 @@ pub struct FrameDispatcher<'a> {
     passes: Vec<Box<dyn PassDispatcher>>,
     target: SwapchainImage<'a>,
     temp_descriptors: Mutex<Vec<DescriptorHandle>>,
+    current_memory_page: RwLock<Arc<DynamicMemoryPage>>,
 }
 
 pub enum RenderArea {
@@ -311,14 +314,15 @@ impl<'a> FrameDispatcher<'a> {
         device: &'a GraphicsDevice,
         frame: Arc<Frame>,
         target: SwapchainImage<'a>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        Ok(Self {
             device,
-            frame,
             passes: Default::default(),
             target,
             temp_descriptors: Default::default(),
-        }
+            current_memory_page: RwLock::new(frame.get_memory_page(device)?),
+            frame,
+        })
     }
 
     pub fn render_pass(
@@ -358,5 +362,22 @@ impl<'a> FrameDispatcher<'a> {
             ]),
             self.temp_descriptors.into_inner(),
         )
+    }
+
+    pub fn push_dynamic_data<T: Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
+        let current_page = self.current_memory_page.upgradable_read();
+        if let Some(slice) = current_page.try_push(data) {
+            Ok(slice)
+        } else {
+            let mut current_page = RwLockUpgradableReadGuard::upgrade(current_page);
+            if let Some(slice) = current_page.try_push(data) {
+                Ok(slice)
+            } else {
+                *current_page = self.frame.get_memory_page(&self.device)?;
+                current_page
+                    .try_push(data)
+                    .ok_or(Error::DynamicGpuMemoryAllocationFailed)
+            }
+        }
     }
 }
