@@ -25,5 +25,5 @@ pub use dynamic::*;
 pub use error::*;
 pub use image_pool::*;
 pub use mesh::*;
-pub use mesh::*;
+pub use pipeline_cache::*;
 pub use uniforms::*;

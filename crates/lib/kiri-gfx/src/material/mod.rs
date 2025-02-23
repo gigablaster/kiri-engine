@@ -71,12 +71,12 @@ pub const SCENE_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLayoutDesc {
     compute_groups_size: None,
 };
 
-pub const INSTANCE_DESCRIPTOR_SET: DescriptorLayoutDesc = DescriptorLayoutDesc {
+pub const INSTANCE_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLayoutDesc {
     layout: &[(
         0,
         DescriptorDesc {
             name: "instances",
-            ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            ty: vk::DescriptorType::STORAGE_BUFFER,
             count: 1,
         },
     )],

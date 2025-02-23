@@ -28,7 +28,7 @@ use kiri_backend::{
 use crate::{pipeline_cache::PipelineCache, Error, ShaderUniforms};
 
 use super::{
-    Material, MaterialRenderData, RenderGroup, INSTANCE_DESCRIPTOR_SET, MAIN_RENDER_PASS_LAYOUT,
+    Material, MaterialRenderData, RenderGroup, INSTANCE_DESCRIPTOR_LAYOUT, MAIN_RENDER_PASS_LAYOUT,
     SCENE_DESCRIPTOR_LAYOUT, ZPASS_RENDER_PASS_LAYOUT,
 };
 
@@ -259,5 +259,5 @@ const BASIC_MATERIAL_DESCRIPTOR_SET_LAYOUT: [DescriptorLayoutDesc; 4] = [
     SCENE_DESCRIPTOR_LAYOUT,
     EMPTY_DESCRIPTOR_LAYOUT,
     BASIC_MATERIAL_DESCRIPTOR_LAYOUT,
-    INSTANCE_DESCRIPTOR_SET,
+    INSTANCE_DESCRIPTOR_LAYOUT,
 ];
