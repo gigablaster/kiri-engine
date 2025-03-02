@@ -633,24 +633,25 @@ impl GraphicsDevice {
                 1,
             )?
             .remove(0);
-        let resolver = RenderResourceResolver::new(
-            &self.raw,
-            target.image,
-            &buffers,
-            &images,
-            &raster_pipelines,
-            &descriptors,
-            *empty_descriptor_set.raw(),
-        );
-        for pass in passes {
-            self.begin_label(command_buffer, pass.name());
-            pass.dispatch(&self.raw, command_buffer, &resolver)?;
-            self.end_label(command_buffer);
+        {
+            let resolver = RenderResourceResolver::new(
+                &self.raw,
+                target.image,
+                &buffers,
+                &images,
+                &raster_pipelines,
+                &descriptors,
+                *empty_descriptor_set.raw(),
+            );
+            for pass in passes {
+                self.begin_label(command_buffer, pass.name());
+                pass.dispatch(&self.raw, command_buffer, &resolver)?;
+                self.end_label(command_buffer);
+            }
         }
         unsafe {
             self.raw.end_command_buffer(command_buffer)?;
         }
-        drop(resolver);
         drop(raster_pipelines);
         drop(descriptors);
         drop(buffers);
@@ -734,7 +735,7 @@ impl GraphicsDevice {
                 let mut binding = vk::DescriptorSetLayoutBinding::default()
                     .binding(*index as _)
                     .descriptor_count(data.count as _)
-                    .descriptor_type(data.ty.into())
+                    .descriptor_type(data.ty)
                     .stage_flags(stage);
                 if data.ty == vk::DescriptorType::SAMPLER
                     || data.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
@@ -832,6 +833,7 @@ impl Drop for GraphicsDevice {
                 .filter_map(|(_, mut data)| data.descriptor.take()),
         );
         self.staging.lock().free(&self.raw, &mut memory_allocator);
+        self.ring_buffer.lock().free(self);
         drop_list.purge(&self.raw, &mut memory_allocator, &mut descriptor_allocator);
         self.frames.iter().for_each(|frame| {
             Arc::get_mut(&mut frame.lock())

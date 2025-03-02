@@ -222,7 +222,7 @@ unsafe fn to_10bits(value: [i16; 3], sign: f32) -> u32 {
     let y = (mem::transmute::<i16, u16>(value[1]) >> 6) as u32; // 16 - 10
     let z = (mem::transmute::<i16, u16>(value[2]) >> 6) as u32; // 16 - 10
     let sign = if sign > 0.0 { 1 } else { 0 };
-    (z & 0x3ff) | (y & 0x3ff) << 10 | (x & 0x3ff) << 20 | (sign & 3) << 22
+    (z & 0x3ff) | ((y & 0x3ff) << 10) | ((x & 0x3ff) << 20) | ((sign & 3) << 22)
 }
 
 fn quantize_float(value: f32, max: f32) -> i16 {

@@ -69,7 +69,7 @@ impl NodeData {
             Self::Mesh(mesh) => {
                 let bounds = mesh.bounds.transform(transform);
                 if culler.cull(bounds) {
-                    out.meshes.push((&mesh, transform));
+                    out.meshes.push((mesh, transform));
                 }
             }
             Self::Model(model) => {
@@ -218,7 +218,7 @@ impl Scene {
         self.update_hierarchy();
     }
 
-    pub fn cull<'a, C: Culler>(&'a self, culler: C) -> CullResult<'a> {
+    pub fn cull<C: Culler>(&self, culler: C) -> CullResult {
         puffin::profile_function!();
         let mut result = CullResult {
             meshes: Vec::with_capacity(64536),
@@ -251,7 +251,7 @@ impl Scene {
             }
             handle = node.next_sibling;
         }
-        return None;
+        None
     }
 
     fn delete_nodes(&mut self) {

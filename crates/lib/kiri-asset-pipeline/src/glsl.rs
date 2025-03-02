@@ -18,7 +18,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use kiri_assets::{ShaderAsset, ShaderAssetSource, ShaderType, SourceAssetPath};
+use kiri_assets::{ShaderAsset, ShaderAssetSource, ShaderType};
 
 use crate::ImportAsset;
 

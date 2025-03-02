@@ -603,6 +603,7 @@ pub fn save_pipeline_cache<P: AsRef<Path>>(
 }
 
 impl GraphicsDevice {
+    #[allow(clippy::too_many_arguments)]
     pub fn create_raster_pipeline(
         &self,
         vertex_shader: &[u8],

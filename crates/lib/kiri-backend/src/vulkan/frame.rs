@@ -20,7 +20,7 @@ use std::{
 };
 
 use ash::vk::{self};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 
 use crate::Error;
 
@@ -139,7 +139,7 @@ impl Frame {
             self.used_memory_pages
                 .lock()
                 .drain(..)
-                .for_each(|page| ring_buffer.free(page));
+                .for_each(|page| ring_buffer.recycle(page));
         }
         Ok(())
     }

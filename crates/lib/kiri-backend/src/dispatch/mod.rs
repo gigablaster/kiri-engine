@@ -16,21 +16,18 @@
 mod copy_to_backbuffer;
 mod render;
 use copy_to_backbuffer::CopyToBackbufferPassDispatcher;
-use parking_lot::{
-    Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard, RwLockWriteGuard,
-};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use render::*;
 use std::sync::Arc;
 
-use arrayvec::ArrayVec;
 use ash::vk;
 
 use crate::{
     vulkan::{
         BufferHandle, BufferPool, BufferSlice, DescriptorHandle, DescriptorPool,
-        DescriptorSetCreateData, DescriptorSetData, DynamicMemoryPage, Frame, GraphicsDevice,
-        Image, ImageDesc, ImageHandle, ImagePool, ImageViewDesc, Pipeline, RasterPipelineHandle,
-        RasterPipelinePool, SwapchainImage, MAX_ATTACHMENTS,
+        DescriptorSetCreateData, DynamicMemoryPage, Frame, GraphicsDevice, Image, ImageDesc,
+        ImageHandle, ImagePool, ImageViewDesc, Pipeline, RasterPipelineHandle, RasterPipelinePool,
+        SwapchainImage,
     },
     DrawStream, Error,
 };
@@ -220,11 +217,10 @@ impl<'a> RenderResourceResolver<'a> {
         handle: ImageHandle,
         desc: ImageViewDesc,
     ) -> Result<vk::ImageView, Error> {
-        Ok(self
-            .images
+        self.images
             .get(handle)
             .ok_or(Error::InvalidImageHandle(handle))?
-            .get_or_create_view(&self.device, desc)?)
+            .get_or_create_view(self.device, desc)
     }
 
     pub fn resolve_image(&self, handle: ImageHandle) -> Result<vk::Image, Error> {
@@ -376,7 +372,7 @@ impl<'a> FrameDispatcher<'a> {
             if let Some(slice) = current_page.try_push(data) {
                 Ok(slice)
             } else {
-                *current_page = self.frame.get_memory_page(&self.device)?;
+                *current_page = self.frame.get_memory_page(self.device)?;
                 current_page
                     .try_push(data)
                     .ok_or(Error::DynamicGpuMemoryAllocationFailed)

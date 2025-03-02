@@ -25,7 +25,6 @@ use normalize_path::NormalizePath;
 pub use shader::*;
 
 use std::{
-    fmt::Display,
     fs,
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
@@ -227,6 +226,19 @@ pub fn load_asset<T: Asset>(data: &[u8]) -> io::Result<T> {
     T::deserialize(&mut reader)
 }
 
+pub fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path.as_ref())?;
+    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+    let mut reader = io::BufReader::new(file);
+    let mut data = Vec::with_capacity(length as usize);
+    reader.read_to_end(&mut data)?;
+    Ok(data)
+}
+
+pub async fn load_asset_from_vfs<T: Asset>(reference: AssetReference) -> io::Result<T> {
+    let data = spawn_io(vfs_load(reference)).await?;
+    load_asset::<T>(&data)
+}
 #[cfg(test)]
 mod test {
     use crate::{CompiledAssetPath, SourceAssetPath};
@@ -246,18 +258,4 @@ mod test {
             SourceAssetPath::new("foo/bar.jpg").compiled().unwrap()
         )
     }
-}
-
-pub fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let file = fs::File::open(path.as_ref())?;
-    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-    let mut reader = io::BufReader::new(file);
-    let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data)?;
-    Ok(data)
-}
-
-pub async fn load_asset_from_vfs<T: Asset>(reference: AssetReference) -> io::Result<T> {
-    let data = spawn_io(vfs_load(reference)).await?;
-    load_asset::<T>(&data)
 }

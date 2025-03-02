@@ -167,7 +167,7 @@ pub const EMPTY_DESCRIPTOR_LAYOUT: DescriptorLayoutDesc = DescriptorLayoutDesc {
     compute_groups_size: None,
 };
 
-impl<'a> DescriptorLayoutDesc<'a> {
+impl DescriptorLayoutDesc<'_> {
     pub(crate) fn get_descriptor_count(&self) -> DescriptorTotalCount {
         let mut count = DescriptorTotalCount::default();
         for (_, data) in self.layout.iter() {

@@ -14,11 +14,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use kiri_backend::{
-    ash::vk::{self, DisplayPowerStateEXT},
+    ash::vk::{self},
     vulkan::{
         DescriptorDesc, DescriptorHandle, DescriptorLayoutDesc, DescriptorSetCreateData,
-        GraphicsDevice, ImageHandle, InputVertexAttrubute, InputVertexStreamLayout,
-        RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout, EMPTY_DESCRIPTOR_LAYOUT,
+        ImageHandle, InputVertexAttrubute, InputVertexStreamLayout, RasterPipelineCreateDesc,
+        RasterPipelineHandle, RenderPassLayout, EMPTY_DESCRIPTOR_LAYOUT,
     },
     DrawStream, DrawStreamBuilder, FrameDispatcher, ImageDependency, RenderTarget,
 };

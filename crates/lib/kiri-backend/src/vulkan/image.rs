@@ -127,7 +127,7 @@ impl ImageViewDesc {
     }
 }
 
-impl<'a> ImageCreateDesc<'a> {
+impl ImageCreateDesc<'_> {
     fn build(&self) -> vk::ImageCreateInfo {
         vk::ImageCreateInfo::default()
             .array_layers(self.array_elements as _)
@@ -402,7 +402,7 @@ impl GraphicsDevice {
     ///
     /// Including memory allocation. All resources will be freed when instance
     /// is dropped.    
-    pub fn create_image<'a>(&self, desc: ImageCreateDesc) -> Result<ImageHandle, Error> {
+    pub fn create_image(&self, desc: ImageCreateDesc) -> Result<ImageHandle, Error> {
         let image = unsafe { self.raw.create_image(&desc.build(), None) }?;
         if let Some(name) = desc.name {
             self.set_object_name(image, name);

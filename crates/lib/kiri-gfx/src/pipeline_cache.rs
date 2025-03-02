@@ -89,6 +89,7 @@ impl PipelineCache {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn get_or_create_raster_pipeline(
         &self,
         vertex_shader: &str,

@@ -13,17 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Debug, sync::Arc};
-
 use kiri_backend::{
     ash::vk,
     vulkan::{
-        BufferSlice, DescriptorDesc, DescriptorHandle, DescriptorLayoutDesc, GraphicsDevice,
-        RasterPipelineHandle, RenderPassLayout,
+        DescriptorDesc, DescriptorHandle, DescriptorLayoutDesc, RasterPipelineHandle,
+        RenderPassLayout,
     },
 };
-
-use crate::ShaderUniforms;
 
 mod basic;
 

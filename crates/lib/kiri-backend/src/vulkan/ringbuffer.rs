@@ -20,7 +20,6 @@ use std::{
 };
 
 use kiri_common::BumpAllocator;
-use parking_lot::{Mutex, RwLock};
 
 use crate::Error;
 
@@ -80,11 +79,11 @@ impl DynamicMemoryPage {
         }
     }
 
-    pub fn reset(&self) {
+    pub fn recycle(&self) {
         self.allocator.reset();
     }
 
-    fn release(&self, device: &GraphicsDevice) {
+    fn free(&self, device: &GraphicsDevice) {
         device.destroy_buffer(self.buffer);
     }
 }
@@ -109,12 +108,13 @@ impl RingBuffer {
         }
     }
 
-    pub fn free(&mut self, page: Arc<DynamicMemoryPage>) {
+    pub fn recycle(&mut self, page: Arc<DynamicMemoryPage>) {
+        page.recycle();
         self.free.push(page);
     }
 
-    pub fn release(&mut self, device: &GraphicsDevice) {
+    pub fn free(&mut self, device: &GraphicsDevice) {
         self.free.clear();
-        self.all.drain(..).for_each(|page| page.release(device));
+        self.all.drain(..).for_each(|page| page.free(device));
     }
 }
