@@ -17,18 +17,18 @@ use std::hash::Hasher;
 
 use arrayvec::ArrayVec;
 use kiri_backend::{
+    DrawStream, DrawStreamBuilder, FrameDispatcher, RenderTarget,
     ash::vk,
     vulkan::{
-        BufferPointer, DescriptorHandle, DescriptorSetCreateData, RasterPipelineHandle,
-        DYNAMIC_DESCRIPTOR_SLOT_INDEX, MATERIAL_DESCRIPTOR_SLOT_IDNEX, PASS_DESCRIPTOR_SLOT_INDEX,
+        BufferPointer, DYNAMIC_DESCRIPTOR_SLOT_INDEX, DescriptorHandle, DescriptorSetCreateData,
+        MATERIAL_DESCRIPTOR_SLOT_IDNEX, PASS_DESCRIPTOR_SLOT_INDEX, RasterPipelineHandle,
     },
-    DrawStream, DrawStreamBuilder, FrameDispatcher, RenderTarget,
 };
 use kiri_gfx::{
-    material::{INSTANCE_DESCRIPTOR_LAYOUT, SCENE_DESCRIPTOR_LAYOUT},
     RenderTargetPool, TransientImage,
+    material::{INSTANCE_DESCRIPTOR_LAYOUT, SCENE_DESCRIPTOR_LAYOUT},
 };
-use kiri_math::{vec3, vec4, Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A};
+use kiri_math::{Bounds, Camera, Mat4, PerspectiveCamera, Plane, Vec3, Vec3A, vec3, vec4};
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 use seahash::SeaHasher;
 

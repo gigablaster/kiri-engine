@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io;
+use std::{io, sync::Arc};
 
 use kiri_backend::{
     ash::vk,

@@ -151,7 +151,7 @@ impl SourceAssetPath {
     }
 }
 
-pub trait AssetSource {
+pub trait AssetSource: Send + Sync + Clone {
     fn changed(&self, timestamp: SystemTime) -> bool;
     fn reference(&self) -> AssetReference;
 }

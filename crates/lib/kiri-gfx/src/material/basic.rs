@@ -81,6 +81,9 @@ pub struct BasicMaterial {
     uniform: BufferSlice,
 }
 
+unsafe impl Send for BasicMaterial {}
+unsafe impl Sync for BasicMaterial {}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct BasicMaterialGpuData {

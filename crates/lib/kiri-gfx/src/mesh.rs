@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use kiri_assets::NodeIndex;
+use kiri_assets::{ModelAsset, NodeIndex, RenderMeshVertex};
 use kiri_backend::vulkan::{
     BufferCreateDesc, BufferHandle, BufferPointer, GraphicsDevice, ImageHandle,
 };
@@ -44,6 +44,8 @@ pub struct RenderMesh {
     pub uv_scale: f32,
 }
 
+unsafe impl Send for RenderMesh {}
+unsafe impl Sync for RenderMesh {}
 #[derive(Debug)]
 pub struct RenderModel {
     device: Arc<GraphicsDevice>,
@@ -59,6 +61,9 @@ pub struct RenderModel {
     pub bounds: BoundingBox,
 }
 
+unsafe impl Send for RenderModel {}
+unsafe impl Sync for RenderModel {}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMeshPbrMaterialDesc {
     pub emissive_power: f32,
@@ -70,6 +75,7 @@ pub struct RenderMeshPbrMaterialDesc {
     pub emissive: ImageHandle,
 }
 
+#[derive(Debug)]
 pub struct RenderMeshBuilder {
     pub first_vertex: usize,
     pub first_index: usize,
@@ -91,7 +97,7 @@ impl RenderMeshBuilder {
         }
     }
 
-    pub fn surface(&mut self, first_index: u32, index_count: u32, material: impl Material) {
+    pub fn surface<T: Material>(&mut self, first_index: u32, index_count: u32, material: &T) {
         self.surfaces.push(RenderMeshSurface {
             vertex_offset: self.first_vertex as u32,
             first_index,

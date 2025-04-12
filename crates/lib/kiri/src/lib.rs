@@ -16,16 +16,28 @@
 // mod render_world;
 mod postporcess;
 mod render;
+mod resource_manager;
 mod scene;
+use std::io;
+
 use thiserror::Error;
 
 // pub use render_world::*;
 pub use postporcess::*;
 pub use render::*;
+pub use resource_manager::*;
 pub use scene::*;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Renderer error: {0}")]
     GfxError(#[from] kiri_gfx::Error),
+    #[error("Backend error: {0}")]
+    BackendError(#[from] kiri_backend::Error),
+    #[error("IO failed: {0}")]
+    IoError(#[from] io::Error),
+    #[error("Resource failed to load")]
+    FailedToLoad,
 }
+
+unsafe impl Send for Error {}

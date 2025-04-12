@@ -17,7 +17,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use kiri_common::{Handle, Pool};
 use kiri_gfx::{RenderMesh, RenderModel};
-use kiri_math::{vec3, Affine3A, BoundingBox, Bounds, Vec3};
+use kiri_math::{Affine3A, BoundingBox, Bounds, Vec3, vec3};
 use nohash_hasher::BuildNoHashHasher;
 use thiserror::Error;
 
@@ -366,7 +366,7 @@ impl Scene {
 #[cfg(test)]
 mod test {
     use kiri_common::Handle;
-    use kiri_math::{vec3, Affine3A};
+    use kiri_math::{Affine3A, vec3};
 
     use crate::NodeHandle;
 

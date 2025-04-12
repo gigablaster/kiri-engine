@@ -20,7 +20,7 @@ use crate::vulkan::{
     BufferHandle, DescriptorHandle, ImageHandle, RasterPipelineHandle, SamplerDesc,
 };
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum Error {
     #[error("Out of device memory")]
     OutOfDeviceMemory,

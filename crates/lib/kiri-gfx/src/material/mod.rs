@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::fmt::Debug;
+
 use kiri_backend::{
     ash::vk,
     vulkan::{
@@ -41,7 +43,7 @@ pub struct MaterialRenderData {
     pub descriptor: DescriptorHandle,
 }
 
-pub trait Material {
+pub trait Material: Debug + Send + Sync {
     fn create_render_data(&self) -> MaterialRenderData;
 }
 

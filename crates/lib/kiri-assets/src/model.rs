@@ -125,6 +125,9 @@ pub struct MeshAssetMaterial {
     pub blend: MeshMaterialBlend,
 }
 
+unsafe impl Send for MeshAssetMaterial {}
+unsafe impl Sync for MeshAssetMaterial {}
+
 impl std::hash::Hash for MeshAssetMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state);
@@ -220,6 +223,9 @@ pub struct ModelAsset {
     pub node_to_mesh: Vec<(u32, u32)>,
     pub materials: Vec<MeshAssetMaterial>,
 }
+
+unsafe impl Send for ModelAsset {}
+unsafe impl Sync for ModelAsset {}
 
 impl Asset for ModelAsset {
     const TYPE: uuid::Uuid = uuid::uuid!("3d731621-54b4-40b0-a089-37667f68fe35");
