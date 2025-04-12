@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    # "crates/lib/kiri-runner",
+    "crates/lib/kiri-runner",
     "crates/lib/kiri-common",
     "crates/lib/kiri-backend",
     "crates/lib/kiri-assets",
@@ -8,7 +8,6 @@ members = [
     "crates/lib/kiri-vfs",
     "crates/lib/kiri",
     "crates/lib/kiri-gfx",
-    # "crates/lib/kiri-resources",
     "crates/lib/kiri-math",
     "crates/lib/kiri-asset-pipeline",
 ]
