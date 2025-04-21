@@ -17,9 +17,9 @@ mod runner;
 
 use std::{error::Error, sync::Arc};
 
+use kiri_backend::{vulkan::GraphicsDevice, FrameDispatcher};
 use kiri_common::{GameAppConfig, GameTime};
-use kiri_gfx::{RenderContext, RenderTargetPool, Renderer};
-use kiri_resources::PipelineCache;
+use kiri_gfx::PipelineCache;
 pub use runner::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,16 +31,15 @@ pub enum GameTickState {
 #[derive(Debug, thiserror::Error)]
 pub enum GameError<E: Error> {
     GameFailure(E),
-    BackendFailure(#[from] kiri_backend::Error),
+    BackendError(#[from] kiri_backend::Error),
     GfxError(#[from] kiri_gfx::Error),
     EngineError(#[from] kiri::Error),
-    ResourceError(#[from] kiri_resources::Error),
     LoopError(String),
 }
 
 pub trait GameClient<E: Error>: Sized + Send + Sync {
     fn create(
-        renderer: Arc<Renderer>,
+        device: Arc<GraphicsDevice>,
         pipeline_cache: Arc<PipelineCache>,
     ) -> Result<Self, GameError<E>>;
     fn config() -> &'static GameAppConfig<'static>;
@@ -48,7 +47,6 @@ pub trait GameClient<E: Error>: Sized + Send + Sync {
     fn render(
         &mut self,
         time: GameTime,
-        context: &RenderContext,
-        pool: &RenderTargetPool,
+        dispatcher: FrameDispatcher,
     ) -> Result<(), kiri_gfx::Error>;
 }

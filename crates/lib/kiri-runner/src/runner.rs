@@ -22,10 +22,11 @@ use std::{
 };
 
 use crate::{GameClient, GameError, GameTickState};
-use kiri_backend::{InstanceBuilder, PhysicalDeviceType, RenderDevice, Surface, Swapchain};
+use kiri_backend::vulkan::{
+    GraphicsDevice, InstanceBuilder, PhysicalDeviceType, Surface, Swapchain,
+};
 use kiri_common::{GameAppConfig, TimeFilter};
-use kiri_gfx::{FrameState, RenderTargetPool, Renderer};
-use kiri_resources::PipelineCache;
+use kiri_gfx::{PipelineCache, RenderTargetPool};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
     application::ApplicationHandler,
@@ -45,7 +46,7 @@ impl<E: Error> From<String> for GameError<E> {
 struct RenderSystem<E: Error> {
     window: Window,
     surface: Surface,
-    renderer: Arc<Renderer>,
+    graphics_device: Arc<GraphicsDevice>,
     pool: RenderTargetPool,
     pipeline_cache: Arc<PipelineCache>,
     _phantom: PhantomData<E>,
@@ -64,18 +65,17 @@ impl<E: Error> RenderSystem<E> {
             .debug(true)
             .build()?;
         let surface = Surface::new(&instance, window.window_handle().unwrap().as_raw()).unwrap();
-        let device = RenderDevice::new(
+        let graphics_device = GraphicsDevice::new(
             &instance,
             &surface,
             &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
         )?;
-        let renderer = Renderer::new(device.clone(), config)?;
-        let pool = RenderTargetPool::new(&renderer);
-        let pipeline_cache = PipelineCache::new(renderer.clone());
+        let pool = RenderTargetPool::new(graphics_device.clone());
+        let pipeline_cache = PipelineCache::new(graphics_device.clone());
         Ok(Self {
             window,
             surface,
-            renderer,
+            graphics_device,
             pipeline_cache,
             pool,
             _phantom: PhantomData,
@@ -111,7 +111,7 @@ where
 
         self.game = Some(
             G::create(
-                render_system.renderer.clone(),
+                render_system.graphics_device.clone(),
                 render_system.pipeline_cache.clone(),
             )
             .unwrap(),
@@ -173,21 +173,22 @@ where
                     let swapchain = self.swapchain.get_or_insert_with(|| {
                         render_system.pool.purge();
                         Swapchain::new(
-                            &render_system.renderer.device,
+                            render_system.graphics_device.clone(),
                             &render_system.surface,
                             [width, height],
                         )
                         .unwrap()
                     });
-                    if FrameState::NeedRecreateSwapchain
-                        == render_system
-                            .renderer
-                            .render(swapchain, |context| {
-                                game.render(dt, context, &render_system.pool)
-                            })
-                            .unwrap()
-                    {
-                        self.swapchain = None;
+                    match render_system.graphics_device.frame(&swapchain) {
+                        Ok(frame) => match frame {
+                            kiri_backend::RenderFrame::NeedRecreateSwapchain => {
+                                self.swapchain = None
+                            }
+                            kiri_backend::RenderFrame::Dispatch(frame_dispatcher) => {
+                                game.render(dt, frame_dispatcher).unwrap()
+                            }
+                        },
+                        Err(err) => panic!("{:?}", err),
                     }
                 } else {
                     thread::sleep(Duration::from_millis(30));
