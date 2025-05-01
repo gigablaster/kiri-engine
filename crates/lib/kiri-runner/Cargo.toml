@@ -10,7 +10,7 @@ kiri = { path = "../kiri" }
 kiri-assets = { path = "../kiri-assets" }
 kiri-gfx = { path = "../kiri-gfx" }
 kiri-math = { path = "../kiri-math" }
-thiserror = "2.0.9"
+thiserror = "2.0.12"
 directories = "5.0.1"
 raw-window-handle = "0.6.2"
 log = "0.4.22"
@@ -20,6 +20,3 @@ winit = "0.30.5"
 [dev-dependencies]
 simple_logger = "5.0.0"
 puffin_http = "0.16.1"
-
-[[example]]
-name = "loop"
