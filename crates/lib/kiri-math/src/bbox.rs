@@ -492,9 +492,9 @@ mod test {
         .frustum();
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, -1.0), Vec3::ONE).is_visible(&frustum));
         assert!(!BoundingBox::from_extent(vec3(0.0, 0.0, 12.0), Vec3::ONE).is_visible(&frustum));
-        assert!(!BoundingBox::from_extent(vec3(0.0, 5.0, 5.0), Vec3::ONE).is_visible(&frustum));
-        assert!(!BoundingBox::from_extent(vec3(0.0, -5.0, 5.0), Vec3::ONE).is_visible(&frustum));
-        assert!(!BoundingBox::from_extent(vec3(5.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
-        assert!(!BoundingBox::from_extent(vec3(-5.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(0.0, 7.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(0.0, -7.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(7.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
+        assert!(!BoundingBox::from_extent(vec3(-7.0, 0.0, 5.0), Vec3::ONE).is_visible(&frustum));
     }
 }
