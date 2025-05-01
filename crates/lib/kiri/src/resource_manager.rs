@@ -37,13 +37,12 @@ pub enum Resource<T: Send + Sync> {
 
 impl<T: Send + Sync> Resource<T> {
     pub fn resolve(&mut self) {
-        match self {
-            Resource::Loading(task) => match block_on(task) {
+        if let Resource::Loading(task) = self {
+            match block_on(task) {
                 Ok(resource) => *self = Self::Loaded(resource),
                 Err(error) => *self = Self::Failed(Box::new(error)),
-            },
-            _ => {}
-        };
+            }
+        }
     }
 
     pub fn is_ready(&self) -> bool {

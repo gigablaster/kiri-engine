@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, mem, sync::Arc};
 
-use kiri_assets::{ModelAsset, NodeIndex, RenderMeshVertex};
+use kiri_assets::NodeIndex;
 use kiri_backend::vulkan::{
     BufferCreateDesc, BufferHandle, BufferPointer, GraphicsDevice, ImageHandle,
 };

@@ -53,7 +53,7 @@ struct RenderSystem<E: Error> {
 }
 
 impl<E: Error> RenderSystem<E> {
-    fn new(event_loop: &ActiveEventLoop, config: &GameAppConfig) -> Result<Self, GameError<E>> {
+    fn new(event_loop: &ActiveEventLoop, _config: &GameAppConfig) -> Result<Self, GameError<E>> {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
@@ -179,7 +179,7 @@ where
                         )
                         .unwrap()
                     });
-                    match render_system.graphics_device.frame(&swapchain) {
+                    match render_system.graphics_device.frame(swapchain) {
                         Ok(frame) => match frame {
                             kiri_backend::RenderFrame::NeedRecreateSwapchain => {
                                 self.swapchain = None
