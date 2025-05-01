@@ -19,7 +19,6 @@ use std::{
     fmt::Display,
     fs::File,
     io::{self, Read},
-    os::windows::fs::MetadataExt,
     path::{self, Path, PathBuf},
     sync::Arc,
 };
@@ -114,7 +113,7 @@ impl ArchiveLoad for FileSystemArchive {
         );
         // TODO: use platform-specific async IO
         let mut file = File::open(path)?;
-        let mut data = vec![0u8; file.metadata()?.file_size() as usize];
+        let mut data = vec![0u8; file.metadata()?.len() as usize];
         file.read_exact(&mut data)?;
         Ok(data.into())
     }
