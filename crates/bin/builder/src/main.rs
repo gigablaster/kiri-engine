@@ -36,10 +36,8 @@ fn compiled_asset_change_time(reference: AssetReference) -> Option<SystemTime> {
     if let Ok(metadata) = path.metadata() {
         if let Ok(changed) = metadata.modified() {
             Some(changed)
-        } else if let Ok(created) = metadata.created() {
-            Some(created)
         } else {
-            None
+            metadata.created().ok()
         }
     } else {
         None
